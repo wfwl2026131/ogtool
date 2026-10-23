@@ -1,4 +1,4 @@
-"""#21 保持在线 — keep the sessions online with a periodic heartbeat."""
+"""#21 keep online: a periodic heartbeat keeps the sessions alive."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ FEATURE = "keep_online"
 
 @dataclass(slots=True)
 class KeepOnlineConfig:
-    """The right pane of #21: the account choice plus 开启 / 关闭."""
+    """The right pane of #21: account choice plus on / off."""
 
     account_labels: list[str] = field(default_factory=list)
     interval: float = 300.0

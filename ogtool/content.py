@@ -11,7 +11,7 @@ from .senders import Content
 
 @dataclass(slots=True)
 class ContentSpec:
-    """The "内容来源 / 消息媒体 / 消息内容" block of the reference page."""
+    """The content block: source, media path and message text."""
 
     text: str = ""
     media: str = ""

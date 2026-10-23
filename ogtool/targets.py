@@ -1,8 +1,9 @@
 """Target parsing: usernames, links, numeric ids and phone numbers.
 
 The reference client accepts one entry per line and says so in its label
-("自定义目标（每行一个，支持ID/用户名/电话/邀请链接）"), so this module keeps
-four kinds and normalises whatever the user typed into one of them.
+("custom targets: one per line, id / username / phone / invite link"), so
+this module keeps four kinds and normalises whatever the user typed into
+one of them.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""#5 群发消息 — mass send.
+"""#5 mass send.
 
 Targets (private / group / client / custom), a content source (text / media /
 forward), the interval numbers, threads and the three caps the reference page
@@ -118,7 +118,7 @@ def schedule(
 
     Each account is a lane with its own clock; a message waits for both the
     lane clock and the target's own gap.  ``success_cap`` stops adding entries,
-    which is what the reference page's "成功上限" does.
+    which is what the reference page's success cap does.
     """
     rng = rng or random.Random(0)
     clocks: dict[str, float] = {account: 0.0 for account in accounts}

@@ -1,7 +1,8 @@
-"""#6 自动回复 — keyword rules with a duplicate cache window.
+"""#6 auto reply: keyword rules with a duplicate cache window.
 
-The page carries two things: the rules (keyword -> reply) and 重复缓存(秒), the
-window in which the same text from the same chat is not answered twice.  Both
+The page carries two things: the rules (keyword -> reply) and the duplicate
+cache window in seconds, in which the same text from the same chat is not
+answered twice.  Both
 are honoured here, and a dry run replays a supplied set of incoming messages so
 the decisions can be read without a session.
 """
@@ -90,7 +91,7 @@ def parse_simulated(entries: list[str]) -> list[Incoming]:
 
 
 class DuplicateCache:
-    """The 重复缓存 window: same chat plus same text, inside N seconds."""
+    """The duplicate window: same chat plus same text, inside N seconds."""
 
     def __init__(self, seconds: int) -> None:
         self.seconds = max(0, int(seconds))
