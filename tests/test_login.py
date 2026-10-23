@@ -386,6 +386,57 @@ def test_the_configured_proxy_reaches_the_client(tmp_path, settings, store,
     assert getattr(seen["proxy"], "port", 0) == 1080
 
 
+def test_require_credentials_falls_back_to_the_blob(settings, monkeypatch):
+    monkeypatch.setenv(CREDENTIAL_ENV, BLOB)
+    assert settings.require_credentials() == (API_ID, API_HASH)
+
+
+def test_require_credentials_prefers_the_config(settings, monkeypatch):
+    monkeypatch.setenv(CREDENTIAL_ENV, BLOB)
+    settings.api_id = 111111
+    settings.api_hash = "ab" * 16
+    assert settings.require_credentials() == (111111, "ab" * 16)
+
+
+def test_require_credentials_without_any_source_is_an_error(settings):
+    from ogtool.config import ConfigError
+
+    with pytest.raises(ConfigError):
+        settings.require_credentials()
+
+
+def test_accounts_test_live_passes_a_proxy_tuple_not_a_string(settings, store,
+                                                              creds, monkeypatch):
+    from ogtool.config import ProxyConfig
+    from ogtool.store import Account
+
+    settings.proxy = ProxyConfig(kind="socks5", host="127.0.0.1", port=12888)
+    session = settings.session_path("p1")
+    session.write_bytes(b"")
+    store.add_account(Account("p1", session=str(session)))
+    seen: dict[str, object] = {}
+
+    def fake_build(path, credentials, proxy=None):
+        seen["proxy"] = proxy
+        return FakeClient()
+
+    monkeypatch.setattr("ogtool.login.build_client", fake_build)
+    rows = AccountPool(settings, store).test(["p1"], live=True)
+    assert rows[0][1] is True
+    assert isinstance(seen["proxy"], ProxyConfig)
+    assert seen["proxy"].to_telethon() == (
+        "socks5", "127.0.0.1", 12888, True, None, None)
+
+
+def test_the_account_row_still_stores_a_string(settings, store):
+    from ogtool.config import ProxyConfig
+
+    settings.proxy = ProxyConfig(kind="socks5", host="127.0.0.1", port=12888)
+    account = AccountPool(settings, store).add_phone("+8613800000000", "row1")
+    assert account.proxy == "socks5://127.0.0.1:12888"
+    assert store.get_account("row1").proxy == "socks5://127.0.0.1:12888"
+
+
 def test_the_cli_accepts_login_and_dry_runs_it(tmp_path, capsys):
     config = tmp_path / "config.yaml"
     config.write_text("api_id: 0\napi_hash: ''\n", encoding="utf-8")

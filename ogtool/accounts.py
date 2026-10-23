@@ -34,7 +34,7 @@ class AccountPool:
             label=name,
             phone=phone,
             session=str(session),
-            proxy=_proxy_text(self.settings),
+            proxy=_proxy_row(self.settings),
             status="new",
             notes=notes,
         )
@@ -51,7 +51,7 @@ class AccountPool:
         account = Account(
             label=name,
             session=str(target),
-            proxy=_proxy_text(self.settings),
+            proxy=_proxy_row(self.settings),
             status="imported",
         )
         return self.store.add_account(account)
@@ -110,7 +110,8 @@ class AccountPool:
                     rows.append((account.label, False, str(error)))
                     continue
             try:
-                client = _client(client_factory, str(path), credentials)
+                client = _client(client_factory, str(path), credentials,
+                                self.settings.proxy)
                 client.connect()
                 me = client.get_me()
                 if me is None:
@@ -132,12 +133,13 @@ def _credentials(settings: Settings):
     return resolve_credentials(settings)
 
 
-def _client(factory, path: str, credentials):
+def _client(factory, path: str, credentials, proxy=None):
+    """Build the client with the configured proxy, as a tuple, not a string."""
     if factory is not None:
         return factory(path, credentials)
     from .login import build_client
 
-    return build_client(path, credentials)
+    return build_client(path, credentials, proxy)
 
 
 def _describe(me) -> str:
@@ -151,7 +153,12 @@ def _describe(me) -> str:
             f"restricted={restricted}")
 
 
-def _proxy_text(settings: Settings) -> str:
+def _proxy_row(settings: Settings) -> str:
+    """The ``accounts.proxy`` column (TEXT), not an argument for Telethon.
+
+    A client needs ``ProxyConfig.to_telethon()``; this string is only what the
+    pool table shows and what SQLite can store.
+    """
     proxy = settings.proxy
     if not proxy:
         return ""

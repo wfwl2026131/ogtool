@@ -94,13 +94,16 @@ class ProxyConfig:
     password: str = ""
 
     def to_telethon(self) -> Any:
-        import socks
-        from telethon.network import ConnectionTcpMTProxyRandomizedIntermediate  # noqa: F401
+        """The proxy tuple Telethon expects, in its string form.
 
+        ``("socks5", host, port, True, user, pass)`` avoids importing PySocks
+        just for the numeric constants: Telethon 1.45 accepts the protocol name
+        and hands the connection to ``python-socks``, which is the package that
+        actually opens the socket.
+        """
         kind = self.kind.lower()
         if kind in ("socks5", "socks4"):
-            protocol = socks.SOCKS5 if kind == "socks5" else socks.SOCKS4
-            return (protocol, self.host, self.port, True,
+            return (kind, self.host, self.port, True,
                     self.username or None, self.password or None)
         raise ConfigError(f"unsupported proxy kind: {self.kind}")
 
@@ -243,13 +246,19 @@ class Settings:
             directory.mkdir(parents=True, exist_ok=True)
 
     def require_credentials(self) -> tuple[int, str]:
-        """api_id and api_hash, for the paths that really talk to Telegram."""
-        if not self.api_id or not self.api_hash:
-            raise ConfigError(
-                "api_id and api_hash are required for --live; "
-                "set them in config.yaml or OGTOOL_API_ID / OGTOOL_API_HASH"
-            )
-        return self.api_id, self.api_hash
+        """api_id and api_hash, for the paths that really talk to Telegram.
+
+        The config file may leave both empty: the pair is then read from the
+        environment through :func:`ogtool.login.resolve_credentials`, which
+        understands the ``$DSH_SECRET_TG_API_CREDENTIALS`` blob.  That keeps the
+        plain values out of a file that people copy around.
+        """
+        if self.api_id and self.api_hash:
+            return int(self.api_id), str(self.api_hash)
+        from .login import resolve_credentials
+
+        found = resolve_credentials(self)
+        return found.api_id, found.api_hash
 
     def session_path(self, label: str) -> Path:
         return self.session_dir / f"{label}.session"

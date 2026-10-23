@@ -11,3 +11,4 @@ og.sqlite
 *.session-journal
 logs/
 data/
+config.yaml.bak-*

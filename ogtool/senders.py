@@ -10,9 +10,11 @@ session and no network, and the error codes stay in one place.
 from __future__ import annotations
 
 import contextlib
+import inspect
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .config import Settings
 from .simulate import (
@@ -41,8 +43,12 @@ from .simulate import (
 )
 from .targets import Target
 
+#: A backend returned a coroutine instead of a value: the call never ran.
+CLIENT_NOT_AWAITED = "CLIENT_NOT_AWAITED"
+
 __all__ = [
     "BOT_RESULTS_EMPTY",
+    "CLIENT_NOT_AWAITED",
     "CHANNEL_PRIVATE",
     "CHAT_ADMIN_REQUIRED",
     "CHAT_WRITE_FORBIDDEN",
@@ -124,6 +130,8 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
     name = type(error).__name__
     text = str(error)
     upper = text.upper()
+    if name == "ClientNotAwaited":
+        return CLIENT_NOT_AWAITED, text, False
     if name == "FloodWaitError" or "FLOOD_WAIT" in upper:
         return FLOOD_WAIT, text, True
     if "PEER_FLOOD" in upper:
@@ -155,6 +163,45 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
     if "PHONE_NUMBER_OCCUPIED" in upper or "PHONE_OCCUPIED" in upper:
         return PHONE_OCCUPIED, text, False
     return UNKNOWN, f"{name}: {text}", False
+
+
+class ClientNotAwaited(RuntimeError):
+    """An awaitable came back where a value should be: nothing was sent."""
+
+
+class _AwaitedClient:
+    """The client, with every call checked for an un-unawaited coroutine.
+
+    ``telethon.TelegramClient`` (the async one) returns coroutines; the sync
+    wrapper this module uses returns real values.  If the import ever slides
+    back, every call would look like a success while doing nothing -- exactly
+    the bug this class exists to make impossible to miss.
+    """
+
+    def __init__(self, client: Any) -> None:
+        self._client = client
+
+    def __getattr__(self, name: str) -> Any:
+        attribute = getattr(self._client, name)
+        if not callable(attribute):
+            return attribute
+
+        def call(*args: Any, **kwargs: Any) -> Any:
+            return self._checked(attribute(*args, **kwargs), name)
+
+        return call
+
+    def __call__(self, request: Any) -> Any:
+        return self._checked(self._client(request), "request")
+
+    @staticmethod
+    def _checked(value: Any, name: str) -> Any:
+        if not inspect.isawaitable(value):
+            return value
+        if inspect.iscoroutine(value):
+            value.close()
+        raise ClientNotAwaited(f"{name} returned a coroutine; the async client "
+                               f"was used without await")
 
 
 class DryRunSender:
@@ -281,6 +328,21 @@ class DryRunSender:
         """Nothing to release; kept so both backends share one interface."""
 
 
+def _proxy_tuple(url: str) -> Any:
+    """``socks5://user:pass@host:1080`` -> the tuple Telethon accepts."""
+    text = (url or "").strip()
+    if not text:
+        return None
+    parts = urlsplit(text)
+    kind = (parts.scheme or "socks5").lower()
+    if kind not in ("socks5", "socks4"):
+        raise ValueError(f"unsupported proxy kind: {kind}")
+    if not parts.hostname:
+        raise ValueError("proxy URL has no host")
+    return (kind, parts.hostname, parts.port or 1080, True,
+            parts.username or None, parts.password or None)
+
+
 @dataclass(slots=True)
 class TelethonSender:
     """The real backend. Imports Telethon lazily, so dry runs need no install."""
@@ -297,11 +359,15 @@ class TelethonSender:
         if not session_path.exists():
             raise RuntimeError(f"{SESSION_NOT_FOUND}: {session_path}")
         try:
-            from telethon import TelegramClient
+            # The sync wrapper is the whole point: the async client returns
+            # coroutines, so every call would be a silent no-op.
+            from telethon.sync import TelegramClient
         except ImportError as error:  # pragma: no cover - live only
             raise RuntimeError("telethon is not installed") from error
         proxy = self.settings.proxy.to_telethon() if self.settings.proxy else None
-        client = TelegramClient(str(session_path), api_id, api_hash, proxy=proxy)
+        client = _AwaitedClient(
+            TelegramClient(str(session_path), api_id, api_hash, proxy=proxy)
+        )
         client.connect()
         self._clients[account] = client
         return client
@@ -338,6 +404,9 @@ class TelethonSender:
 
         def action() -> SendResult:
             client = self._client(account)
+            if not client.is_user_authorized():
+                return SendResult(ok=False, code=SESSION_NOT_FOUND,
+                                  detail="the session is not authorized")
             me = client.get_me()
             if me is None:
                 return SendResult(ok=False, code=SESSION_NOT_FOUND,
@@ -412,7 +481,7 @@ class TelethonSender:
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         def action() -> SendResult:
             client = self._client(account)
-            client.set_proxy(proxy or None)
+            client.set_proxy(_proxy_tuple(proxy))
             return SendResult(ok=True)
 
         return self._guard("proxy", account, action)

@@ -44,7 +44,12 @@ def test_settings_loads_relative_paths(tmp_path):
     assert settings.require_credentials() == (123, "abc")
 
 
-def test_settings_requires_credentials_for_live(tmp_path):
+def test_settings_requires_credentials_for_live(tmp_path, monkeypatch):
+    # The fallback reads the environment, so the test must not inherit a secret
+    # that happens to be exported on the machine running it.
+    for name in ("DSH_SECRET_TG_API_CREDENTIALS", "TG_API_CREDENTIALS",
+                 "TG_API_ID", "TG_API_HASH", "OGTOOL_API_ID", "OGTOOL_API_HASH"):
+        monkeypatch.delenv(name, raising=False)
     config = tmp_path / "config.yaml"
     config.write_text("api_id: 0\napi_hash: ''\n", encoding="utf-8")
     settings = Settings.load(config)
