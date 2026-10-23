@@ -63,6 +63,18 @@ def scripted(ctx: RunContext):
 
 
 @pytest.fixture
+def live(ctx: RunContext):
+    """Flip a context to live with a stand-in transport attached."""
+
+    def _make(sender: object) -> RunContext:
+        ctx.live = True
+        ctx._sender = sender
+        return ctx
+
+    return _make
+
+
+@pytest.fixture
 def ctx(settings: Settings, store: Store, pooled: list[str]) -> RunContext:
     logger = logging.getLogger("ogtool.test")
     logger.addHandler(logging.NullHandler())

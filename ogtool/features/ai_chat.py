@@ -29,6 +29,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     record_ai,
     section,
@@ -180,6 +181,7 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
                                 fallback=_fallback(line))
         record_ai(ctx, task, line.account, "chat", generated)
         body = Content(text=generated.response)
+        pause(ctx, line.delay)
         outcome = sender.send(line.account, target, body)
         waited += line.delay
         if outcome.ok:

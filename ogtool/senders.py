@@ -96,6 +96,8 @@ class Content:
     media: str = ""
     forward_from: str = ""
     sticker: str = ""
+    #: Answer inside one thread (a channel post id), instead of a plain post.
+    reply_to: int = 0
 
     def describe(self) -> str:
         parts = []
@@ -107,7 +109,46 @@ class Content:
             parts.append(f"sticker={self.sticker}")
         if self.forward_from:
             parts.append(f"forward={self.forward_from}")
+        if self.reply_to:
+            parts.append(f"reply_to={self.reply_to}")
         return " ".join(parts) or "(empty)"
+
+
+#: What Telethon says when it cannot turn a peer into an input entity.  Only
+#: these failures may be retried with the other form of the same target: the
+#: message never left, so a retry cannot double send.
+_UNRESOLVED = (
+    "cannot find any entity",
+    "could not find the input entity",
+    "peer id invalid",
+    "user_id_invalid",
+    "no user has",
+)
+
+
+def _unresolved(error: BaseException) -> bool:
+    if type(error).__name__ in ("ValueError", "PeerIdInvalidError",
+                                "UserIdInvalidError"):
+        return True
+    lowered = str(error).lower()
+    return any(marker in lowered for marker in _UNRESOLVED)
+
+
+def peer_variants(target: Target) -> list[Any]:
+    """The forms to try for one target, best first.
+
+    A numeric id has to go in as ``int``: Telethon parses any digit *string*
+    as a phone number, which is how ``--targets 6805350975`` used to end up
+    asking for ``+6805350975``.  The phone form stays as the fallback for a
+    number that really is a phone number written without a plus.
+    """
+    ref = target.ref
+    if ref.isdigit():
+        forms: list[Any] = [int(ref)]
+        if target.phone_fallback:
+            forms.append(target.phone_fallback)
+        return forms
+    return [ref]
 
 
 def result_for(code: str, detail: str = "") -> SendResult:
@@ -293,6 +334,9 @@ class DryRunSender:
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         return self._answer("proxy", account, f"proxy={proxy or '-'}")
 
+    def logout(self, account: str) -> SendResult:
+        return self._answer("logout", account)
+
     # contacts, groups and activity -----------------------------------
 
     def get_contacts(self, account: str) -> SendResult:
@@ -326,6 +370,21 @@ class DryRunSender:
 
     def close(self) -> None:
         """Nothing to release; kept so both backends share one interface."""
+
+
+def _deliver(client: Any, peer: Any, content: Content) -> Any:
+    """One message, whichever shape the content asks for."""
+    reply_to = content.reply_to or None
+    if content.forward_from:
+        return client.forward_messages(peer, content.forward_from)
+    if content.sticker and Path(content.sticker).exists():
+        return client.send_file(peer, content.sticker,
+                                caption=content.text or None)
+    if content.media:
+        return client.send_file(peer, content.media,
+                                caption=content.text or None,
+                                reply_to=reply_to)
+    return client.send_message(peer, content.text, reply_to=reply_to)
 
 
 def _proxy_tuple(url: str) -> Any:
@@ -380,24 +439,32 @@ class TelethonSender:
             return SendResult(ok=False, code=code, detail=detail,
                               retryable=retryable)
 
-    def send(self, account: str, target: Target, content: Content) -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            peer = target.ref
-            if content.forward_from:
-                message = client.forward_messages(peer, content.forward_from)
-            elif content.sticker and Path(content.sticker).exists():
-                message = client.send_file(peer, content.sticker,
-                                           caption=content.text or None)
-            elif content.media:
-                message = client.send_file(
-                    peer, content.media, caption=content.text or None
-                )
-            else:
-                message = client.send_message(peer, content.text)
-            return SendResult(ok=True, message_id=int(getattr(message, "id", 0)))
+    def _on_target(self, account: str, target: Target, operation: str,
+                   call: Any) -> SendResult:
+        """Run ``call(client, peer)`` for the first peer form that resolves."""
 
-        return self._guard("send", account, action)
+        def action() -> Any:
+            client = self._client(account)
+            last: Exception | None = None
+            for peer in peer_variants(target):
+                try:
+                    return call(client, peer)
+                except Exception as error:  # noqa: BLE001 - retried below
+                    if not _unresolved(error):
+                        raise
+                    last = error
+            assert last is not None
+            raise last
+
+        return self._guard(operation, account, action)
+
+    def send(self, account: str, target: Target, content: Content) -> SendResult:
+        def call(client: Any, peer: Any) -> SendResult:
+            message = _deliver(client, peer, content)
+            return SendResult(ok=True,
+                              message_id=int(getattr(message, "id", 0)))
+
+        return self._on_target(account, target, "send", call)
 
     def ping(self, account: str) -> SendResult:
         """Ask the server for our own user, which also refreshes our presence."""
@@ -416,37 +483,44 @@ class TelethonSender:
         return self._guard("ping", account, action)
 
     def join(self, account: str, target: Target) -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            client.join(target.ref)
+        def call(client: Any, peer: Any) -> SendResult:
+            client.join(peer)
             return SendResult(ok=True)
 
-        return self._guard("join", account, action)
+        return self._on_target(account, target, "join", call)
 
     def leave(self, account: str, target: Target) -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            client.leave(target.ref)
+        def call(client: Any, peer: Any) -> SendResult:
+            client.leave(peer)
             return SendResult(ok=True)
 
-        return self._guard("leave", account, action)
+        return self._on_target(account, target, "leave", call)
 
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
         def action() -> SendResult:
             client = self._client(account)
-            client.invite(group.ref, member.ref)
-            return SendResult(ok=True)
+            last: Exception | None = None
+            for group_peer in peer_variants(group):
+                for member_peer in peer_variants(member):
+                    try:
+                        client.invite(group_peer, member_peer)
+                        return SendResult(ok=True)
+                    except Exception as error:  # noqa: BLE001 - retried
+                        if not _unresolved(error):
+                            raise
+                        last = error
+            assert last is not None
+            raise last
 
         return self._guard("invite", account, action)
 
     def get_participants(self, account: str, target: Target,
                          limit: int = 0) -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            users = client.get_participants(target.ref, limit=limit or None)
+        def call(client: Any, peer: Any) -> SendResult:
+            users = client.get_participants(peer, limit=limit or None)
             return SendResult(ok=True, count=len(users))
 
-        return self._guard("participants", account, action)
+        return self._on_target(account, target, "participants", call)
 
     def update_profile(self, account: str, first: str,
                        last: str = "") -> SendResult:
@@ -459,24 +533,22 @@ class TelethonSender:
 
     def add_contact(self, account: str, target: Target,
                     first: str = "") -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            client.add_contact(target.ref, first or target.ref,
+        def call(client: Any, peer: Any) -> SendResult:
+            client.add_contact(peer, first or target.display(),
                                add_phone_privacy_exception=False)
             return SendResult(ok=True)
 
-        return self._guard("contact", account, action)
+        return self._on_target(account, target, "contact", call)
 
     def resolve(self, account: str, target: Target) -> SendResult:
-        def action() -> SendResult:
-            client = self._client(account)
-            entity = client.get_entity(target.ref)
+        def call(client: Any, peer: Any) -> SendResult:
+            entity = client.get_entity(peer)
             title = getattr(entity, "title", "") or getattr(entity, "username", "")
             count = int(getattr(entity, "participants_count", 0) or 0)
             return SendResult(ok=True, detail=str(title or target.ref),
                               count=count)
 
-        return self._guard("resolve", account, action)
+        return self._on_target(account, target, "resolve", call)
 
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         def action() -> SendResult:
@@ -519,11 +591,10 @@ class TelethonSender:
         return self._guard("create_group", account, action)
 
     def last_activity(self, account: str, target: Target) -> SendResult:
-        def action() -> SendResult:
+        def call(client: Any, peer: Any) -> SendResult:
             from datetime import UTC, datetime
 
-            client = self._client(account)
-            messages = client.get_messages(target.ref, limit=1)
+            messages = client.get_messages(peer, limit=1)
             if not messages:
                 return SendResult(ok=True, count=-1, detail="no messages")
             stamp = getattr(messages[0], "date", None)
@@ -535,7 +606,19 @@ class TelethonSender:
             return SendResult(ok=True, count=int(hours),
                               detail=f"last message {int(hours)}h ago")
 
-        return self._guard("activity", account, action)
+        return self._on_target(account, target, "activity", call)
+
+    def logout(self, account: str) -> SendResult:
+        def action() -> SendResult:
+            client = self._client(account)
+            done = client.log_out()
+            if not done:
+                return SendResult(ok=False, code=UNKNOWN,
+                                  detail="log_out() returned False")
+            self._clients.pop(account, None)
+            return SendResult(ok=True)
+
+        return self._guard("logout", account, action)
 
     def close(self) -> None:
         for client in self._clients.values():

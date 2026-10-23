@@ -53,3 +53,138 @@ def test_no_relay_group_keeps_everything_out(ctx, capsys):
 def test_no_target_is_a_config_error():
     with pytest.raises(ConfigError):
         WatchConfig.from_dict({}, None)  # type: ignore[arg-type]
+
+
+# -- the live path ----------------------------------------------------
+#
+# Everything below fails if ``--live`` only returns: the handler has to be
+# registered on the client and the loop has to be entered, otherwise a watcher
+# that watches nothing still exits 0, which is exactly the bug this covers.
+
+
+class FakeLoop:
+    """Stands in for the event loop: it records what was wired up first."""
+
+    def __init__(self, client: FakeClient) -> None:
+        self.client = client
+        self.calls = 0
+        self.handlers_seen: list[object] = []
+
+    def run_forever(self) -> None:
+        self.calls += 1
+        self.handlers_seen = list(self.client.handlers)
+        raise KeyboardInterrupt
+
+
+class FakeMessage:
+    id = 900
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.handlers: list[object] = []
+        self.sent: list[tuple[object, str]] = []
+
+    def add_event_handler(self, handler: object) -> None:
+        self.handlers.append(handler)
+
+    def remove_event_handler(self, handler: object) -> None:
+        if handler in self.handlers:
+            self.handlers.remove(handler)
+
+    async def send_message(self, peer: object, text: str) -> object:
+        self.sent.append((peer, text))
+        return FakeMessage()
+
+
+class FakeSender:
+    def __init__(self, clients: dict[str, FakeClient]) -> None:
+        self.clients = clients
+
+    def _client(self, label: str) -> FakeClient:
+        return self.clients[label]
+
+    def close(self) -> None:
+        pass
+
+
+class FakeEvent:
+    def __init__(self, client: FakeClient, chat_id: int, message_id: int,
+                 text: str) -> None:
+        self.client = client
+        self.chat_id = chat_id
+        self.id = message_id
+        self.raw_text = text
+
+
+def live_ctx(ctx, monkeypatch, clients: dict[str, FakeClient]) -> FakeLoop:
+    """A live context with a fake transport and a loop that stops at once."""
+    import asyncio
+
+    pytest.importorskip("telethon")
+    loop = FakeLoop(next(iter(clients.values())))
+    ctx.live = True
+    ctx._sender = FakeSender(clients)
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: loop)
+    return loop
+
+
+def test_live_registers_a_handler_and_enters_the_loop(ctx, monkeypatch):
+    client = FakeClient()
+    loop = live_ctx(ctx, monkeypatch, {"acc1": client, "acc2": client})
+    config = WatchConfig(targets=parse_many(["@watch1"], "custom"),
+                         relay="@relay", exclude=["spam"])
+
+    assert run(config, ctx) == 0
+
+    assert loop.calls == 1, "the event loop was never entered"
+    assert len(loop.handlers_seen) == 2, "no NewMessage handler was registered"
+    assert client.handlers == [], "the handler outlived the run"
+    row = ctx.store.task_row(ctx.task_id)
+    assert row is not None and row["status"] == "done"
+
+
+def test_live_without_a_session_is_an_error(ctx, monkeypatch):
+    ctx.live = True
+    ctx._sender = FakeSender({})
+    monkeypatch.setattr(
+        "ogtool.runtime.RunContext.bind", lambda self, labels: [])
+    config = WatchConfig(targets=parse_many(["@watch1"], "custom"),
+                         relay="@relay")
+    assert run(config, ctx) == 1
+    row = ctx.store.task_row(ctx.task_id)
+    assert row is not None and row["status"] == "failed"
+
+
+def test_the_live_handler_drops_excluded_and_relays_the_rest(ctx, monkeypatch):
+    import asyncio
+
+    client = FakeClient()
+    loop = live_ctx(ctx, monkeypatch, {"acc1": client, "acc2": client})
+    config = WatchConfig(targets=parse_many(["@watch1"], "custom"),
+                         relay="@relay", exclude=["spam"])
+    run(config, ctx)
+    handler = loop.handlers_seen[0]
+
+    asyncio.run(handler(FakeEvent(client, -1001, 5, "hello there")))
+    assert client.sent == [("@relay", "hello there")]
+
+    asyncio.run(handler(FakeEvent(client, -1001, 6, "buy spam now")))
+    assert len(client.sent) == 1, "an excluded message was relayed"
+
+    # The same message delivered twice after a reconnect is not reposted.
+    asyncio.run(handler(FakeEvent(client, -1001, 5, "hello there")))
+    assert len(client.sent) == 1, "a duplicate was relayed twice"
+
+    statuses = [row["status"] for row in ctx.store.results_for(ctx.task_id)]
+    assert statuses.count("sent") == 1
+    assert statuses.count("dropped") == 2
+
+
+def test_numeric_targets_are_watched_as_ids_and_relay_as_written():
+    from ogtool.features.watch_chat import relay_peers, watch_peers
+
+    config = WatchConfig(targets=parse_many(["6805350975"], "custom"),
+                         relay="+15550000001")
+    assert watch_peers(config) == [6805350975]
+    assert relay_peers(config.relay) == ["+15550000001"]

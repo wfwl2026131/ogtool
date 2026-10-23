@@ -8,6 +8,7 @@ stays about its own subject.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from ..config import ConfigError, Settings
@@ -176,6 +177,16 @@ def record_ai(ctx: RunContext, task: TaskRef, account: str, kind: str,
 def read_list_file(path: str) -> list[str]:
     """A .txt the page asks the user to pick; ``#`` lines are comments."""
     return read_lines(path)
+
+
+def pause(ctx: RunContext, seconds: float) -> None:
+    """Wait between two sends, but only when live.
+
+    A dry run must finish instantly, so it reports the interval instead of
+    sleeping it; a live run has to actually keep the pace the page set.
+    """
+    if ctx.live and seconds and seconds > 0:
+        time.sleep(seconds)
 
 
 def result_code(ok: bool, code: str) -> str:

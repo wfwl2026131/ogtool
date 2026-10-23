@@ -144,6 +144,10 @@ def execute(
 
         assert result is not None
         outcome.stats.record(result.ok, result.code)
+        # The page records one row per job afterwards, so the answer has to
+        # survive the loop; a job the caps stopped early never gets a row.
+        job.extra["ok"] = "1" if result.ok else ""
+        job.extra["code"] = result.code
         if not result.ok:
             if result.code in missing:
                 outcome.note_missing(job.subject)

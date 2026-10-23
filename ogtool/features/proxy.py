@@ -192,8 +192,11 @@ def _bind(rows: list[Proxy], config: ProxyConfig, ctx: RunContext) -> None:
             print(f"bind {label}: proxy not found: {target_id!r}")
             continue
         ctx.store.bind_proxy(label, proxy)
-        ctx.sender().set_proxy(label, proxy.url())  # the real URL
-        print(f"bind {label} -> #{proxy.id} {proxy.display()}")
+        answer = ctx.sender().set_proxy(label, proxy.url())  # the real URL
+        if answer.ok:
+            print(f"bind {label} -> #{proxy.id} {proxy.display()}")
+        else:
+            print(f"bind {label} -> #{proxy.id} {answer.code} {answer.detail}")
 
 
 @register(FEATURE)

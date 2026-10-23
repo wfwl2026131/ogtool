@@ -22,6 +22,7 @@ from ..senders import PEER_FLOOD, Content
 from ..store import Account
 from ..targets import Target, collect
 from . import register
+from ._common import pause
 
 FEATURE = "mass_send"
 
@@ -214,10 +215,10 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
         planned=len(planned),
     )
     ctx.task_id = task.id
-    for item in planned:
-        ctx.store.add_result(task.id, item.account, item.target.ref, "planned")
-
     if not ctx.live:
+        for item in planned:
+            ctx.store.add_result(task.id, item.account, item.target.ref,
+                                 "planned")
         print("dry-run: nothing was sent")
         ctx.store.finish_task(task.id, sent=0, status="dry-run")
         return 0
@@ -226,7 +227,10 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     backoff = PeerFloodBackoff()
     sent = failed = 0
     attempts: dict[tuple[str, str], int] = {}
+    elapsed = 0.0
     for line, item in zip(render(planned, contents, start), planned, strict=True):
+        pause(ctx, item.offset - elapsed)
+        elapsed = item.offset
         result = sender.send(item.account, item.target, contents[item.account])
         if result.ok:
             sent += 1

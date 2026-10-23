@@ -30,6 +30,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     record_ai,
     section,
@@ -257,11 +258,13 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         record_ai(ctx, task, spec.account, "comment", generated)
         if not generated.ok:
             ai_fallback += 1
+        pause(ctx, spec.delay)
         body = _clip(generated.response, config.max_chars)
         if spec.emoji:
             emoji_used += 1
             body = f"{body} {config.like_emoji or 'emoji'}".strip()
-        outcome = sender.send(spec.account, target, Content(text=body))
+        outcome = sender.send(spec.account, target,
+                              Content(text=body, reply_to=spec.post_id))
         waited += spec.delay
         if outcome.ok:
             ok += 1

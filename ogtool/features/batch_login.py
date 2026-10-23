@@ -186,7 +186,11 @@ def _import(folder: Path, config: LoginConfig, ctx: RunContext) -> int:
 
 
 def _logout(mode: str, ctx: RunContext) -> int:
-    """The three bulk logouts, printed as the page would act on them."""
+    """The three bulk logouts: printed in a dry run, performed when live.
+
+    The three modes name the same pool here, because the account table does not
+    record the frozen / two way distinction the reference keeps on its side.
+    """
     labels = [account.label for account in ctx.store.list_accounts()]
     if not labels:
         print("no accounts to log out")
@@ -200,9 +204,24 @@ def _logout(mode: str, ctx: RunContext) -> int:
         print(f"ERROR: --logout wants frozen|all|both, not {mode!r}")
         return -1
     print(f"批量退出{plan[mode]}：{len(labels)} accounts")
+    if not ctx.live:
+        for label in labels:
+            print(f"logout {mode} {label}")
+        print("dry-run: nothing was logged out")
+        return len(labels)
+
+    sender = ctx.sender()
+    done = 0
     for label in labels:
-        print(f"logout {mode} {label}")
-    return len(labels)
+        result = sender.logout(label)
+        if result.ok:
+            done += 1
+            ctx.store.set_account_status(label, "logged-out")
+            print(f"logout {mode} {label} -> ok")
+        else:
+            print(f"logout {mode} {label} -> {result.code} {result.detail}")
+    print(f"logged out: {done}/{len(labels)}")
+    return done
 
 
 @register(FEATURE)

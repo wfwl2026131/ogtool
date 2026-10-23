@@ -145,7 +145,10 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
                       flood_cap=config.flood_cap, retry_cap=1, label="group")
 
     for job in jobs:
-        record(ctx, task, job.account, job.subject, True, "planned")
+        if "ok" not in job.extra:
+            continue
+        record(ctx, task, job.account, job.subject, job.extra["ok"] == "1",
+               job.extra["code"])
     stats: Stats = outcome.stats
     print_outcome(outcome, eta_per_job=config.account_interval)
     close_task(ctx, task, ok=stats.ok, failed=stats.failed)

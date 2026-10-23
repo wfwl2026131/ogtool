@@ -36,6 +36,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     record_ai,
     section,
@@ -236,6 +237,7 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
                 fallback += 1
             body_text = generated.response
             label = generated.label()
+        pause(ctx, item.delay)
         outcome = sender.send(item.account, target,
                               Content(text=body_text,
                                       media=item.source.media))

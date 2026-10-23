@@ -284,3 +284,45 @@ steps:
     output = capsys.readouterr().out
     assert "target=- (no target given)" in output
     assert "-> failed" in output
+
+
+class OkSender:
+    def send(self, account: str, target: object, content: object):
+        from ogtool.senders import SendResult
+
+        return SendResult(ok=True, message_id=1)
+
+    def close(self) -> None:
+        pass
+
+
+WAIT_THEN_SEND = """\
+name: pause
+title: Pause
+steps:
+  - action: wait
+    seconds: 2
+  - action: send_text
+    text: after
+"""
+
+
+def test_a_wait_step_actually_waits_when_live(tmp_path, ctx, live, monkeypatch):
+    write_script(tmp_path, WAIT_THEN_SEND)
+    slept: list[float] = []
+    monkeypatch.setattr(auto_script.time, "sleep", lambda seconds: slept.append(seconds))
+    live(OkSender())
+    dsl = scriptdsl.load(tmp_path / "demo.yaml")
+    assert execute(config_for(tmp_path, script_name="pause"), ctx, dsl) == 0
+    assert slept == [2.0], "the wait step never waited"
+
+
+def test_a_wait_step_only_counts_in_a_dry_run(tmp_path, ctx, monkeypatch,
+                                              capsys):
+    write_script(tmp_path, WAIT_THEN_SEND)
+    slept: list[float] = []
+    monkeypatch.setattr(auto_script.time, "sleep", lambda seconds: slept.append(seconds))
+    dsl = scriptdsl.load(tmp_path / "demo.yaml")
+    execute(config_for(tmp_path, script_name="pause"), ctx, dsl)
+    assert slept == []
+    assert "would wait 2s" in capsys.readouterr().out

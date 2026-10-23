@@ -54,3 +54,29 @@ def test_terminal_answer_is_counted_as_failure(ctx, scripted, capsys):
 def test_duplicate_targets_are_collapsed():
     groups = parse_many(["@g1", "@g1", "https://t.me/g1"], "group")
     assert len(groups) == 1
+
+
+class JoinSender:
+    """Feeds the loop a scripted answer per join, as the live sender would."""
+
+    def __init__(self, codes: list[str]) -> None:
+        self.codes = list(codes)
+        self.calls = 0
+
+    def join(self, account: str, target: object):
+        from ogtool.senders import result_for
+
+        code = self.codes[self.calls] if self.calls < len(self.codes) else "ok"
+        self.calls += 1
+        return result_for(code)
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_live_run_records_the_real_outcome_of_each_join(ctx, live, capsys):
+    live(JoinSender(["ok", "CHANNEL_PRIVATE"]))
+    config = JoinConfig(targets=parse_many(["@g1", "@g2"], "group"))
+    assert run(config, ctx) == 1
+    rows = ctx.store.results_for(ctx.task_id)
+    assert [row["status"] for row in rows] == ["sent", "failed"]

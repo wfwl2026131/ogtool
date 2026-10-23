@@ -51,7 +51,8 @@ class SyncClient:
             id = 6805350975
         return Me()
 
-    def send_message(self, peer: object, text: str) -> object:
+    def send_message(self, peer: object, text: str,
+                     reply_to: object = None) -> object:
         self.sent.append((peer, text))
 
         class Message:
@@ -146,3 +147,108 @@ def test_the_config_proxy_is_a_string_protocol_tuple():
     assert proxy.to_telethon() == (
         "socks5", "127.0.0.1", 12888, True, None, None)
     assert not isinstance(proxy.to_telethon()[0], int)
+
+
+class RecordingClient(SyncClient):
+    """Keeps what the sender actually handed the client."""
+
+    instances: list[RecordingClient] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        RecordingClient.instances.append(self)
+        self.peers: list[object] = []
+        self.replies: list[object] = []
+        self.attempts = 0
+        self.logged_out = False
+
+    def send_message(self, peer: object, text: str,
+                     reply_to: object = None) -> object:
+        self.attempts += 1
+        self.peers.append(peer)
+        self.replies.append(reply_to)
+        return super().send_message(peer, text)
+
+    def log_out(self) -> bool:
+        self.logged_out = True
+        return True
+
+
+class IdBlindClient(RecordingClient):
+    """Rejects an int peer the way Telethon rejects an unknown id."""
+
+    def send_message(self, peer: object, text: str,
+                     reply_to: object = None) -> object:
+        if isinstance(peer, int):
+            self.attempts += 1
+            raise ValueError(
+                f'Cannot find any entity corresponding to "{peer}"')
+        return super().send_message(peer, text, reply_to)
+
+
+class BrokenClient(RecordingClient):
+    """A failure that has nothing to do with which peer form was used."""
+
+    def send_message(self, peer: object, text: str,
+                     reply_to: object = None) -> object:
+        self.attempts += 1
+        raise RuntimeError("the connection died")
+
+
+def numeric_target():
+    return parse_many(["6805350975"], "custom")[0]
+
+
+def test_a_numeric_target_goes_in_as_an_id(settings, session, credentials,
+                                            monkeypatch):
+    monkeypatch.setattr("telethon.sync.TelegramClient", RecordingClient)
+    sender = sender_for(settings)
+    result = sender.send("t1", numeric_target(), Content(text="hi"))
+    client = sender._clients["t1"]._client
+    assert result.ok is True
+    # Telethon reads any digit string as a phone number, so it has to be an int.
+    assert client.peers == [6805350975]
+    assert not isinstance(client.peers[0], str)
+
+
+def test_an_id_that_does_not_resolve_falls_back_to_the_phone(settings, session,
+                                                             credentials,
+                                                             monkeypatch):
+    monkeypatch.setattr("telethon.sync.TelegramClient", IdBlindClient)
+    sender = sender_for(settings)
+    result = sender.send("t1", numeric_target(), Content(text="hi"))
+    client = sender._clients["t1"]._client
+    assert result.ok is True
+    assert client.peers == ["+6805350975"]
+
+
+def test_a_failure_about_the_connection_is_not_retried(settings, session,
+                                                       credentials,
+                                                       monkeypatch):
+    monkeypatch.setattr("telethon.sync.TelegramClient", BrokenClient)
+    sender = sender_for(settings)
+    result = sender.send("t1", numeric_target(), Content(text="hi"))
+    client = sender._clients["t1"]._client
+    assert result.ok is False
+    assert client.attempts == 1, "a network error must not send twice"
+
+
+def test_reply_to_reaches_the_client(settings, session, credentials,
+                                     monkeypatch):
+    monkeypatch.setattr("telethon.sync.TelegramClient", RecordingClient)
+    sender = sender_for(settings)
+    result = sender.send("t1", target(), Content(text="hi", reply_to=42))
+    client = sender._clients["t1"]._client
+    assert result.ok is True
+    assert client.replies == [42]
+
+
+def test_logout_really_calls_the_client(settings, session, credentials,
+                                        monkeypatch):
+    monkeypatch.setattr("telethon.sync.TelegramClient", RecordingClient)
+    RecordingClient.instances.clear()
+    sender = sender_for(settings)
+    result = sender.logout("t1")
+    assert result.ok is True
+    assert RecordingClient.instances[-1].logged_out is True
+    assert "t1" not in sender._clients, "a logged out session must be dropped"

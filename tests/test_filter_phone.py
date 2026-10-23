@@ -68,3 +68,11 @@ def test_flood_and_timeout_are_invalid_not_crashes(ctx, scripted, capsys):
     out = capsys.readouterr().out
     assert f"{INVALID}：3" in out
     assert "failed: 3" in out
+
+
+def test_a_bare_number_is_still_a_phone_on_this_page():
+    from ogtool.features.filter_phone import phone_target
+
+    assert phone_target("15550000001").ref == "+15550000001"
+    assert phone_target("+15550000001").ref == "+15550000001"
+    assert phone_target("15550000001").phone_fallback == ""

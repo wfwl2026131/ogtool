@@ -66,3 +66,24 @@ def test_bind_writes_the_account_column(ctx, capsys):
     assert run(ProxyConfig(bind=["acc1=1"]), ctx) == 0
     assert "bind acc1 -> #1" in capsys.readouterr().out
     assert ctx.store.get_account("acc1").proxy == "socks5://1.1.1.1:1080"
+
+
+class RefusingSender:
+    """A transport that cannot apply this proxy, as with an mtproxy URL."""
+
+    def set_proxy(self, label: str, url: str):
+        from ogtool.senders import SendResult
+
+        return SendResult(ok=False, code="UNKNOWN",
+                          detail="unsupported proxy kind: mtproxy")
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_failed_bind_is_not_reported_as_bound(ctx, live, capsys):
+    live(RefusingSender())
+    run(ProxyConfig(add=["socks5://1.2.3.4:1080"], bind=["acc1=1"]), ctx)
+    output = capsys.readouterr().out
+    assert "bind acc1 -> #1 UNKNOWN" in output
+    assert "bind acc1 -> #1 socks5://1.2.3.4:1080" not in output

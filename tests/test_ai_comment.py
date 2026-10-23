@@ -80,3 +80,35 @@ def test_a_failing_model_still_produces_comments(ctx, capsys, fake_ai):
     output = capsys.readouterr().out
     assert "fallback 2" in output
     assert "ok: 2" in output
+
+
+class CapturingSender:
+    """Keeps the Content the page handed over, so the thread id is visible."""
+
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, object]] = []
+
+    def send(self, account: str, target: object, content: object):
+        from ogtool.senders import SendResult
+
+        self.sent.append((account, content))
+        return SendResult(ok=True, message_id=1)
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_comment_is_answered_under_its_post(ctx, live, fake_ai, monkeypatch):
+    from ogtool.features import _common
+
+    slept: list[float] = []
+    monkeypatch.setattr(_common.time, "sleep",
+                        lambda seconds: slept.append(seconds))
+    ctx.ai = fake_ai(lambda prompt, system, config: ("nice post", 3))
+    sender = CapturingSender()
+    live(sender)
+    config = config_for(posts=2, poll_recent=2, per_post_min=1,
+                        per_post_max=1)
+    assert run(config, ctx) == 0
+    assert [content.reply_to for _account, content in sender.sent] == [1, 2]
+    assert sum(slept) > 0, "a live run has to keep the comment interval"

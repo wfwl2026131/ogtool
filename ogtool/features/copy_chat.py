@@ -39,6 +39,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     section,
     targets_of,
@@ -308,6 +309,7 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                 delay = rng.uniform(config.interval_min, config.interval_max)
                 waited += delay
                 body = Content(text=message.text, media=message.media)
+                pause(ctx, delay)
                 outcome = sender.send(account, target, body)
                 if outcome.ok:
                     ok += 1

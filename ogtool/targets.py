@@ -22,13 +22,20 @@ class Target:
     kind: str      # private | group | channel | custom
     ref: str       # @name, numeric id, +phone or invite hash
     title: str = ""
+    #: A bare number is an id first; this keeps its phone form for the retry.
+    phone_fallback: str = ""
 
     def display(self) -> str:
         return self.title or self.ref
 
 
 _USERNAME = re.compile(r"^@?([A-Za-z][A-Za-z0-9_]{0,31})$")
-_PHONE = re.compile(r"^\+?\d{6,15}$")
+#: Only a leading plus makes a number a phone for certain.
+_PHONE = re.compile(r"^\+\d{6,15}$")
+#: A bare number this short is a user/chat id, not a phone number.
+_NUMERIC_ID = re.compile(r"^\d{5,12}$")
+#: Longer bare numbers (a full number with its country code) stay phones.
+_BARE_PHONE = re.compile(r"^\d{6,15}$")
 _TME = re.compile(
     r"^(?:https?://)?(?:t\.me|telegram\.me)/(?P<rest>.+)$", re.IGNORECASE
 )
@@ -59,7 +66,18 @@ def parse_entry(entry: str, kind: str = "custom") -> Target:
         return Target(kind if kind != "custom" else "channel", f"@{name.group(1)}")
 
     if _PHONE.match(text):
-        return Target("private", text if text.startswith("+") else f"+{text}")
+        return Target("private", text)
+
+    # A bare number inside the id range is an id first: Telethon reads a plain
+    # digit string as a phone, so the transport has to turn it into an int.
+    # The phone form rides along as the fallback, for numbers that really are
+    # phone numbers written without a plus.
+    if _NUMERIC_ID.match(text):
+        return Target(kind if kind != "custom" else "private", text,
+                      phone_fallback=f"+{text}")
+
+    if _BARE_PHONE.match(text):
+        return Target("private", f"+{text}")
 
     if text.lstrip("-").isdigit():
         return Target(kind if kind != "custom" else "private", text)

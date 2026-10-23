@@ -106,3 +106,43 @@ def test_results_are_recorded_as_planned(ctx, capsys):
     rows = ctx.store._conn.execute("SELECT status FROM results").fetchall()
     assert [row["status"] for row in rows] == ["planned"] * 4
     capsys.readouterr()
+
+
+class OkSender:
+    """A live transport that accepts everything, so only the rows are on trial."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def send(self, account: str, target: object, content: object):
+        from ogtool.senders import SendResult
+
+        self.calls += 1
+        return SendResult(ok=True, message_id=self.calls)
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_live_run_records_sent_rows_and_keeps_its_interval(
+        ctx, live, capsys, monkeypatch):
+    from ogtool.features import _common
+
+    slept: list[float] = []
+    monkeypatch.setattr(_common.time, "sleep",
+                        lambda seconds: slept.append(seconds))
+    live(OkSender())
+    assert run(make_config(), ctx) == 0
+    statuses = [row["status"] for row in ctx.store.results_for(ctx.task_id)]
+    assert statuses and set(statuses) == {"sent"}, statuses
+    assert sum(slept) > 0, "a live run has to keep the interval it planned"
+
+
+def test_a_dry_run_never_sleeps(ctx, monkeypatch):
+    from ogtool.features import _common
+
+    slept: list[float] = []
+    monkeypatch.setattr(_common.time, "sleep",
+                        lambda seconds: slept.append(seconds))
+    assert run(make_config(), ctx) == 0
+    assert slept == []

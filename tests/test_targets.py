@@ -65,3 +65,29 @@ def test_collect_merges_inline_and_files(tmp_path):
     listing.write_text("@from_file\n# comment\n", encoding="utf-8")
     targets = collect(inline="@inline", files=[str(listing)])
     assert sorted(t.ref for t in targets) == ["@from_file", "@inline"]
+
+
+def test_a_bare_number_is_an_id_first_with_a_phone_fallback():
+    target = parse_entry("6805350975", "custom")
+    assert target.kind == "private"
+    assert target.ref == "6805350975"
+    assert target.phone_fallback == "+6805350975"
+
+
+def test_a_leading_plus_always_means_a_phone():
+    target = parse_entry("+6805350975", "custom")
+    assert target.ref == "+6805350975"
+    assert target.phone_fallback == ""
+
+
+def test_a_number_with_its_country_code_stays_a_phone():
+    assert parse_entry("8613800000000", "custom").ref == "+8613800000000"
+
+
+def test_peer_variants_try_the_id_before_the_phone():
+    from ogtool.senders import peer_variants
+
+    assert peer_variants(parse_entry("6805350975")) == [6805350975,
+                                                       "+6805350975"]
+    assert peer_variants(parse_entry("@demo))".replace("))", ""))) == ["@demo"]
+    assert peer_variants(parse_entry("+15550000001")) == ["+15550000001"]

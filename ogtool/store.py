@@ -347,6 +347,12 @@ class Store:
         self._conn.commit()
         return TaskRef(id=int(cursor.lastrowid), name=name, feature=feature)
 
+    def task_row(self, task_id: int) -> sqlite3.Row | None:
+        """One task as stored, so a caller can read the counters it closed."""
+        return self._conn.execute(
+            "SELECT * FROM tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+
     def finish_task(self, task_id: int, sent: int = 0, failed: int = 0,
                     status: str = "done") -> None:
         self._conn.execute(

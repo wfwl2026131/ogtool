@@ -174,9 +174,12 @@ ogtool auto_reply --rule "ping=>pong" --duplicate-seconds 120 \
 ## 十个 P1 命令
 
 ```bash
-# #7 监听聊天：目标 + 排除关键词 + 中转群，dry-run 逐条判断
+# #7 监听聊天：目标 + 排除关键词 + 中转群
+# dry-run 逐条回放判断；--live 真挂 NewMessage handler，Ctrl+C 收尾（任务记 done）
 ogtool watch_chat --targets "@watch1" --exclude "spam,广告" --relay "@relay" \
   --simulate "@watch1|@alice|hello" --simulate "@watch1|@bob|cheap spam"
+ogtool --config config.yaml watch_chat --accounts t1 \
+  --targets "@watch1" --exclude "spam" --relay "@relay" --live
 
 # #8 批量加群
 ogtool batch_join --targets "@g1,@g2,@g3" --request-interval 5 \
@@ -468,15 +471,83 @@ tests/            295 条
 ~/.venvs/ogtool/bin/ruff check .
 ```
 
+## live 路径体检（真号联调后）
+
+判据只有一条：**有没有真的发生网络副作用**——真的调了 Telethon，并且用上了
+它的返回值。「真」= 调了且消费结果；「部分」= 调了但有一半没落地；「假」= stub /
+回放 / 只打印。`_AwaitedClient` 只能防「协程没 await」，防不住「根本没调」，
+所以这张表按副作用判，不按代码里有没有 `ctx.live` 判。
+
+| feature | live 走向 | 判定 | 证据（函数名:行号） |
+|---|---|---|---|
+| `add_contact` | `add_contact()` 真调用，按 `ok/code` 入 results | 真 | `add_contact.py:157` |
+| `ai_chat` | AI 生成 → `send_message()`，间隔真等 | 真 | `ai_chat.py:184/186` |
+| `ai_clone` | AI 改写 → 发正文/媒体；**源消息只来自任务文件** | 部分 | `ai_clone.py:241` |
+| `ai_comment` | `send_message(reply_to=post_id)` 真落在帖子下 | 部分 | `ai_comment.py:266`（点赞/表情未落 reaction） |
+| `auto_reply` | `add_event_handler()` + `run_forever()`，命中即回 | 真 | `auto_reply.py:209/214` |
+| `auto_script` | 每步真调 sender；`wait` 步真等 | 真 | `auto_script.py:159/172` |
+| `batch_invite` | `invite()` + PEER_FLOOD 退避 | 真 | `batch_invite.py:231/239` |
+| `batch_invite_v2` | 同上，目标取自己联系人 | 真 | `batch_invite_v2.py:200/208` |
+| `batch_join` | `join()` 真调用，按每个 job 的结果入 results | 真 | `batch_join.py:139` |
+| `batch_login` | 导入是文件操作；`--logout` 真 `log_out()` | 真 | `batch_login.py:216` |
+| `batch_rename` | `edit_profile()` 真调用；操作间隔只入 ETA | 部分 | `batch_rename.py:154` |
+| `copy_chat` | 过滤/替换/排期后真发；**源消息只来自任务文件** | 部分 | `copy_chat.py:312/313` |
+| `export_accounts` | 只读库与文件，无网络语义（会话归档是复制） | 真 | `export_accounts.py:182` |
+| `filter_group` | `get_entity()` 真解析后六分类 | 真 | `filter_group.py:148` |
+| `filter_phone` | `get_entity()` 真解析；号码一律按电话解析 | 真 | `filter_phone.py:145` |
+| `keep_online` | `ping` → `is_user_authorized()` + `get_me()` | 真 | `keep_online.py:91` |
+| `mass_send` | `send_message()`，message id 入库，间隔真等 | 真 | `mass_send.py:232/234` |
+| `mass_send_v2` | `get_contacts()` 取每个号自己的联系人 → 真发 | 真 | `mass_send_v2.py:337` |
+| `mix_market` | 五阶段全走 sender（加联系人/建群/炒群/拉人/私信） | 真 | `mix_market.py:219/234/280/307` |
+| `proxy` | `--test` 真 TCP connect；`--bind` 真 `set_proxy()` | 真 | `proxy.py:174/195` |
+| `puppet_chat` | `send_message()` + 间隔真 sleep | 真 | `puppet_chat.py:221/228` |
+| `puppet_chat_v2` | 复用 `play()`，启动偏移已加进 delay | 真 | `puppet_chat_v2.py:143` → `puppet_chat.py:221` |
+| `video_manage` | `join()`/`leave()` 真调用 | 真 | `video_manage.py:97` |
+| `watch_chat` | `add_event_handler()` + `run_forever()`，命中后 `await send_message()` | 真（本轮修） | `watch_chat.py:260/266/284` |
+
+**本轮修掉的 7 处假 live**（每处都有能在旧代码上变红的测试）：
+
+1. `watch_chat --live` 只回放 `config.incoming`，不注册 handler、不进循环，
+   于是「监听」立刻退出还报 `watched: 1`（那只是目标数）。现在真监听、
+   SIGINT 走 `finally` 关成 done，`watched` 改成真正的消息条数。
+2. `--targets 6805350975` 被当电话号（`+6805350975`）：Telethon 把任何纯数字
+   字符串按电话解析。现在纯数字 5–12 位先当 id（`int`），失败再退回电话形态；
+   带 `+` 一律按电话。
+3. `batch_login --logout` 只打印 `logout all <label>`，一个号都没退。现在 live 真
+   `log_out()` 并把账号置 `logged-out`。
+4. `proxy --bind` 丢掉 `set_proxy` 的返回值，失败也打 `bind acc1 -> #1 socks5://…`。
+   现在按 `ok/code` 分别打印。
+5. `auto_script` 的 `wait` 步在 live 下不睡（只有 dry-run 打「would wait」），整脚本
+   零节奏。现在真等。
+6. `mass_send` 在 live 下先把整队写成 `planned` 再真发，results 里同一条既有
+   `planned` 又有 `sent`。现在 planned 行只在 dry-run 写。
+7. `batch_join` 跑完把每个 job 一律记成成功（`record(..., True, "planned")`），
+   失败的 join 也写成 `sent`。现在按 `execute()` 里的真实结果入 rows。
+   顺带：`ai_comment` 的评论原来发到频道本身而不是帖子下，现在带 `reply_to`。
+
+**仍未修的 live 缺口** 见「已知缺口」第 1–4 条。
+
 ## 已知缺口
 
-1. **`accounts login` / `accounts test --live` 还没用真号跑过**：代码路径、
-   Telethon 1.45 的 `sign_in` / `send_code_request` 签名、错误类名都已核对，
-   全部行为由 mock client 覆盖（20 条测试，含 2FA、错码重试、超时、限流、
-   凭据不落日志）；真实验证要等 api 凭据 + 测试号。
-2. **`TelethonSender` 的 join / invite / profile / contact / participants /
-   proxy 只在签名层对齐**，没有真实账号跑过；参数形式按 Telethon 1.43 的
-   `client.*` 写，P2 接真号时可能要调。
+1. **`copy_chat` / `ai_clone` 在 live 下不回读历史**：源消息只从任务文件的
+   `messages:`（或 `--simulate-messages`）读，所以「采集回溯时长」这类字段在
+   live 里没有作用，等于「手工抓一份再真发」。修法明确：给 `senders.py` 加
+   `history(account, target, minutes, limit)`，用
+   `client.iter_messages(peer, offset_date=now-minutes)` 取回再喂
+   `sources.parse_many`。本轮没做，因为要新增网络面、且没有可安全回读的样本群
+   做真机验证。
+2. **`ai_comment` 的点赞与表情只计数不落地**：Telethon 1.45 没有
+   `send_reaction()`，要裸 `functions.messages.SendReactionRequest`；而且一个账号
+   对一条帖子只能点一次，所以「每帖点赞数」实际被账号池大小卡住。
+3. **六个页面的间隔字段在 live 下不 sleep**（只进 ETA / 只打印）：
+   `add_contact`（请求/操作间隔）、`batch_rename`（操作间隔）、`batch_join`
+   （请求间隔/单号间隔）、`batch_invite` / `batch_invite_v2`（邀请间隔，
+   只有 PEER_FLOOD 那次退避会睡）、`video_manage`（操作间隔）。已 sleep 的是
+   `puppet_chat` / `puppet_chat_v2` / `keep_online` / `ai_chat` /
+   `ai_comment` / `ai_clone` / `copy_chat` / `mass_send`（后五个用 `pause()`），做法见 `_common.pause()`，照它补即可。
+4. **`TelethonSender` 的部分方法仍只在签名层对齐**：`batch_login` 的三个批量退出
+   模式（冻结/所有/双向号）在这里指向同一个账号池，因为 `accounts` 表不记录
+   冻结与双向号的区分；`--threads` 是计划期并发度，不是真线程池。
 3. **`batch_login` 不读 `tdata`**：只处理 `.session` + sidecar `*.json`，
    二进制 tdata 解析不在范围内。
 4. **AI 的真实 endpoint 没跑过**：无 key 降级、假 transport（正常/超时/报错）

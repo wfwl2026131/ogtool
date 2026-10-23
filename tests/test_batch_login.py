@@ -94,3 +94,35 @@ def test_unknown_logout_mode_is_rejected(ctx, capsys):
 def test_nothing_to_do_is_a_config_error():
     with pytest.raises(ConfigError):
         LoginConfig.from_dict({}, None)  # type: ignore[arg-type]
+
+
+class LogoutSender:
+    """Stands in for the live transport: records which accounts were logged out."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def logout(self, label: str):
+        from ogtool.senders import SendResult
+
+        self.calls.append(label)
+        return SendResult(ok=True)
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_dry_run_logout_only_prints(ctx, capsys):
+    assert run(LoginConfig(logout=LOGOUT_ALL), ctx) == 0
+    output = capsys.readouterr().out
+    assert "logout all acc1" in output
+    assert "dry-run: nothing was logged out" in output
+
+
+def test_a_live_logout_really_calls_the_client(ctx, live):
+    sender = LogoutSender()
+    live(sender)
+    assert run(LoginConfig(logout=LOGOUT_ALL), ctx) == 0
+    assert sender.calls == ["acc1", "acc2"], "the logouts were only printed"
+    statuses = {account.label: account.status for account in ctx.store.list_accounts()}
+    assert statuses["acc1"] == "logged-out"

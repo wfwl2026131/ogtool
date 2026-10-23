@@ -9,6 +9,7 @@ module turns a script into transport calls, numbers every step, and applies
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,7 +120,7 @@ def execute(config: ScriptConfig, ctx: RunContext,
         policy = config.on_error or step.on_error or "stop"
         values = {**variables, **{key: str(value)
                                   for key, value in counters.items()}}
-        ok, detail = _perform(step, sender, label, config, values)
+        ok, detail = _perform(ctx, step, sender, label, config, values)
         if ok:
             counters["ok"] += 1
         else:
@@ -141,7 +142,7 @@ def execute(config: ScriptConfig, ctx: RunContext,
     return 0 if not counters["failed"] else 1
 
 
-def _perform(step: scriptdsl.Step, sender, account: str,
+def _perform(ctx: RunContext, step: scriptdsl.Step, sender, account: str,
              config: ScriptConfig,
              variables: dict[str, str]) -> tuple[bool, str]:
     """Run one step; returns (ok, the line the report shows)."""
@@ -153,7 +154,10 @@ def _perform(step: scriptdsl.Step, sender, account: str,
         print(f"  log: {params.get('message', '')}")
         return True, f"message={params.get('message', '')}"
     if action == "wait":
-        return True, f"seconds={float(params.get('seconds', 0)):.0f}"
+        seconds = float(params.get("seconds", 0) or 0)
+        if ctx.live and seconds > 0:
+            time.sleep(seconds)
+        return True, f"seconds={seconds:.0f}"
     if action in ("send_text", "send_media"):
         target_ref = _target_of(config, step)
         if not target_ref:

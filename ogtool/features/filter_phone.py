@@ -20,7 +20,7 @@ from ..report import export, read_lines, write_lines
 from ..runtime import RunContext
 from ..senders import USER_PRIVACY_RESTRICTED
 from ..simulate import OK
-from ..targets import parse_many
+from ..targets import Target, TargetError
 from . import register
 from ._common import (
     accounts_of,
@@ -110,6 +110,14 @@ def _unique(items: list[str]) -> list[str]:
     return out
 
 
+def phone_target(number: str) -> Target:
+    """A number list is always a phone list, so the id-first rule is skipped."""
+    text = number.strip()
+    if not text:
+        raise TargetError("empty phone number")
+    return Target("private", text if text.startswith("+") else f"+{text}")
+
+
 def run(config: PhoneConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts] or ["-"]
@@ -133,7 +141,7 @@ def run(config: PhoneConfig, ctx: RunContext) -> int:
     for index, number in enumerate(config.numbers, start=1):
         current = number
         account = labels[(index - 1) % len(labels)]
-        target = parse_many([number], "private")[0]
+        target = phone_target(number)
         result = sender.resolve(account, target)
         bucket = classify(result.code, result.ok)
         buckets[bucket].append(number)
@@ -167,4 +175,4 @@ def main(raw: dict, ctx: RunContext) -> int:
 
 
 __all__ = ["ACTIVE", "BUCKETS", "INVALID", "PhoneConfig", "RESTRICTED",
-           "TITLE", "VALID", "classify", "main", "run"]
+           "TITLE", "VALID", "classify", "main", "phone_target", "run"]
