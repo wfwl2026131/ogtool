@@ -4,18 +4,42 @@
 之后再决定哪几项回灌进 tdesktop。
 
 25 项里有 3 项不做（充值码 / licence / AI 计费结算，绑他们的服务端），
-实际目标 22 个功能模块。**已完成 P0 + P1，共 14 个命令**：
+按总方案的口径是 **22 个功能模块**；加上账号池与设置页参数，一共
+**26 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 295 条全绿，
+`ruff check .` 无告警。
 
-| 命令 | 参考端项 | 命令 | 参考端项 |
-|---|---|---|---|
-| `accounts` | 账号池 | `batch_invite` | #11 批量拉人 |
-| `mass_send` | #5 群发消息 | `filter_phone` | #12 筛选手机 |
-| `auto_reply` | #6 自动回复 | `filter_group` | #13 筛选群组 |
-| `watch_chat` | #7 监听聊天 | `video_manage` | #14 视频管理 |
-| `batch_join` | #8 批量加群 | `proxy` | #15 代理配置 |
-| `batch_login` | #9 批量上号 | `add_contact` | #16 批量联系人 |
-| `batch_rename` | #10 批量改名 | `batch_invite_v2` | #17 批量拉人v2 |
-| `keep_online` | #21 保持在线 | | |
+## 功能总览（交付清单）
+
+| # | 参考端左栏 | 命令 | 关键参数 | dry-run 可验 |
+|---|---|---|---|---|
+| 0 | 🤖 话术炒群 | `puppet_chat` | `--targets --pattern --loops --multiplier --daily-limit` | 是 |
+| 1 | 📋 复制炒群 | `copy_chat` | `--targets --sources --message --filter-keywords --replacements` | 是 |
+| 2 | 🧠 AI原创炒群 | `ai_chat` | `--targets --interval-min/max --news-channel --insert-probability --topics` | 是 |
+| 3 | 💬 AI智能评论 | `ai_comment` | `--targets --posts --positive-ratio --emoji-probability --per-post-min/max` | 是 |
+| 4 | 📦 AI搬运频道 | `ai_clone` | `--sources --targets --mode --style --max-items --mapping` | 是 |
+| 5 | 📢 群发消息 | `mass_send` | `--targets --text/--media --interval-min/max --threads --daily-limit` | 是 |
+| 6 | 🔄 自动回复 | `auto_reply` | `--rule 关键词=>回复 --duplicate-seconds --simulate` | 是 |
+| 7 | 👀 监听聊天 | `watch_chat` | `--targets --exclude --relay` | 是 |
+| 8 | 👥 批量加群 | `batch_join` | `--targets --request-interval --per-account-cap --threads` | 是 |
+| 9 | 🛅 批量上号 | `batch_login` | `--import-folder/--import-zip --export-ids --logout frozen\|all\|both` | 是 |
+| 10 | 🔠 批量改名 | `batch_rename` | `--file --pause-at --stop-at`（暂停/继续/停止） | 是 |
+| 11 | 🔂 批量拉人 | `batch_invite` | `--groups --members --strategy --export-missing/--export-flood` | 是 |
+| 12 | ⚖️ 筛选手机 | `filter_phone` | `--numbers --threads --output` | 是 |
+| 13 | 🧮 筛选群组 | `filter_group` | `--groups --deep --output-dir` | 是 |
+| 14 | 🎥 视频管理 | `video_manage` | `--link --action join\|leave` | 是 |
+| 15 | 📶 代理配置 | `proxy` | `--add --test --bind label=id --timeout-ms` | 是 |
+| 16 | ➕ 批量联系人 | `add_contact` | `--contacts --per-target-cap --request-interval-ms --threads` | 是 |
+| 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout` | 是 |
+| 18 | 📨 群发私信v2 | `mass_send_v2` | `--contact account\|name\|ref --account-interval-min/max --daily-limit --allow-duplicates` | 是 |
+| 19 | 🤖 话术炒群v2 | `puppet_chat_v2` | `--targets --pattern --startup-interval --loops` | 是 |
+| 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --activity --stop-after N` | 是 |
+| 21 | 🟢 保持在线 | `keep_online` | `--interval --loops` | 是 |
+| 22 | ✨ 高级功能 | `export_accounts` | `--output-dir --profile label\|id\|username\|device\|2fa --format --no-sessions` | 是 |
+| 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 |
+| 24 | ⚙️ 设置 | `settings` | `--json`（只读展示 `globals:` 六个键） | 是 |
+
+底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
+**26 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -209,6 +233,87 @@ ogtool ai_clone --sources "@src_channel" --targets "@dst_channel" \
   --mapping "@src_channel=@dst_channel"
 ```
 
+## 四个 P3 命令
+
+```bash
+# #18 群发私信v2：目标来自每个账号自己的联系人，跨账号去重，重跑可续
+ogtool mass_send_v2 --text "hello there" \
+  --contact "demo1|Ann|@ann" --contact "demo1|Bob|@bob" \
+  --contact "demo2|Cid|@cid" --contact "demo2|Ann|@ann" \
+  --account-interval-min 5 --account-interval-max 12 --daily-limit 50
+
+# #20 自动营销：五阶段串联（加联系人 → 建群 → 炒群 → 拉人 → 私信）
+ogtool mix_market --group-title "Market A" --group-title "Market B" \
+  --pattern patterns/example.txt --text "welcome to the market" \
+  --contact "Ann|@ann" --contact "Bob|@bob" \
+  --activity "@og_market_b=96" --stop-after 5
+
+# 单段验证：只跑到第 2 阶段
+ogtool mix_market --group-title "Market A" --pattern patterns/example.txt \
+  --text "hi" --contact "Ann|@ann" --stop-after 2
+
+# #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
+ogtool auto_script --list
+ogtool auto_script --script warm_up --var greeting="hello all" --target "@demo_chat"
+
+# #22 高级功能：账号报表（CSV + JSON）+ 会话归档
+ogtool export_accounts --output-dir ./export \
+  --profile "demo1|1001|demo_one|iPhone 15|on" --format csv,json
+
+# #24 设置页的非授权参数
+ogtool settings
+ogtool settings --json
+```
+
+`mix_market` 的五个阶段是固定的：`add_contact → create_group →
+puppet_chat_v2 → batch_invite_v2 → mass_send_v2`，`--stop-after N` 只跑前 N 段。
+`create_group` 建出来的群用标题生成 `@og_<slug>` 引用，供后三段解析。
+
+`auto_script` 的步骤写在 YAML 里，不和任何业务绑死：
+
+```yaml
+name: warm_up
+title: Warm up a chat
+steps:
+  - action: log
+    message: starting
+  - action: join
+    target: "{{target}}"
+  - action: loop
+    times: 2
+    steps:
+      - action: send_text
+        text: "{{greeting}}"
+      - action: wait
+        seconds: 30
+  - action: if
+    condition: failed == 0
+    then:
+      - action: log
+        message: "done, ok={{ok}}"
+```
+
+原语 11 个：`wait` / `send_text` / `send_media` / `join` / `leave` / `invite` /
+`contact_add` / `set_profile` / `if` / `loop` / `log`。每步打印
+`[i/N] step=... -> ok|failed`，失败按 `on_error: stop|continue` 走。
+解析失败会指名文件与步号，例如
+`scripts/x.yaml: steps[2]: unknown action 'teleport' (have: ...)`。
+
+## 全局参数（`globals:`）
+
+设置页里的非授权项落在 `config.yaml` 的 `globals:` 段，`settings` 命令只读展示：
+
+| 键 | 参考端标签 | 默认 | 说明 |
+|---|---|---|---|
+| `account_batch` | 账号分批加载数量 | 20 | 账号池按这个条数分页拉取 |
+| `threads_max` | 全局线程池最大线程数 | 128 | 单任务 `--threads` 的封顶 |
+| `resume_delay` | 恢复任务延迟 | 0.0 | 秒；只做配置与校验 |
+| `tp_overload` | TP超载值 | 0 | 0 = 关闭超载检查 |
+| `restart_interval` | 重启间隔 | 0.0 | 只算「该不该重启」，不实现自杀重启 |
+| `restart_timed` | 定时重启 | false | 同上 |
+
+充值码 / 到期时间 / licence 一律不做。
+
 ### chat_pattern 脚本格式
 
 一条消息一行，四段不能缺（空正文也要留最后一个 `|`）：
@@ -254,8 +359,9 @@ ogtool ai_clone --sources "@src_channel" --targets "@dst_channel" \
 
 ## 落库与日志
 
-- SQLite `og.sqlite`，八张表：`accounts` / `tasks` / `target_lists` /
-  `targets` / `results` / `logs` / `proxies` / `ai_calls`。
+- SQLite `og.sqlite`，九张表：`accounts` / `tasks` / `target_lists` /
+  `targets` / `results` / `logs` / `proxies` / `ai_calls` / `profiles`。
+  `profiles` 存 #22 报表要用的 user id / username / 设备 / 2FA / 最后活跃。
 - 每任务一份 `logs/<task>/YYYYMMDD.log`。
 - dry-run 也落 `tasks`（`status='dry-run'`）与 `results`（`status='planned'`），
   跑完能核对「计划了什么」和「实际发了什么」。
@@ -280,10 +386,10 @@ prompt 不写在代码里：模板在 `prompts/*.txt`（`ai_chat` / `ai_comment`
 
 ```
 ogtool/
-  cli.py          argparse 入口，20 个子命令
+  cli.py          argparse 入口，26 个子命令
   config.py       YAML + ${VAR} 展开
   accounts.py     账号池
-  store.py        SQLite，七张表
+  store.py        SQLite，九张表
   limiter.py      Limits / Budget / Pacer / PeerFloodBackoff
   simulate.py     注入的服务端答案
   runner.py       批量循环：上限、重试、退避、MISSING/FLOOD 桶
@@ -302,7 +408,7 @@ ogtool/
   features/       一功能一文件，注册表在 __init__.py
 patterns/         示例话术脚本
 prompts/          外置 prompt 模板（中文文案在这里，不在代码里）
-tests/            230 条
+tests/            295 条
 ```
 
 ## 开发
@@ -329,4 +435,12 @@ tests/            230 条
 7. **贴纸的 `unknown/setId/...` 两种写法在 `--live` 下不解析**：只有能落到本地
    文件的引用会真的发；unknown 形态 dry-run 照常打印，live 退化成发正文。
 8. **#0/#19 的 `A<n>` 槽位重绑只在日限额触发时发生**，不按真实在线状态重排。
-9. 其余 5 个功能模块（#18、#20、#22–#24）等 P3。
+9. **`export_accounts` 不做 tdata 二进制转换**：报表里明确写
+   `not_implemented`，原因是要自己写 TDATA 二进制格式，超出脚本版范围。
+10. **`mix_market` 的阶段 3 会另开一条 `task` 行**（名字 `<task>:3`），
+    阶段 1/2/4/5 直接调 sender，不入 `results`；只有死群记 `DEAD_CHAT`。
+11. **`create_group` 在 dry-run 里返回 `channel:<标题>`**；真机若频道没有
+    username 会返回数字 id，`@og_<slug>` 只是为了让后三段能解析。
+12. **`restart_interval` / `restart_timed` 只做配置与校验**，不实现自杀重启。
+13. **`auto_script` 的 `if` 只支持四个计数器**（`ok` / `failed` / `skipped` /
+    `steps`）与整数比较；`loop` 上限 1000，防止写错把任务挂死。

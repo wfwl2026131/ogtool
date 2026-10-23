@@ -287,3 +287,58 @@ puppet_chat_v2:
   loops: 1                     # 循环次数
   multiplier: 1                # 消息倍率
   daily_limit: 0               # 单号每日发言上限
+
+# #18 群发私信v2 ----------------------------------------------------------
+mass_send_v2:
+  text: "hello, this is the v2 demo"   # 消息内容
+  media: ""                            # 消息媒体
+  account_interval_min: 5              # 单账号发送间隔最小值（秒）
+  account_interval_max: 12             # 单账号发送间隔最大值（秒）
+  group_interval: 3                    # 单群间隔
+  threads: 1                           # 发送线程
+  daily_limit: 20                      # 单号每日限制
+  success_cap: 0                       # 成功上限
+  exec_cap: 0                          # 执行上限
+  allow_duplicates: false              # 一个联系人只发一次
+  resume: true                         # 发过的跳过，重跑可续
+  # A dry run cannot read the contact book, so it is spelled out here.
+  contacts:
+    demo1: ["Ann|@ann_demo", "Bob|@bob_demo"]
+    demo2: ["Ann|@ann_demo", "Cid|@cid_demo"]
+
+# #20 自动营销 ------------------------------------------------------------
+mix_market:
+  group_title:                 # 第 2 步要建的自建群/频道
+    - "Market Group A"
+    - "Market Group B"
+  targets: ""                  # 已有群（可不填）
+  pattern: patterns/example.txt
+  text: "hello from the workflow"
+  media: ""
+  contact:                     # 第 1 步添加、第 4/5 步使用的联系人
+    - "Ann|@ann_demo"
+    - "Bob|@bob_demo"
+  dead_check_interval: 30      # 死群检测间隔（秒）
+  dead_after_hours: 72         # 多久没说话算死群
+  activity:                    # 死群检测的模拟数据, ref=hours
+    - "@og_market_group_b=96"
+  create_rest_min: 1           # 建群失败休息（分钟）到
+  create_rest_max: 5
+  stop_after: 5                # 只跑前 N 步，方便单段验证
+
+# #23 自动脚本 ------------------------------------------------------------
+auto_script:
+  script_name: warm_up         # scripts/*.yaml 里的 name
+  script_dir: ""               # 空 = <data_dir>/scripts 或仓库自带 scripts/
+  target: "@demo_chat"
+  var:
+    - greeting=hello everyone
+  on_error: ""                 # 空 = 用脚本里每步自己的 stop/continue
+
+# #22 高级功能 ------------------------------------------------------------
+export_accounts:
+  output_dir: ""               # 空 = <logs>/exports
+  formats: csv,json
+  no_sessions: false           # true 时不复制 .session
+  profile:                     # dry-run 用的模拟资料
+    - "demo1|700000001|demoone|iPhone 15|on"

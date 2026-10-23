@@ -28,3 +28,14 @@ ai:
   api_key: ${OGTOOL_AI_KEY:}
   model: ""             # gpt-4o-mini
   timeout: 60
+
+# Global knobs of the settings page (#24). The licence keys are deliberately
+# not here: a run never needs a subscription, and nothing below restarts the
+# process, it only says when a restart would be due.
+globals:
+  account_batch: 20          # 账号分批加载数量: rows pulled from the pool at a time
+  threads_max: 128           # 全局线程池最大线程数: a task may ask for fewer
+  resume_delay: 0            # 恢复任务延迟, seconds before a resumed task starts
+  tp_overload: 0             # TP超载值, 0 turns the check off
+  restart_interval: 0        # 重启间隔, seconds of uptime, 0 = no restart due
+  restart_timed: false       # 定时重启, config only

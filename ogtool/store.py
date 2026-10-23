@@ -105,6 +105,17 @@ CREATE TABLE IF NOT EXISTS ai_calls (
     created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS profiles (
+    label       TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL DEFAULT '',
+    username    TEXT NOT NULL DEFAULT '',
+    phone       TEXT NOT NULL DEFAULT '',
+    device      TEXT NOT NULL DEFAULT '',
+    twofa       TEXT NOT NULL DEFAULT '',
+    last_active TEXT NOT NULL DEFAULT '',
+    updated_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_results_task ON results(task_id);
 CREATE INDEX IF NOT EXISTS idx_ai_task ON ai_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_results_created ON results(created_at);
@@ -128,6 +139,27 @@ class Account:
     proxy: str = ""
     status: str = "new"
     notes: str = ""
+
+
+@dataclass(slots=True)
+class Profile:
+    """What #22 exports about one account, next to its session file."""
+
+    label: str
+    user_id: str = ""
+    username: str = ""
+    phone: str = ""
+    device: str = ""
+    twofa: str = ""
+    last_active: str = ""
+
+    def masked_phone(self) -> str:
+        """``+15551230001`` -> ``+1555***0001``; short numbers stay as they are."""
+        digits = self.phone or ""
+        if len(digits) < 8:
+            return digits or "-"
+        head, tail = digits[:5], digits[-4:]
+        return f"{head}***{tail}"
 
 
 @dataclass(slots=True)
@@ -208,11 +240,19 @@ class Store:
         ).fetchone()
         return self._account(row) if row else None
 
-    def list_accounts(self) -> list[Account]:
-        rows = self._conn.execute(
-            "SELECT * FROM accounts ORDER BY id"
-        ).fetchall()
+    def list_accounts(self, limit: int = 0, offset: int = 0) -> list[Account]:
+        """The pool in id order; ``limit``/``offset`` page it when asked."""
+        sql = "SELECT * FROM accounts ORDER BY id"
+        params: tuple[int, ...] = ()
+        if limit:
+            sql += " LIMIT ? OFFSET ?"
+            params = (int(limit), int(offset))
+        rows = self._conn.execute(sql, params).fetchall()
         return [self._account(row) for row in rows]
+
+    def count_accounts(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()
+        return int(row["n"])
 
     def set_account_status(self, label: str, status: str, last_seen: str = "") -> None:
         self._conn.execute(
@@ -394,6 +434,60 @@ class Store:
             "SELECT * FROM results WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
 
+    def sent_pairs(self, feature: str) -> set[tuple[str, str]]:
+        """``(account, target)`` pairs this feature already delivered.
+
+        That is what makes a rerun resumable: the pairs come out of the
+        results table, so a task can be stopped and started again without
+        sending anything twice.
+        """
+        rows = self._conn.execute(
+            """SELECT r.account, r.target FROM results r
+               JOIN tasks t ON t.id = r.task_id
+               WHERE t.feature = ? AND r.status = 'sent'""",
+            (feature,),
+        ).fetchall()
+        return {(row["account"], row["target"]) for row in rows}
+
+    # profiles ---------------------------------------------------------
+
+    def save_profile(self, profile: Profile) -> Profile:
+        self._conn.execute(
+            """INSERT INTO profiles (label, user_id, username, phone, device,
+                                     twofa, last_active, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(label) DO UPDATE SET
+                   user_id=excluded.user_id, username=excluded.username,
+                   phone=excluded.phone, device=excluded.device,
+                   twofa=excluded.twofa, last_active=excluded.last_active,
+                   updated_at=excluded.updated_at""",
+            (profile.label, profile.user_id, profile.username, profile.phone,
+             profile.device, profile.twofa, profile.last_active, utcnow()),
+        )
+        self._conn.commit()
+        return profile
+
+    def get_profile(self, label: str) -> Profile | None:
+        row = self._conn.execute(
+            "SELECT * FROM profiles WHERE label = ?", (label,)
+        ).fetchone()
+        return self._profile(row) if row else None
+
+    def list_profiles(self) -> list[Profile]:
+        rows = self._conn.execute(
+            "SELECT * FROM profiles ORDER BY label"
+        ).fetchall()
+        return [self._profile(row) for row in rows]
+
+    @staticmethod
+    def _profile(row: sqlite3.Row) -> Profile:
+        return Profile(
+            label=row["label"], user_id=row["user_id"],
+            username=row["username"], phone=row["phone"],
+            device=row["device"], twofa=row["twofa"],
+            last_active=row["last_active"],
+        )
+
     def stats(self) -> dict[str, int]:
         def one(sql: str) -> int:
             row = self._conn.execute(sql).fetchone()
@@ -405,4 +499,5 @@ class Store:
             "results": one("SELECT COUNT(*) FROM results"),
             "logs": one("SELECT COUNT(*) FROM logs"),
             "ai_calls": one("SELECT COUNT(*) FROM ai_calls"),
+            "profiles": one("SELECT COUNT(*) FROM profiles"),
         }

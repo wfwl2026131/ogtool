@@ -1,0 +1,22 @@
+# A demo script for #23 auto script: nothing about a business, only primitives.
+# The engine knows these actions: wait, send_text, send_media, join, leave,
+# invite, contact_add, set_profile, if, loop, log.
+name: warm_up
+title: Warm up a chat
+description: Join a chat, greet it, then keep it warm with a short loop.
+steps:
+  - action: log
+    message: starting the warm up
+  - action: join
+    target: "@demo_chat"
+  - action: send_text
+    text: "{{greeting}}"
+  - action: loop
+    times: 2
+    steps:
+      - action: wait
+        seconds: 30
+      - action: send_text
+        text: "still here, anything new?"
+  - action: log
+    message: "done, ok={{ok}}"

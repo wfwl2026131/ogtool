@@ -79,6 +79,7 @@ class SendResult:
     retryable: bool = False
     retry_after: float = 0.0
     count: int = 0
+    items: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -171,6 +172,12 @@ class DryRunSender:
         self.sent: list[tuple[str, Target, Content]] = []
         self.calls: list[tuple[str, str]] = []
         self._counter = 0
+        #: Answers a task file supplies because a dry run cannot ask Telegram:
+        #: ``contacts`` maps an account to its contact list, ``activity`` maps a
+        #: chat to the hours since its last message.
+        self.contacts: dict[str, list[str]] = {}
+        self.activity: dict[str, float] = {}
+        self.created: dict[str, str] = {}
 
     def _answer(self, operation: str, account: str, note: str = "") -> SendResult:
         """Pop the next scripted answer, echo the request, build the result."""
@@ -238,6 +245,37 @@ class DryRunSender:
 
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         return self._answer("proxy", account, f"proxy={proxy or '-'}")
+
+    # contacts, groups and activity -----------------------------------
+
+    def get_contacts(self, account: str) -> SendResult:
+        """The contacts of one account, as ``name|user_id`` strings."""
+        result = self._answer("contacts", account,
+                              f"count={len(self.contacts.get(account) or [])}")
+        if result.ok:
+            result.items = list(self.contacts.get(account) or [])
+            result.count = len(result.items)
+        return result
+
+    def create_group(self, account: str, title: str, about: str = "",
+                     megagroup: bool = True) -> SendResult:
+        result = self._answer("create_group", account,
+                              f"title={title or '-'} megagroup={megagroup}")
+        if result.ok:
+            kind = "channel" if megagroup else "group"
+            result.detail = f"{kind}:{title}"
+            self.created[title] = result.detail
+        return result
+
+    def last_activity(self, account: str, target: Target) -> SendResult:
+        """Hours since the chat's last message; ``-1`` when it looks empty."""
+        hours = self.activity.get(target.ref)
+        note = f"target={target.display()}"
+        result = self._answer("activity", account,
+                              f"{note} hours={'-' if hours is None else hours}")
+        if result.ok:
+            result.count = -1 if hours is None else int(hours)
+        return result
 
     def close(self) -> None:
         """Nothing to release; kept so both backends share one interface."""
@@ -378,6 +416,57 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("proxy", account, action)
+
+    def get_contacts(self, account: str) -> SendResult:
+        def action() -> SendResult:
+            client = self._client(account)
+            items: list[str] = []
+            for user in client.get_contacts():
+                name = " ".join(
+                    part for part in (getattr(user, "first_name", ""),
+                                      getattr(user, "last_name", "")) if part
+                )
+                username = getattr(user, "username", "") or ""
+                ref = f"@{username}" if username else str(getattr(user, "id", ""))
+                items.append(f"{name or ref}|{ref}")
+            return SendResult(ok=True, items=items, count=len(items))
+
+        return self._guard("contacts", account, action)
+
+    def create_group(self, account: str, title: str, about: str = "",
+                     megagroup: bool = True) -> SendResult:
+        def action() -> SendResult:
+            from telethon.tl.functions.channels import CreateChannelRequest
+
+            client = self._client(account)
+            created = client(CreateChannelRequest(
+                title=title, about=about, megagroup=megagroup,
+            ))
+            entity = created.chats[0]
+            username = getattr(entity, "username", "") or ""
+            ref = f"@{username}" if username else str(getattr(entity, "id", ""))
+            return SendResult(ok=True, detail=ref, count=int(entity.id))
+
+        return self._guard("create_group", account, action)
+
+    def last_activity(self, account: str, target: Target) -> SendResult:
+        def action() -> SendResult:
+            from datetime import UTC, datetime
+
+            client = self._client(account)
+            messages = client.get_messages(target.ref, limit=1)
+            if not messages:
+                return SendResult(ok=True, count=-1, detail="no messages")
+            stamp = getattr(messages[0], "date", None)
+            if stamp is None:
+                return SendResult(ok=True, count=-1, detail="no date")
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=UTC)
+            hours = (datetime.now(UTC) - stamp).total_seconds() / 3600.0
+            return SendResult(ok=True, count=int(hours),
+                              detail=f"last message {int(hours)}h ago")
+
+        return self._guard("activity", account, action)
 
     def close(self) -> None:
         for client in self._clients.values():

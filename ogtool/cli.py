@@ -48,6 +48,10 @@ ORDER = [
     "batch_invite_v2",
     "puppet_chat_v2",
     "keep_online",
+    "mass_send_v2",
+    "mix_market",
+    "auto_script",
+    "export_accounts",
 ]
 
 HELP = {
@@ -71,6 +75,10 @@ HELP = {
     "batch_invite_v2": "#17 批量拉人v2: invite your contacts into your groups",
     "puppet_chat_v2": "#19 话术炒群v2: owners play the script themselves",
     "keep_online": "#21 保持在线: keep the sessions online",
+    "mass_send_v2": "#18 群发私信v2: message every account's own contacts",
+    "mix_market": "#20 自动营销: the five stage marketing workflow",
+    "auto_script": "#23 自动脚本: run a YAML script of primitive steps",
+    "export_accounts": "#22 高级功能: export the accounts and their sessions",
 }
 
 
@@ -93,6 +101,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subs = parser.add_subparsers(dest="command", required=True)
     _accounts_parser(subs)
+    _settings_parser(subs)
 
     for name in ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
@@ -104,6 +113,13 @@ def build_parser() -> argparse.ArgumentParser:
     _auto_reply_parser(subs.choices["auto_reply"])
     _keep_online_parser(subs.choices["keep_online"])
     return parser
+
+
+def _settings_parser(subs: argparse._SubParsersAction) -> None:
+    """The global knobs of #24, shown and validated, never acted on."""
+    settings = subs.add_parser("settings",
+                               help="#24 settings: show the global knobs")
+    settings.add_argument("--json", action="store_true")
 
 
 def _accounts_parser(subs: argparse._SubParsersAction) -> None:
@@ -280,6 +296,8 @@ def run(argv: list[str] | None = None) -> int:
 
     if args.command == "accounts":
         return _accounts(args, settings)
+    if args.command == "settings":
+        return _show_settings(settings, as_json=bool(args.json))
 
     base = settings.raw
     if getattr(args, "task", None):
@@ -316,6 +334,35 @@ def run(argv: list[str] | None = None) -> int:
     finally:
         ctx.close()
         store.close()
+
+
+def _show_settings(settings: Settings, as_json: bool = False) -> int:
+    """Print the global knobs from the settings page, with the licence ones out."""
+    runtime = settings.runtime
+    rows = [
+        ("account_batch", "账号分批加载数量", runtime.account_batch),
+        ("threads_max", "全局线程池最大线程数", runtime.threads_max),
+        ("resume_delay", "恢复任务延迟", runtime.resume_delay),
+        ("tp_overload", "TP超载值", runtime.tp_overload),
+        ("restart_interval", "重启间隔", runtime.restart_interval),
+        ("restart_timed", "定时重启", runtime.restart_timed),
+    ]
+    if as_json:
+        import json
+
+        print(json.dumps({key: value for key, _label, value in rows},
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(f"config: {settings.path}")
+    print("runtime settings (no licence keys, restart is config only):")
+    for key, label, value in rows:
+        print(f"  {key:<18} {label:<14} {value}")
+    due = (f"{runtime.restart_interval:.0f}s uptime"
+           if runtime.restart_interval > 0 else "off")
+    print(f"restart due at: {due}")
+    print(f"overload check: "
+          f"{'off' if runtime.tp_overload <= 0 else runtime.tp_overload}")
+    return 0
 
 
 def _accounts(args: argparse.Namespace, settings: Settings) -> int:

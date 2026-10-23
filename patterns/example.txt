@@ -4,4 +4,4 @@ A4|L0|D6|good morning
 -A5|L0|D12|how is everyone today
 --A15|L0|D20|same as usual, thanks
 A25|L0|D30|[STICKER:Sample_Set/hi.webp]
-A4|L0|D45|
+A4|L0|D45|[STICKER:Sample_Set/bye.webp]

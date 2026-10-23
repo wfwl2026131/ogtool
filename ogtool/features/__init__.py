@@ -38,6 +38,11 @@ _MODULE_NAMES = [
     "copy_chat",
     "puppet_chat",
     "puppet_chat_v2",
+    # P3
+    "auto_script",
+    "export_accounts",
+    "mass_send_v2",
+    "mix_market",
 ]
 
 

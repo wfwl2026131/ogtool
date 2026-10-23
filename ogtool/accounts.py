@@ -57,7 +57,17 @@ class AccountPool:
         return self.store.add_account(account)
 
     def list(self) -> list[Account]:
-        return self.store.list_accounts()
+        """The whole pool, read in the batches the settings page asks for.
+
+        ``account_batch`` only decides how many rows are pulled at a time, so a
+        pool with thousands of rows does not land in memory in one go; the
+        order is unchanged.
+        """
+        batch = max(1, self.settings.runtime.account_batch)
+        rows: list[Account] = []
+        for offset in range(0, self.store.count_accounts(), batch):
+            rows.extend(self.store.list_accounts(limit=batch, offset=offset))
+        return rows
 
     def resolve(self, names: list[str] | None) -> list[Account]:
         """The accounts a task runs with: the given ones or the whole pool."""

@@ -106,6 +106,80 @@ class ProxyConfig:
 
 
 @dataclass(slots=True)
+class GlobalConfig:
+    """The non licence knobs the reference client keeps in its settings page.
+
+    Only configuration and validation live here: ``restart_interval`` and
+    ``restart_timed`` describe when a restart *would* be due, and nothing in
+    this package ever restarts itself.
+    """
+
+    account_batch: int = 20
+    threads_max: int = 128
+    resume_delay: float = 0.0
+    tp_overload: int = 0
+    restart_interval: float = 0.0
+    restart_timed: bool = False
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> GlobalConfig:
+        data = raw.get("globals") or {}
+        if not isinstance(data, dict):
+            raise ConfigError("globals: the section must be a mapping")
+        return cls(
+            account_batch=_positive_int(data, "account_batch", 20),
+            threads_max=_positive_int(data, "threads_max", 128),
+            resume_delay=_number(data, "resume_delay", 0.0),
+            tp_overload=_non_negative_int(data, "tp_overload", 0),
+            restart_interval=_number(data, "restart_interval", 0.0),
+            restart_timed=bool(data.get("restart_timed", False)),
+        )
+
+    def clamp_threads(self, value: int) -> int:
+        """A task may ask for fewer threads, never for more than the pool."""
+        return max(1, min(int(value), self.threads_max))
+
+    def restart_due(self, uptime: float) -> bool:
+        """Whether an uptime would trigger a restart, given the interval."""
+        if self.restart_interval <= 0:
+            return False
+        return uptime >= self.restart_interval
+
+    def overload_check(self, overload: int) -> bool:
+        """``tp_overload == 0`` means the check is off, as on the page."""
+        if self.tp_overload <= 0:
+            return True
+        return overload < self.tp_overload
+
+
+def _number(data: dict[str, Any], key: str, default: float) -> float:
+    value = data.get(key)
+    if value is None or value == "":
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as error:
+        raise ConfigError(f"globals.{key}: not a number: {value!r}") from error
+    if result < 0:
+        raise ConfigError(f"globals.{key}: must not be negative: {result}")
+    return result
+
+
+def _positive_int(data: dict[str, Any], key: str, default: int) -> int:
+    value = _number(data, key, default)
+    if int(value) != value or value < 1:
+        raise ConfigError(f"globals.{key}: must be a whole number >= 1")
+    return int(value)
+
+
+def _non_negative_int(data: dict[str, Any], key: str, default: int) -> int:
+    value = _number(data, key, default)
+    if int(value) != value:
+        raise ConfigError(f"globals.{key}: must be a whole number")
+    return int(value)
+
+
+@dataclass(slots=True)
 class Settings:
     """Everything the tool needs before a feature runs."""
 
@@ -118,6 +192,7 @@ class Settings:
     log_dir: Path = field(default_factory=lambda: Path("logs"))
     proxy: ProxyConfig | None = None
     ai: AIConfig = field(default_factory=AIConfig)
+    runtime: GlobalConfig = field(default_factory=GlobalConfig)
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -157,6 +232,7 @@ class Settings:
                 model=str(ai_raw.get("model", "")),
                 timeout=float(ai_raw.get("timeout", 60.0)),
             ),
+            runtime=GlobalConfig.from_dict(raw),
             raw=raw,
         )
         settings.ensure_dirs()
