@@ -1,4 +1,4 @@
-"""#9 批量上号 — import .session files plus their .json metadata.
+"""#9 batch login - import .session files plus their .json metadata.
 
 Fields the page shows: the import folder, the ZIP import, the account count, the
 export of every id, and the three bulk logouts (frozen / all / both).

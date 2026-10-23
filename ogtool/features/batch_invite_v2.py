@@ -1,4 +1,4 @@
-"""#17 批量拉人 v2 — invite your own contacts into groups you own.
+"""#17 batch invite v2 - invite your own contacts into groups you own.
 
 The page is the second generation of #11: the source is the account's own
 contact list instead of a member file, and the exports are the PEER_FLOOD and

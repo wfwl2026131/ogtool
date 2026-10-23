@@ -1,7 +1,7 @@
-"""#15 代理配置 — the proxy table: add, import, paste, clear, test, bind.
+"""#15 proxy - the proxy table: add, import, paste, clear, test, bind.
 
 The page is the only table view in the console: a list of proxies with a status
-column, plus 全选 / 导入 / 粘贴 / 清空 / 删除 / 测速.  Rows live in the
+column, plus select all / import / paste / clear / delete / speed test.  Rows live in the
 ``proxies`` table; binding one to an account writes the account's ``proxy``
 column, which is what the sender reads when it opens a client.
 """

@@ -1,7 +1,7 @@
-"""#12 筛选手机 — sort a phone list into the page's four buckets.
+"""#12 filter phones - sort a phone list into the page's four buckets.
 
 Fields: the number list, the number of concurrent accounts, the four counters
-(有效 / 无效 / 活跃账号 / 受限账号), ``Processed 0 / 0``, the current number, the
+(valid / invalid / active / restricted), ``Processed 0 / 0``, the current number, the
 status and the output file.
 
 The bucket comes straight off the answer, the same way the reference client

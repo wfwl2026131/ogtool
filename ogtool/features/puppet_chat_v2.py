@@ -1,8 +1,8 @@
-"""#19 话术炒群 v2 — the owner accounts play the script into their own chats.
+"""#19 puppet chat v2 - the owner accounts play the script into their own chats.
 
 Same player as #0 with three differences the page makes visible: the targets
 must be groups or channels the accounts own, the accounts are started one after
-another (``不同号启动间隔``) instead of together, and there is no polish switch
+another (``startup interval``) instead of together, and there is no polish switch
 because nothing is rewritten on this page.
 """
 

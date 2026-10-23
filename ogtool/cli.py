@@ -78,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     load_defaults()
     parser = argparse.ArgumentParser(
         prog="ogtool",
+        # No abbreviations: "--news" must not silently become "--news-channel".
+        allow_abbrev=False,
         description="Offline toolkit for the 22 console features.",
         epilog="start with 'cp config.example.yaml config.yaml'; --config goes "
                "before the feature name, a task file with --task on the feature",
@@ -114,6 +116,8 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     add.add_argument("--session", default="", help="path to an existing .session")
     add.add_argument("--label", default="", help="name used in every other command")
     add.add_argument("--notes", default="")
+    add.add_argument("--dry-run", action="store_true",
+                     help="write the pool entry only (the default)")
     add.add_argument("--live", action="store_true",
                      help="talk to Telegram (default: dry-run only)")
 
@@ -122,6 +126,7 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
 
     test = account_subs.add_parser("test", help="connectivity test")
     test.add_argument("--accounts", nargs="*", default=None)
+    test.add_argument("--dry-run", action="store_true", help="the default")
     test.add_argument("--live", action="store_true")
 
 
@@ -130,6 +135,8 @@ def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--accounts", nargs="*", default=None,
                         help="account labels (default: the whole pool)")
     parser.add_argument("--task-name", default=None)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="plan only, send nothing (the default)")
     parser.add_argument("--live", action="store_true",
                         help="really talk to Telegram (default: dry-run)")
     parser.add_argument("--verbose", action="store_true")
@@ -265,6 +272,10 @@ def run(argv: list[str] | None = None) -> int:
         settings = _settings(args.config)
     except ConfigError as error:
         print(f"ERROR: {error}")
+        return 2
+
+    if getattr(args, "dry_run", False) and getattr(args, "live", False):
+        print("ERROR: --dry-run and --live are mutually exclusive")
         return 2
 
     if args.command == "accounts":

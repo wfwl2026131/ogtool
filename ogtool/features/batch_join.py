@@ -1,4 +1,4 @@
-"""#8 批量加群 — join groups with a pool of accounts.
+"""#8 batch join - join groups with a pool of accounts.
 
 Fields from the reference page: account choice, request interval, request
 timeout, per account join interval, per account join cap, concurrency and the

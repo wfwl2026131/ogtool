@@ -1,4 +1,4 @@
-"""#3 AI智能评论 — comment on a channel's recent posts, with the ratios the page shows.
+"""#3 AIsmart comments - comment on a channel's recent posts, with the ratios the page shows.
 
 The page is unusual in that half its numbers are *proportions*: how many
 comments are upbeat, how often a comment carries an emoji, and how many likes a
@@ -202,8 +202,9 @@ def plan(config: CommentConfig, labels: list[str],
 
 def _prompt(ctx: RunContext, config: CommentConfig, spec: CommentSpec,
             post: SourceMessage) -> str:
-    tone = ("积极乐观、有热情" if spec.tone == POSITIVE else "平实中立")
-    extra = config.extra_prompts[0] if config.extra_prompts else "无"
+    tone = compose("ai_comment_tone_positive" if spec.tone == POSITIVE
+                   else "ai_comment_tone_neutral", settings=ctx.settings).strip()
+    extra = config.extra_prompts[0] if config.extra_prompts else "-"
     return compose("ai_comment", settings=ctx.settings,
                    post=post.text or "(no text)", tone=tone, extra=extra,
                    max_chars=config.max_chars)

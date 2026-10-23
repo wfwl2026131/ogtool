@@ -1,4 +1,4 @@
-"""#11 批量拉人 — invite members into target groups with a pool of handlers.
+"""#11 batch invite - invite members into target groups with a pool of handlers.
 
 Fields from the page: groups, members, invite strategy, minimum request
 interval, concurrent accounts, per target success cap, handler caps (success and

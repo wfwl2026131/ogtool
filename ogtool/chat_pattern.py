@@ -218,7 +218,7 @@ def assign_slots(messages: list[ChatMessage],
 
 
 def multiply(messages: list[ChatMessage], factor: int) -> list[ChatMessage]:
-    """``消息倍率``: every message repeated ``factor`` times, same order."""
+    """``message multiplier``: every message repeated ``factor`` times, same order."""
     factor = max(1, int(factor))
     return [message for message in messages for _ in range(factor)]
 

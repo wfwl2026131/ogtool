@@ -1,7 +1,7 @@
-"""#10 批量改名 — rename accounts from a .txt list, with pause/resume/stop.
+"""#10 batch rename - rename accounts from a .txt list, with pause/resume/stop.
 
-The page owns a small state machine (``空闲 / 运行 / 已暂停 / 已停止``) and shows
-the current account plus ``进度``, ``失败`` and ``跳过``.  A dry run replays the
+The page owns a small state machine (``idle / running / paused / stopped``) and shows
+the current account plus ``progress``, ``failed`` and ``skipped``.  A dry run replays the
 same transitions so the states can be read without a session: ``--pause-at``
 and ``--stop-at`` say which entry triggers them.
 """
@@ -49,7 +49,7 @@ FLAGS = (
 
 
 def parse_names(rows: list[str]) -> list[tuple[str, str]]:
-    """``名字 姓氏`` -> (first, last); a single word becomes the first name."""
+    """``first name last name`` -> (first, last); a single word becomes the first name."""
     out: list[tuple[str, str]] = []
     for row in rows:
         parts = row.split()

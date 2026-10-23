@@ -1,4 +1,4 @@
-"""#2 AI原创炒群 — generated chatter, with a news channel for seasoning.
+"""#2 AIgenerated chatter - generated chatter, with a news channel for seasoning.
 
 The page carries three numbers (speaking interval range and the chance a
 message pulls in something from an external news channel) plus a topic box
@@ -18,7 +18,6 @@ from ..limiter import format_duration
 from ..prompts import compose
 from ..runtime import RunContext
 from ..senders import Content
-from ..sources import from_config
 from ..targets import Target, parse_many
 from . import register
 from ._common import (
@@ -52,6 +51,8 @@ FLAGS = (
          "percent of messages that pull in a news item"),
     Flag("--topics", "topics", str, "topic prompts, blank line separated"),
     Flag("--count", "count", int, "messages per target"),
+    Flag("--news", "news", str, "a news item to pull in (repeatable)",
+         action="append"),
 )
 
 DEFAULT_TOPIC = "日常闲聊"
@@ -87,10 +88,19 @@ class AiChatConfig:
             news_channel=text(data, "news_channel"),
             insert_probability=min(100, probability),
             topics=blocks(data, "topics"),
-            news=[item.text for item in from_config(data, "news")],
+            news=_news(data.get("news")),
             count=num(data, "count", 3, kind=int, minimum=1),
             task_name=name_of(raw, data, "ai-chat"),
         )
+
+
+def _news(value: object) -> list[str]:
+    """News items: a YAML list, or one per line."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [line.strip() for line in str(value).splitlines() if line.strip()]
 
 
 @dataclass(slots=True)
@@ -115,7 +125,9 @@ def plan(config: AiChatConfig, labels: list[str],
             topic = (config.topics[index % len(config.topics)]
                      if config.topics else DEFAULT_TOPIC)
             news = ""
-            if (config.news_channel and config.news
+            # The channel is where live runs read news from; the items are the
+            # pool, so a dry-run with --news alone can still show insertion.
+            if (config.news
                     and generator.random() * 100 < config.insert_probability):
                 news = config.news[index % len(config.news)]
             account = labels[len(lines) % len(labels)] if labels else "-"
@@ -126,9 +138,15 @@ def plan(config: AiChatConfig, labels: list[str],
 
 
 def _prompt(ctx: RunContext, line: Line) -> str:
-    news = f"可以顺带提到这条新闻：{line.news}" if line.news else ""
+    news = (compose("ai_chat_news", settings=ctx.settings, news=line.news)
+            if line.news else "")
     return compose("ai_chat", settings=ctx.settings, topic=line.topic,
                    news=news)
+
+
+def _fallback(line: Line) -> str:
+    """The line a run sends when no model answered: the topic itself."""
+    return " ".join(part for part in (line.topic, line.news) if part)
 
 
 def run(config: AiChatConfig, ctx: RunContext) -> int:
@@ -144,6 +162,7 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
         interval=f"{config.interval_min:.0f}-{config.interval_max:.0f}s",
         news_channel=config.news_channel or "-",
         insert_probability=f"{config.insert_probability}%",
+        news_items=len(config.news),
         topics=len(config.topics),
         queue=len(lines),
     )
@@ -157,7 +176,8 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
 
     for index, line in enumerate(lines, start=1):
         target: Target = parse_many([line.target], "custom")[0]
-        generated = ai.generate(_prompt(ctx, line))
+        generated = ai.generate(_prompt(ctx, line),
+                                fallback=_fallback(line))
         record_ai(ctx, task, line.account, "chat", generated)
         body = Content(text=generated.response)
         outcome = sender.send(line.account, target, body)

@@ -50,7 +50,7 @@ def num(data: dict[str, Any], key: str, default: float,
 def lines(data: dict[str, Any], key: str) -> list[str]:
     """A list field, given either as a YAML list or as one blob of text.
 
-    The pages take ``排除关键词（逗号或换行）`` and ``每行一个`` in the same
+    The pages take ``excluded keywords (comma or newline)`` and ``one per line`` in the same
     box, so both spellings have to work.
     """
     value = data.get(key)

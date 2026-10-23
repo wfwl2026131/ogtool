@@ -1,4 +1,4 @@
-"""#1 复制炒群 — replay what the source groups said into the target groups.
+"""#1 copy chat - replay what the source groups said into the target groups.
 
 The capture step reads a chat, the filter step drops what the keyword rules
 exclude, the rewrite step applies ``left=right`` replacements, and the schedule

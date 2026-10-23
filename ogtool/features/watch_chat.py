@@ -1,4 +1,4 @@
-"""#7 监听聊天 — watch chats and relay what survives the exclusion list.
+"""#7 watch chat - watch chats and relay what survives the exclusion list.
 
 Fields: the custom target list, the excluded keywords (comma or newline) and the
 relay group.  A dry run replays a supplied set of incoming messages, so the

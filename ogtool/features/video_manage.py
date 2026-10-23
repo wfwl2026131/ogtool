@@ -1,7 +1,7 @@
-"""#14 视频管理 — join or leave one group with a set of accounts.
+"""#14 video manage - join or leave one group with a set of accounts.
 
 Fields: the group link, the operation interval in milliseconds, the progress
-counter, and the joined account list.  The page has 加入 / 退出 / 停止 / 刷新;
+counter, and the joined account list.  The page has join / leave / stop / refresh;
 ``--action`` picks one and the run reports progress per account.
 """
 

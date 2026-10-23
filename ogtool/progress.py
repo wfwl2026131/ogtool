@@ -58,5 +58,5 @@ def buckets(names: dict[str, str]) -> dict[str, list[str]]:
 
 def render_buckets(names: dict[str, str],
                    values: dict[str, list[str]]) -> list[str]:
-    """``有效：3`` style lines, using the label the page carries."""
+    """``ok: 3`` style lines, using the label the page carries."""
     return [f"{names[key]}：{len(values.get(key) or [])}" for key in names]

@@ -1,14 +1,14 @@
-"""#13 筛选群组 — sort groups into the page's six buckets.
+"""#13 filter groups - sort groups into the page's six buckets.
 
 Fields: the group list, concurrent accounts, the global request interval in
 milliseconds, the per account interval in milliseconds, the deep check toggle,
-and the six counters (可发言 / 需验证 / 全局禁言 / 频道 / 无效 / 用户) plus the
+and the six counters (can send / needs approval / muted / channel / invalid / user) plus the
 output directory.
 
-``深度检测`` is what the page warns about: the account has to join every group to
+``deep check`` is what the page warns about: the account has to join every group to
 see whether it needs approval and to read its real numbers, so the run is slower
 and costs more accounts.  Here it decides whether the answer may be trusted for
-the 需验证 bucket; without it the same answer is reported as 可发言.
+the needs approval bucket; without it the same answer is reported as can send.
 """
 
 from __future__ import annotations

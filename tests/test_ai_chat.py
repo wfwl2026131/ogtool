@@ -7,8 +7,9 @@ import random
 import pytest
 
 from ogtool.ai import AIError
+from ogtool.cli import build_parser
 from ogtool.config import ConfigError
-from ogtool.features.ai_chat import AiChatConfig, plan, run
+from ogtool.features.ai_chat import AiChatConfig, _news, plan, run
 
 
 def config_for(**overrides) -> AiChatConfig:
@@ -63,3 +64,27 @@ def test_a_failing_model_does_not_stop_the_task(ctx, capsys, fake_ai):
     output = capsys.readouterr().out
     assert "ai=template" in output
     assert "ai calls: 2 (fallback 2)" in output
+
+
+def test_news_items_accept_a_list_or_one_per_line():
+    assert _news(["a", " ", "b"]) == ["a", "b"]
+    assert _news("a\n\nb\n") == ["a", "b"]
+    assert _news(None) == []
+
+
+def test_the_flag_is_news_not_an_abbreviation_of_news_channel():
+    args = build_parser().parse_args(
+        ["ai_chat", "--news", "story", "--news-channel", "@news"])
+    assert args.news == ["story"]
+    assert args.news_channel == "@news"
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["ai_chat", "--new", "story"])
+
+
+def test_the_fallback_line_is_the_topic_not_the_prompt(ctx, capsys):
+    assert run(config_for(topics=["weekend plans"], insert_probability=100,
+                          news=["rain"], news_channel="@news", count=1),
+               ctx) == 0
+    output = capsys.readouterr().out
+    assert "text=weekend plans rain" in output
+    assert "[template] \u4f60\u5728" not in output

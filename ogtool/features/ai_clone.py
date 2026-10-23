@@ -1,8 +1,8 @@
-"""#4 AI搬运频道 — take one channel's posts to another, rewritten or as is.
+"""#4 AIclone channel - take one channel's posts to another, rewritten or as is.
 
 The chain is capture -> filter -> rewrite -> schedule, with one extra rule the
-page makes visible: a source may map to a specific target (``源/目标映射``), and
-anything unmapped falls back to the target list in order.  ``最多`` caps how many
+page makes visible: a source may map to a specific target (``source/source to target mapping``), and
+anything unmapped falls back to the target list in order.  ``max`` caps how many
 posts one run carries over, so a dry run stays short even on a busy channel.
 """
 
@@ -189,8 +189,8 @@ def plan(config: CloneConfig, labels: list[str],
 
 def _prompt(ctx: RunContext, config: CloneConfig, item: Item) -> str:
     return compose("ai_clone", settings=ctx.settings, text=item.text,
-                   style=config.style or "保持原文风格",
-                   author=config.author or "无")
+                   style=config.style or "keep the source style",
+                   author=config.author or "-")
 
 
 def run(config: CloneConfig, ctx: RunContext) -> int:

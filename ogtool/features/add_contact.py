@@ -1,8 +1,8 @@
-"""#16 批量联系人 — add contacts with caps per target and per account.
+"""#16 add contacts - add contacts with caps per target and per account.
 
 Fields: success cap, execution cap, successes per target, request interval in
 milliseconds, operation interval range in milliseconds, threads, and the contact
-list.  The per target cap is what the page calls ``每个目标成功次数``: the same
+list.  The per target cap is what the page calls ``per target success cap``: the same
 number is never added twice beyond it.
 """
 

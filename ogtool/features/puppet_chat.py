@@ -1,8 +1,8 @@
-"""#0 话术炒群 — replay a chat_pattern script across the target chats.
+"""#0 puppet chat - replay a chat_pattern script across the target chats.
 
 The page is the player for the script format: a file of lines, an account pool
 that fills the ``A<n>`` slots, a loop interval in minutes and a repeat count.
-``消息倍率`` repeats every line, ``单号每日发言上限`` caps one account per day
+``message multiplier`` repeats every line, ``per account daily cap`` caps one account per day
 and makes the slot rebind to another account when it is reached, and the polish
 switch rewrites the wording through the model without touching the structure.
 """
