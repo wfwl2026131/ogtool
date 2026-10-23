@@ -1,0 +1,50 @@
+# One task file per run. Every key here can also be given on the command line;
+# the command line wins. Field names follow the reference client's pages.
+
+task_name: demo-mass-send
+accounts: []                  # labels from `ogtool accounts list`; [] = the pool
+
+# #5 群发消息 -------------------------------------------------------------
+targets:
+  kind: custom                # private | group | channel | client | custom
+  inline: "@demo_chat,+8613800000000,t.me/demo_public"
+  files: []                   # files with one entry per line
+
+content:
+  text: "hello from ogtool"
+  media: ""                   # path to a file, optional
+  forward_from: ""            # a chat to forward from, optional
+  prompt: ""                  # used when ai: true
+  ai: false
+
+send:
+  account_interval_min: 5     # 单账号发送间隔 最小（秒）
+  account_interval_max: 12    # 单账号发送间隔 最大（秒）
+  group_interval: 3           # 单群间隔（秒）
+  threads: 1                  # 发送线程
+  daily_limit: 50             # 单号每日限制
+  success_cap: 0              # 成功上限, 0 = unlimited
+  exec_cap: 0                 # 执行上限, 0 = unlimited
+
+# #21 保持在线 ------------------------------------------------------------
+keep_online:
+  interval: 300               # seconds between heartbeats
+  loops: 3                    # 0 = until interrupted
+  jitter: 0.1
+
+# #6 自动回复 -------------------------------------------------------------
+auto_reply:
+  enabled: true
+  duplicate_seconds: 60       # 重复缓存(秒)
+  rules:
+    - keyword: "天气"
+      reply: "是啊，天气晴朗，万里无云"
+    - keywords: ["价格", "多少钱"]
+      reply: "价目表稍后私聊发你"
+
+# Used by `ogtool auto_reply --dry-run` without --simulate.
+simulate:
+  - "@demo_chat|alice|今天天气不错"
+  - "@demo_chat|alice|今天天气不错"
+  - "@demo_chat|bob|多少钱"
+  - "@demo_chat|carol|毫无关系的闲聊"

@@ -1,0 +1,30 @@
+# Global settings for every ogtool feature.
+#
+# Copy to config.yaml and fill in what you have. Everything below works with
+# placeholder values while features run with --dry-run; api_id / api_hash are
+# only read by --live.
+
+api_id: ${OGTOOL_API_ID:0}
+api_hash: ${OGTOOL_API_HASH:}
+
+# Paths are relative to this file.
+data_dir: data
+session_dir: data/sessions
+db: data/og.sqlite
+logs: data/logs
+
+# Optional, used by --live only. Leave host empty to go direct.
+proxy:
+  kind: socks5          # socks5 | socks4
+  host: ""
+  port: 1080
+  username: ""
+  password: ${OGTOOL_PROXY_PASSWORD:}
+
+# OpenAI compatible chat/completions endpoint. With no key the AI parts fall
+# back to template wording and the flow still runs end to end.
+ai:
+  base_url: ""          # https://api.openai.com/v1
+  api_key: ${OGTOOL_AI_KEY:}
+  model: ""             # gpt-4o-mini
+  timeout: 60
