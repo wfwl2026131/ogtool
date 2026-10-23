@@ -179,6 +179,57 @@ ogtool batch_invite_v2 --targets "@my_group" --contacts "@c1,@c2" \
 
 批量类统一打印 `processed / total`、`ok`、`failed`、`skipped`，按失败码再分列。
 
+## 六个 P2 命令
+
+```bash
+# #0 话术炒群：chat_pattern 脚本回放，A<n> 槽位映射到账号池
+ogtool puppet_chat --targets "@g1" --pattern patterns/example.txt \
+  --loops 2 --multiplier 2 --daily-limit 20
+
+# #19 话术炒群v2：群主号自发到自己名下，账号错峰启动
+ogtool puppet_chat_v2 --targets "@my_group" --pattern patterns/example.txt \
+  --startup-interval 10 --loops 1
+
+# #1 复制炒群：采集 → 过滤 → 替换 → 按目标分组排期
+ogtool copy_chat --targets "@t1,@t2" --sources "@src" \
+  --message "@src|alice|hello spam" --message "@src|bob|clean post" \
+  --filter-keywords "spam|广告" --replacements "hello=hi"
+
+# #2 AI原创炒群
+ogtool ai_chat --targets "@g1" --interval-min 20 --interval-max 60 \
+  --news-channel "@news" --insert-probability 30 --count 3 --topics "周末去哪"
+
+# #3 AI智能评论（比例参数可在 dry-run 里统计核对）
+ogtool ai_comment --targets "@channel" --posts 5 --positive-ratio 60 \
+  --emoji-probability 30 --per-post-min 1 --per-post-max 3 --seed 7
+
+# #4 AI搬运频道
+ogtool ai_clone --sources "@src_channel" --targets "@dst_channel" \
+  --mode rewrite --style "简短、口语" --max-items 5 \
+  --mapping "@src_channel=@dst_channel"
+```
+
+### chat_pattern 脚本格式
+
+一条消息一行，四段不能缺（空正文也要留最后一个 `|`）：
+
+```
+[replyPrefix]A<n>|L<n>|D<min>-<max>|<body>
+```
+
+| 段 | 含义 |
+|---|---|
+| `-` 前缀 | 回复层级，每多一层多一个 `-` |
+| `A<n>` | **账号槽位**，不是账号 id；运行时按序映射到账号池 |
+| `L<n>` | reaction 数 |
+| `D a-b` | 延迟秒区间，单值写 `D9-9`（也接受 `D9`） |
+| body | 正文；可带 `[STICKER:...]` / `[IMG:文件名]` |
+
+`#` 开头整行是注释，不参与发送。贴纸三种写法都认：
+`shortName/x.webp`、`unknown/setId/accessHash/x.webp`、`unknown/setId/x.webp`。
+图片相对 `<data>/tdata/chat_pattern/pic/`。zip 导入只取**归档里第一个**
+`.txt`，根目录 `pic/` 合并进图片目录，落盘名 `<原名>_<yyyyMMdd_hhmmss>.<ext>`。
+
 ## 错误码
 
 | 码 | 含义 | 可重试 |
@@ -203,8 +254,8 @@ ogtool batch_invite_v2 --targets "@my_group" --contacts "@c1,@c2" \
 
 ## 落库与日志
 
-- SQLite `og.sqlite`，七张表：`accounts` / `tasks` / `target_lists` /
-  `targets` / `results` / `logs` / `proxies`。
+- SQLite `og.sqlite`，八张表：`accounts` / `tasks` / `target_lists` /
+  `targets` / `results` / `logs` / `proxies` / `ai_calls`。
 - 每任务一份 `logs/<task>/YYYYMMDD.log`。
 - dry-run 也落 `tasks`（`status='dry-run'`）与 `results`（`status='planned'`），
   跑完能核对「计划了什么」和「实际发了什么」。
@@ -213,13 +264,23 @@ ogtool batch_invite_v2 --targets "@my_group" --contacts "@c1,@c2" \
 ## AI
 
 `ai.py` 走 OpenAI 兼容的 `chat/completions`，endpoint / model / key 都可配。
-**没配 key 时降级成 `[template] …`，流程照跑**。P2 的 AI 三项才强依赖它。
+**没配 key 时降级成 `[template] …`，流程照跑**。
+
+prompt 不写在代码里：模板在 `prompts/*.txt`（`ai_chat` / `ai_comment` /
+`ai_clone` / `ai_polish`），`{{占位符}}` 由 `prompts.compose()` 填；任务文件
+可用 `prompts: <目录>` 换一套模板。缺模板或缺占位符直接报配置错，不会悄悄用
+空串顶上。
+
+每次模型调用落一行 `ai_calls`（任务、账号、kind、prompt、response、tokens、
+耗时、成功/失败），跑完能审计。`AIClient(transport=...)` 可注入一个假端点，
+测试就是靠它覆盖「正常返回 / 超时 / 报错」三条分支；AI 失败不会让任务挂掉，
+按降级文本继续并计数。
 
 ## 目录
 
 ```
 ogtool/
-  cli.py          argparse 入口，14 个子命令
+  cli.py          argparse 入口，20 个子命令
   config.py       YAML + ${VAR} 展开
   accounts.py     账号池
   store.py        SQLite，七张表
@@ -231,12 +292,17 @@ ogtool/
   report.py       读名单、写导出、写报表
   targets.py      目标解析
   content.py      内容来源
-  ai.py           OpenAI 兼容客户端
+  ai.py           OpenAI 兼容客户端 + AIResult 审计记录
+  chat_pattern.py chat_pattern 脚本解析/渲染/zip 导入
+  prompts.py      prompts/*.txt 模板加载与占位符填充
+  sources.py      源消息（peer|sender|text|media）与过滤/替换
   senders.py      DryRunSender / TelethonSender + 错误码映射
   loggers.py      每任务一份日志
   runtime.py      RunContext + 空池降级
   features/       一功能一文件，注册表在 __init__.py
-tests/            153 条
+patterns/         示例话术脚本
+prompts/          外置 prompt 模板（中文文案在这里，不在代码里）
+tests/            230 条
 ```
 
 ## 开发
@@ -255,8 +321,12 @@ tests/            153 条
    `client.*` 写，P2 接真号时可能要调。
 3. **`batch_login` 不读 `tdata`**：只处理 `.session` + sidecar `*.json`，
    二进制 tdata 解析不在范围内。
-4. **AI 只验了「无 key 降级」**，有 key 的真实调用没跑过。
+4. **AI 的真实 endpoint 没跑过**：无 key 降级、假 transport（正常/超时/报错）
+   三条分支都有单测，但没有用真 key 打过 `chat/completions`。
 5. **`--threads` 是计划期的并发度**（决定账号交叉粒度），不是真线程池。
 6. **`proxy --test` 在 `--live` 下只做 TCP 连通性探测**（socket connect），
    不是真的走代理打 MTProto。
-7. 其余 8 个功能模块（#0–#4、#18–#20、#22–#24 中未做的）等 P2/P3。
+7. **贴纸的 `unknown/setId/...` 两种写法在 `--live` 下不解析**：只有能落到本地
+   文件的引用会真的发；unknown 形态 dry-run 照常打印，live 退化成发正文。
+8. **#0/#19 的 `A<n>` 槽位重绑只在日限额触发时发生**，不按真实在线状态重排。
+9. 其余 5 个功能模块（#18、#20、#22–#24）等 P3。

@@ -127,6 +127,52 @@ def record(ctx: RunContext, task: TaskRef, account: str, subject: str,
     ctx.store.add_result(task.id, account, subject, status, code, detail)
 
 
+def blocks(data: dict[str, Any], key: str) -> list[str]:
+    """A text box whose blank lines separate entries, each block kept whole."""
+    value = data.get(key)
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [" ".join(str(item).split()) for item in value if str(item).strip()]
+    out: list[str] = []
+    current: list[str] = []
+    for line in str(value).splitlines():
+        if not line.strip():
+            if current:
+                out.append(" ".join(current))
+                current = []
+            continue
+        current.append(line.strip())
+    if current:
+        out.append(" ".join(current))
+    return [item for item in out if item]
+
+
+def ai_client(ctx: RunContext, *, transport: object | None = None):
+    """The model client for a task; a transport turns it into a mock."""
+    from ..ai import AIClient
+
+    if transport is None and ctx.ai is not None:
+        return ctx.ai
+    return AIClient(ctx.settings.ai, transport=transport)  # type: ignore[arg-type]
+
+
+def record_ai(ctx: RunContext, task: TaskRef, account: str, kind: str,
+              result: Any) -> None:
+    """Persist one model call, so the audit trail survives the run."""
+    ctx.store.add_ai_call(
+        task.id,
+        account=account,
+        kind=kind,
+        prompt=result.prompt,
+        response=result.response,
+        tokens=result.tokens,
+        elapsed_ms=result.elapsed_ms,
+        ok=result.ok,
+        error=result.error,
+    )
+
+
 def read_list_file(path: str) -> list[str]:
     """A .txt the page asks the user to pick; ``#`` lines are comments."""
     return read_lines(path)

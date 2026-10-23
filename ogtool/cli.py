@@ -26,8 +26,13 @@ from .targets import TargetError
 
 DEFAULT_CONFIG = "config.yaml"
 
-# The order the console shows its entries in; P0 first, then P1.
+# The order the console shows its entries in; P0, then P1, then P2.
 ORDER = [
+    "puppet_chat",
+    "copy_chat",
+    "ai_chat",
+    "ai_comment",
+    "ai_clone",
     "mass_send",
     "auto_reply",
     "watch_chat",
@@ -41,10 +46,16 @@ ORDER = [
     "proxy",
     "add_contact",
     "batch_invite_v2",
+    "puppet_chat_v2",
     "keep_online",
 ]
 
 HELP = {
+    "puppet_chat": "#0 话术炒群: replay a chat_pattern script",
+    "copy_chat": "#1 复制炒群: capture, filter, rewrite, replay",
+    "ai_chat": "#2 AI原创炒群: generated chatter per target",
+    "ai_comment": "#3 AI智能评论: comment on recent posts",
+    "ai_clone": "#4 AI搬运频道: carry posts to another channel",
     "mass_send": "#5 群发消息: send to private chats, groups, clients",
     "auto_reply": "#6 自动回复: keyword rules with a duplicate cache",
     "watch_chat": "#7 监听聊天: relay what survives the exclusion list",
@@ -58,6 +69,7 @@ HELP = {
     "proxy": "#15 代理配置: the proxy table",
     "add_contact": "#16 批量联系人: add contacts with caps",
     "batch_invite_v2": "#17 批量拉人v2: invite your contacts into your groups",
+    "puppet_chat_v2": "#19 话术炒群v2: owners play the script themselves",
     "keep_online": "#21 保持在线: keep the sessions online",
 }
 

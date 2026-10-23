@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .config import Settings
@@ -87,6 +88,7 @@ class Content:
     text: str = ""
     media: str = ""
     forward_from: str = ""
+    sticker: str = ""
 
     def describe(self) -> str:
         parts = []
@@ -94,6 +96,8 @@ class Content:
             parts.append(self.text)
         if self.media:
             parts.append(f"media={self.media}")
+        if self.sticker:
+            parts.append(f"sticker={self.sticker}")
         if self.forward_from:
             parts.append(f"forward={self.forward_from}")
         return " ".join(parts) or "(empty)"
@@ -278,6 +282,9 @@ class TelethonSender:
             peer = target.ref
             if content.forward_from:
                 message = client.forward_messages(peer, content.forward_from)
+            elif content.sticker and Path(content.sticker).exists():
+                message = client.send_file(peer, content.sticker,
+                                           caption=content.text or None)
             elif content.media:
                 message = client.send_file(
                     peer, content.media, caption=content.text or None

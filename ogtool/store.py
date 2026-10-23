@@ -1,7 +1,7 @@
 """SQLite storage, shaped after the tables the reference client keeps.
 
-Tables: ``accounts``, ``tasks``, ``target_lists``, ``targets``, ``results`` and
-``logs``.  Everything a feature produces goes through here so a later port back
+Tables: ``accounts``, ``tasks``, ``target_lists``, ``targets``, ``results``,
+``logs``, ``proxies`` and ``ai_calls``.  Everything a feature produces goes through here so a later port back
 into the client can copy whole tables instead of re-deriving state.
 """
 
@@ -91,7 +91,22 @@ CREATE TABLE IF NOT EXISTS proxies (
     UNIQUE (kind, host, port, user)
 );
 
+CREATE TABLE IF NOT EXISTS ai_calls (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id     INTEGER REFERENCES tasks(id) ON DELETE CASCADE,
+    account     TEXT NOT NULL DEFAULT '',
+    kind        TEXT NOT NULL DEFAULT '',
+    prompt      TEXT NOT NULL DEFAULT '',
+    response    TEXT NOT NULL DEFAULT '',
+    tokens      INTEGER NOT NULL DEFAULT 0,
+    elapsed_ms  INTEGER NOT NULL DEFAULT 0,
+    ok          INTEGER NOT NULL DEFAULT 1,
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_results_task ON results(task_id);
+CREATE INDEX IF NOT EXISTS idx_ai_task ON ai_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_results_created ON results(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
 """
@@ -337,6 +352,27 @@ class Store:
         )
         self._conn.commit()
 
+    # ai calls ---------------------------------------------------------
+
+    def add_ai_call(self, task_id: int | None, *, account: str = "",
+                    kind: str = "", prompt: str = "", response: str = "",
+                    tokens: int = 0, elapsed_ms: int = 0, ok: bool = True,
+                    error: str = "") -> None:
+        """One audit row per model call, whatever the outcome."""
+        self._conn.execute(
+            """INSERT INTO ai_calls (task_id, account, kind, prompt, response,
+                                     tokens, elapsed_ms, ok, error, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (task_id, account, kind, prompt, response, int(tokens),
+             int(elapsed_ms), 1 if ok else 0, error, utcnow()),
+        )
+        self._conn.commit()
+
+    def ai_calls_for(self, task_id: int) -> list[sqlite3.Row]:
+        return self._conn.execute(
+            "SELECT * FROM ai_calls WHERE task_id = ? ORDER BY id", (task_id,)
+        ).fetchall()
+
     def count_sent_today(self, account: str) -> int:
         row = self._conn.execute(
             """SELECT COUNT(*) AS n FROM results
@@ -368,4 +404,5 @@ class Store:
             "tasks": one("SELECT COUNT(*) FROM tasks"),
             "results": one("SELECT COUNT(*) FROM results"),
             "logs": one("SELECT COUNT(*) FROM logs"),
+            "ai_calls": one("SELECT COUNT(*) FROM ai_calls"),
         }

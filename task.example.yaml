@@ -13,10 +13,12 @@ accounts: []                  # labels from `ogtool accounts list`; [] = the poo
 # Answers handed to the dry-run sender, in order, one per request. When the
 # list runs out every request answers "ok". This is what makes the retry, the
 # PEER_FLOOD backoff and the MISSING/FLOOD exports visible offline.
+# Kept short on purpose: one PEER_FLOOD and one refusal show the retry and the
+# exports without a long wait in the demo.
 simulate_responses:
   - ok
   - PEER_FLOOD
-  - FLOOD_WAIT_120
+  - ok
   - USER_PRIVACY_RESTRICTED
   - CHANNEL_PRIVATE
   - USER_ALREADY_PARTICIPANT
@@ -78,7 +80,7 @@ batch_join:
   threads: 1                   # 并发数
   success_cap: 0
   exec_cap: 0
-  flood_cap: 2
+  flood_cap: 1
 
 # #9 批量上号 -------------------------------------------------------------
 batch_login:
@@ -183,3 +185,105 @@ keep_online:
   interval: 300               # seconds between heartbeats
   loops: 3                    # 0 = until interrupted
   jitter: 0.1
+
+# #0 话术炒群 -------------------------------------------------------------
+puppet_chat:
+  inline: "@demo_chat"         # 自定义目标（每行一个）
+  pattern: patterns/example.txt     # 话术文件, a chat_pattern .txt
+  mode_file: ""                # 未选择模式文件, optional: name=path lines
+  mode: ""                     # which entry of the mode file to play
+  loop_interval: 5             # 循环间隔(分钟)
+  loops: 1                     # 循环次数
+  multiplier: 1                # 消息倍率
+  daily_limit: 0               # 单号每日发言上限, 0 = unlimited
+  polish: 0                    # 润色程度 0-3
+  ai_polish: false             # AI实时润色
+
+# #1 复制炒群 -------------------------------------------------------------
+copy_chat:
+  inline: "@demo_target"       # 自定义目标（每个目标群一行）
+  sources: "@demo_source"      # 来源群组, at most 1000
+  copy_mode: copy              # copy | rewrite | ai
+  capture_minutes: 60          # 采集回溯时长（分钟）
+  daily_limit: 0               # 单号每日发言上限
+  multiplier: 1                # 消息倍率
+  polish: 0                    # 润色程度
+  interval_min: 5              # 最小发言间隔（秒）
+  interval_max: 12             # 最大发言间隔（秒）
+  # 过滤关键词: | 分隔同组备选，空行分组（第1组→目标1，最后一组→其余目标）
+  filter_keywords: |
+    spam|广告
+    cheap
+
+  filter_senders: ""           # 过滤发送者ID, comma separated
+  replacements: |              # 关键词替换, left=right
+    demo=Demo
+  account_groups: ""           # 执行账号分组, one line per target
+  messages:                    # captured history, replayed in a dry run
+    - "@demo_source|alice|the demo starts today"
+    - "@demo_source|bob|cheap spam inside"
+
+# #2 AI原创炒群 -----------------------------------------------------------
+ai_chat:
+  inline: "@demo_chat"         # 自定义目标
+  interval_min: 20             # 发言间隔（秒）最小
+  interval_max: 60             # 发言间隔（秒）最大
+  news_channel: ""             # 外部新闻频道
+  insert_probability: 0        # 插入概率（%）
+  topics: |                    # 群聊话题提示词, blank line separated
+    周末去哪玩
+
+    最近在追的剧
+  news: []                     # news items the dry run may pull in
+  count: 2                     # messages per target
+
+# #3 AI智能评论 -----------------------------------------------------------
+ai_comment:
+  inline: "@demo_channel"      # 目标频道/帖子
+  comment_interval_min: 15     # 评论间隔最小（秒）
+  comment_interval_max: 45     # 评论间隔最大（秒）
+  per_post_min: 1              # 每帖评论数（最小）
+  per_post_max: 2              # 每帖评论数（最大）
+  positive_ratio: 60           # 积极乐观比例（%）
+  likes_min: 0                 # 每帖点赞数（最小）
+  likes_max: 3                 # 每帖点赞数（最大）
+  emoji_probability: 30        # 表情包概率（%）
+  like_emoji: ""               # 点赞表情
+  max_chars: 80                # 评论最大字数
+  poll_interval: 60            # 轮询间隔（秒）
+  poll_recent: 3               # 轮询检查最近帖子数
+  extra_prompts: |             # 额外提示词, blank line separated
+    不要提价格
+  posts: 2                     # simulated posts per target
+  seed: 7                      # reproducible plan
+
+# #4 AI搬运频道 -----------------------------------------------------------
+ai_clone:
+  sources: "@demo_source_channel"   # 源频道/帖子
+  inline: "@demo_target_channel"    # 目标频道
+  mode: copy                   # copy | rewrite | ai
+  mapping: |                   # 源/目标映射, source=target
+    @demo_source_channel=@demo_target_channel
+  max_items: 10                # 最多
+  poll_interval: 60            # 轮询间隔（秒）
+  post_interval_min: 10        # 发贴间隔最小值（秒）
+  post_interval_max: 30        # 发贴间隔最大值（秒）
+  author: ""                   # 作者信息（可多行）
+  style: ""                    # AI行文风格
+  filter_keywords: ""          # 过滤关键词（包含则跳过）
+  replacements: ""             # 关键词替换, old=new
+  messages:
+    - "@demo_source_channel|channel|launch day is here"
+    - "@demo_source_channel|channel|promo spam post"
+
+# #19 话术炒群v2 ----------------------------------------------------------
+puppet_chat_v2:
+  inline: "@my_own_group"      # 目标（自己名下的群/频道）
+  pattern: patterns/example.txt
+  mode_file: ""
+  mode: ""
+  startup_interval: 10         # 不同号启动间隔（秒）
+  loop_interval: 5             # 循环间隔(分钟)
+  loops: 1                     # 循环次数
+  multiplier: 1                # 消息倍率
+  daily_limit: 0               # 单号每日发言上限

@@ -21,6 +21,7 @@ class RunContext:
     task_id: int | None = None
     script: Script = field(default_factory=Script)
     degraded: bool = False
+    ai: object | None = field(default=None, repr=False)
     _sender: object | None = field(default=None, repr=False)
 
     def sender(self) -> DryRunSender | TelethonSender:

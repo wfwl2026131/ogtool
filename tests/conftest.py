@@ -69,3 +69,36 @@ def ctx(settings: Settings, store: Store, pooled: list[str]) -> RunContext:
     context = RunContext(settings=settings, store=store, log=logger, live=False)
     yield context
     context.close()
+
+
+DEMO_PATTERN = [
+    "# header comment",
+    "A4|L0|D6|[STICKER:set_a/happy.webp]",
+    "-A5|L0|D21|[IMG:pic1.jpg]",
+    "--A15|L0|D22|",
+    "A25|L0|D39|hello there",
+]
+
+
+@pytest.fixture
+def pattern_file(tmp_path: Path):
+    """A small chat_pattern script on disk."""
+
+    def _make(lines: list[str] | None = None, name: str = "demo.txt") -> str:
+        path = tmp_path / name
+        path.write_text("\n".join(lines or DEMO_PATTERN) + "\n",
+                        encoding="utf-8")
+        return str(path)
+
+    return _make
+
+
+@pytest.fixture
+def fake_ai(settings: Settings):
+    """A model client whose transport the test controls."""
+    from ogtool.ai import AIClient
+
+    def _make(transport):
+        return AIClient(settings.ai, transport=transport)
+
+    return _make

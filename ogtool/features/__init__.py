@@ -31,6 +31,13 @@ _MODULE_NAMES = [
     "proxy",
     "video_manage",
     "watch_chat",
+    # P2
+    "ai_chat",
+    "ai_clone",
+    "ai_comment",
+    "copy_chat",
+    "puppet_chat",
+    "puppet_chat_v2",
 ]
 
 
