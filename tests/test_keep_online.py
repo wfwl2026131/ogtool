@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import pytest
+
+from ogtool.accounts import AccountError
 from ogtool.features.keep_online import KeepOnlineConfig, beats, run
 
 
@@ -30,8 +33,20 @@ def test_dry_run_prints_plan(ctx, capsys):
     assert "dry-run: no session was opened" in output
 
 
-def test_empty_pool_fails_cleanly(ctx, capsys, store):
+def test_empty_pool_degrades_to_a_plan(ctx, capsys, store):
+    """An empty pool is not a failure: the plan still prints, with no account."""
     ctx.store._conn.execute("DELETE FROM accounts")
     ctx.store._conn.commit()
-    assert run(KeepOnlineConfig(), ctx) == 2
-    assert "SESSION_NOT_FOUND" in capsys.readouterr().out
+    assert run(KeepOnlineConfig(), ctx) == 0
+    output = capsys.readouterr().out
+    assert "PLAN: 0 heartbeats, 0 accounts" in output
+    assert ctx.degraded is True
+
+
+def test_empty_pool_is_an_error_when_live(ctx, store):
+    """--live needs a session behind it, so the same call refuses."""
+    ctx.store._conn.execute("DELETE FROM accounts")
+    ctx.store._conn.commit()
+    ctx.live = True
+    with pytest.raises(AccountError):
+        ctx.bind(None)

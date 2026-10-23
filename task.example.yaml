@@ -1,8 +1,25 @@
 # One task file per run. Every key here can also be given on the command line;
 # the command line wins. Field names follow the reference client's pages.
+#
+#   cp config.example.yaml config.yaml          <- do this first
+#   ogtool --config config.yaml <feature> --task task.example.yaml
+#
+# --config is a global option and goes BEFORE the feature name; --task belongs
+# to the feature. Every feature defaults to --dry-run.
 
-task_name: demo-mass-send
+task_name: demo
 accounts: []                  # labels from `ogtool accounts list`; [] = the pool
+
+# Answers handed to the dry-run sender, in order, one per request. When the
+# list runs out every request answers "ok". This is what makes the retry, the
+# PEER_FLOOD backoff and the MISSING/FLOOD exports visible offline.
+simulate_responses:
+  - ok
+  - PEER_FLOOD
+  - FLOOD_WAIT_120
+  - USER_PRIVACY_RESTRICTED
+  - CHANNEL_PRIVATE
+  - USER_ALREADY_PARTICIPANT
 
 # #5 群发消息 -------------------------------------------------------------
 targets:
@@ -26,12 +43,6 @@ send:
   success_cap: 0              # 成功上限, 0 = unlimited
   exec_cap: 0                 # 执行上限, 0 = unlimited
 
-# #21 保持在线 ------------------------------------------------------------
-keep_online:
-  interval: 300               # seconds between heartbeats
-  loops: 3                    # 0 = until interrupted
-  jitter: 0.1
-
 # #6 自动回复 -------------------------------------------------------------
 auto_reply:
   enabled: true
@@ -42,9 +53,133 @@ auto_reply:
     - keywords: ["价格", "多少钱"]
       reply: "价目表稍后私聊发你"
 
-# Used by `ogtool auto_reply --dry-run` without --simulate.
 simulate:
   - "@demo_chat|alice|今天天气不错"
   - "@demo_chat|alice|今天天气不错"
   - "@demo_chat|bob|多少钱"
   - "@demo_chat|carol|毫无关系的闲聊"
+
+# #7 监听聊天 -------------------------------------------------------------
+watch_chat:
+  inline: "@demo_watch"        # 自定义目标
+  exclude: "spam,广告"         # 排除关键词（逗号或换行）
+  relay: "@demo_relay"         # 中转群链接
+  messages:                    # replayed in a dry run
+    - "@demo_watch|alice|hello there"
+    - "@demo_watch|bob|cheap 广告 here"
+
+# #8 批量加群 -------------------------------------------------------------
+batch_join:
+  inline: "@group_one,@group_two"   # 群链接清单
+  request_interval: 5          # 请求间隔
+  request_timeout: 30          # 请求超时
+  account_interval: 10         # 单号加群间隔
+  per_account_cap: 0           # 单号最大加群量, 0 = unlimited
+  threads: 1                   # 并发数
+  success_cap: 0
+  exec_cap: 0
+  flood_cap: 2
+
+# #9 批量上号 -------------------------------------------------------------
+batch_login:
+  import_folder: ""            # 导入文件夹
+  import_zip: ""               # 导入ZIP（*.session + *.json 元数据）
+  export_ids: ""               # 导出所有ID
+  logout: ""                   # frozen | all | both, empty = no logout
+  label_prefix: ""
+
+# #10 批量改名 ------------------------------------------------------------
+batch_rename:
+  file: ""                     # .txt: 每行「名字 姓氏」或单独一个名称
+  operation_interval: 10       # 操作间隔
+  success_cap: 0
+  flood_cap: 2
+  pause_at: 0                  # dry-run demo: pause once after this entry
+  stop_at: 0                   # dry-run demo: stop once before this entry
+
+# #11 批量拉人 ------------------------------------------------------------
+batch_invite:
+  groups: ["@target_group"]    # 群组
+  members_file: ""             # 成员（文件或 members: [...]）
+  members: []
+  strategy: continue           # continue | loop（邀请策略）
+  request_interval: 10         # 最小请求间隔
+  threads: 1                   # 并发账号数
+  target_success_cap: 0        # 目标群邀请成功上限
+  handler_success_cap: 0       # 拉手号限制 成功
+  handler_exec_cap: 0          # 拉手号限制 执行数
+  invite_interval: 10          # 最小邀请间隔
+  admin_account: ""            # 管理员账号
+  member_flood_cap: 2          # PEER_FLOOD邀请对象重试上限
+  handler_flood_cap: 3         # PEER_FLOOD拉手最大次数
+  add_contact_wait: 5          # 添加联系人等待
+  export_missing: ""           # 导出MISSING
+  export_flood: ""             # 导出FLOOD
+  report: false                # 生成报表
+
+# #12 筛选手机 ------------------------------------------------------------
+filter_phone:
+  numbers: ""                  # 号码清单, comma separated
+  file: ""                     # 号码清单, one per line
+  threads: 1                   # 并发账号数量
+  output: ""                   # 输出文件
+  flood_cap: 2
+
+# #13 筛选群组 ------------------------------------------------------------
+filter_group:
+  inline: "@group_one,@group_two"   # 群组清单
+  threads: 1                   # 并发账号数量
+  global_interval_ms: 500      # 全局请求间隔（毫秒）
+  account_interval_ms: 800     # 单账号请求间隔（毫秒）
+  deep: false                  # 深度检测
+  output_dir: ""               # 输出目录
+
+# #14 视频管理 ------------------------------------------------------------
+video_manage:
+  link: "@video_group"         # 群链接
+  interval_ms: 1000            # 操作间隔（毫秒）
+  action: join                 # join | leave | stop
+
+# #15 代理配置 ------------------------------------------------------------
+proxy:
+  add: []                      # ["socks5://host:port", ...]
+  import_file: ""              # 导入
+  paste: ""                    # 粘贴批量
+  delete: 0
+  clear: false
+  test: false                  # 测速
+  timeout_ms: 3000
+  bind: []                     # ["account=proxy_id"]
+
+# #16 批量联系人 ----------------------------------------------------------
+add_contact:
+  contacts: "@contact_one"     # 联系人列表
+  success_cap: 0               # 成功上限
+  exec_cap: 0                  # 执行上限
+  per_target_cap: 1            # 每个目标成功次数
+  request_interval_ms: 1000    # 请求间隔(ms)
+  operation_interval_min_ms: 500    # 操作间隔 min (ms)
+  operation_interval_max_ms: 1500   # 操作间隔 max (ms)
+  threads: 1                   # 线程数
+  flood_cap: 2
+
+# #17 批量拉人v2 ----------------------------------------------------------
+batch_invite_v2:
+  inline: "@my_group"          # 目标（自己名下的群/频道）
+  contacts: "@contact_one"     # 自己的联系人
+  request_interval: 8          # 最小请求间隔
+  threads: 1                   # 线程数
+  target_success_cap: 0        # 目标群邀请成功上限
+  success_cap: 0               # 成功上限
+  exec_cap: 0                  # 执行上限
+  invite_interval_min: 8       # 邀请间隔 最小
+  invite_interval_max: 15      # 邀请间隔 最大
+  flood_cap: 3                 # 允许PEER_FLOOD最大次数
+  invitee_flood_cap: 2         # 邀请对象PEER_FLOOD最大次数
+  export_flood_timeout: ""     # 导出PEER_FLOOD和TIMEOUT记录
+
+# #21 保持在线 ------------------------------------------------------------
+keep_online:
+  interval: 300               # seconds between heartbeats
+  loops: 3                    # 0 = until interrupted
+  jitter: 0.1

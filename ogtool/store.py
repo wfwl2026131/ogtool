@@ -77,6 +77,20 @@ CREATE TABLE IF NOT EXISTS logs (
     created_at  TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS proxies (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL DEFAULT 'socks5',
+    host        TEXT NOT NULL,
+    port        INTEGER NOT NULL DEFAULT 0,
+    user        TEXT NOT NULL DEFAULT '',
+    password    TEXT NOT NULL DEFAULT '',
+    latency_ms  INTEGER NOT NULL DEFAULT -1,
+    status      TEXT NOT NULL DEFAULT 'new',
+    note        TEXT NOT NULL DEFAULT '',
+    added_at    TEXT NOT NULL,
+    UNIQUE (kind, host, port, user)
+);
+
 CREATE INDEX IF NOT EXISTS idx_results_task ON results(task_id);
 CREATE INDEX IF NOT EXISTS idx_results_created ON results(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
@@ -99,6 +113,33 @@ class Account:
     proxy: str = ""
     status: str = "new"
     notes: str = ""
+
+
+@dataclass(slots=True)
+class Proxy:
+    """One proxy row: what the proxy page's table shows and edits."""
+
+    kind: str
+    host: str
+    port: int
+    user: str = ""
+    password: str = ""
+    latency_ms: int = -1
+    status: str = "new"
+    note: str = ""
+    id: int = 0
+
+    def url(self) -> str:
+        auth = f"{self.user}:{self.password}@" if self.user else ""
+        return f"{self.kind}://{auth}{self.host}:{self.port}"
+
+    def display(self) -> str:
+        """The URL with the password masked, for anything that gets printed."""
+        if not self.user:
+            return f"{self.kind}://{self.host}:{self.port}"
+        secret = "***" if self.password else ""
+        auth = f"{self.user}:{secret}@" if secret else f"{self.user}@"
+        return f"{self.kind}://{auth}{self.host}:{self.port}"
 
 
 @dataclass(slots=True)
@@ -170,6 +211,65 @@ class Store:
         return Account(
             label=row["label"], phone=row["phone"], session=row["session"],
             proxy=row["proxy"], status=row["status"], notes=row["notes"],
+        )
+
+    # proxies ----------------------------------------------------------
+
+    def add_proxy(self, proxy: Proxy) -> Proxy:
+        self._conn.execute(
+            """INSERT INTO proxies (kind, host, port, user, password,
+                                    latency_ms, status, note, added_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(kind, host, port, user) DO UPDATE SET
+                   password=excluded.password, note=excluded.note,
+                   latency_ms=excluded.latency_ms, status=excluded.status""",
+            (proxy.kind, proxy.host, proxy.port, proxy.user, proxy.password,
+             proxy.latency_ms, proxy.status, proxy.note, utcnow()),
+        )
+        self._conn.commit()
+        row = self._conn.execute(
+            """SELECT * FROM proxies WHERE kind = ? AND host = ?
+               AND port = ? AND user = ?""",
+            (proxy.kind, proxy.host, proxy.port, proxy.user),
+        ).fetchone()
+        return self._proxy(row) if row else proxy
+
+    def list_proxies(self) -> list[Proxy]:
+        rows = self._conn.execute("SELECT * FROM proxies ORDER BY id").fetchall()
+        return [self._proxy(row) for row in rows]
+
+    def delete_proxy(self, proxy_id: int) -> bool:
+        cursor = self._conn.execute("DELETE FROM proxies WHERE id = ?",
+                                    (proxy_id,))
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def clear_proxies(self) -> int:
+        cursor = self._conn.execute("DELETE FROM proxies")
+        self._conn.commit()
+        return cursor.rowcount
+
+    def set_proxy_latency(self, proxy_id: int, latency_ms: int,
+                          status: str = "ok") -> None:
+        self._conn.execute(
+            "UPDATE proxies SET latency_ms = ?, status = ? WHERE id = ?",
+            (latency_ms, status, proxy_id),
+        )
+        self._conn.commit()
+
+    def bind_proxy(self, label: str, proxy: Proxy | None) -> None:
+        text = proxy.url() if proxy else ""
+        self._conn.execute("UPDATE accounts SET proxy = ? WHERE label = ?",
+                           (text, label))
+        self._conn.commit()
+
+    @staticmethod
+    def _proxy(row: sqlite3.Row) -> Proxy:
+        return Proxy(
+            kind=row["kind"], host=row["host"], port=int(row["port"]),
+            user=row["user"], password=row["password"],
+            latency_ms=int(row["latency_ms"]), status=row["status"],
+            note=row["note"], id=int(row["id"]),
         )
 
     # tasks ------------------------------------------------------------

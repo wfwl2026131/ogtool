@@ -133,7 +133,7 @@ def decide(
 
 
 def run(config: AutoReplyConfig, ctx: RunContext) -> int:
-    accounts = ctx.pool.resolve(config.account_labels or None)
+    accounts = ctx.bind(config.account_labels or None)
     messages = parse_simulated(config.simulate)
     start = datetime.now(UTC).replace(microsecond=0)
 
@@ -185,7 +185,7 @@ def _run_live(config: AutoReplyConfig, ctx: RunContext, task_id: int) -> int:
     cache = DuplicateCache(config.duplicate_seconds)
     answered = 0
     clients = []
-    for account in ctx.pool.resolve(config.account_labels or None):
+    for account in ctx.bind(config.account_labels or None):
         try:
             clients.append(sender._client(account.label))  # noqa: SLF001
         except Exception as error:  # noqa: BLE001 - reported and skipped

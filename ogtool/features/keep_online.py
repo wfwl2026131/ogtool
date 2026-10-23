@@ -50,11 +50,9 @@ def beats(config: KeepOnlineConfig, accounts: list[str]) -> list[tuple[int, floa
 
 
 def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
-    accounts = ctx.pool.resolve(config.account_labels or None)
+    accounts = ctx.bind(config.account_labels or None)
     if not accounts:
-        print("ERROR: SESSION_NOT_FOUND: the account pool is empty")
-        ctx.note("no accounts in the pool", "error")
-        return 2
+        ctx.note("no account bound, the plan is printed without one", "warn")
 
     names = [account.label for account in accounts]
     schedule = beats(config, names)

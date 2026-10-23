@@ -178,11 +178,9 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
         print("ERROR: no targets (use --targets or --targets-file)")
         return 2
 
-    accounts = ctx.pool.resolve(config.account_labels or None)
+    accounts = ctx.bind(config.account_labels or None)
     if not accounts:
-        ctx.note("no accounts in the pool", "error")
-        print("ERROR: SESSION_NOT_FOUND: the account pool is empty")
-        return 2
+        ctx.note("no account bound, the plan is printed without one", "warn")
 
     content, source = build_content(
         config.content, AIClient(ctx.settings.ai, ctx.settings.ai.timeout)

@@ -2,18 +2,43 @@
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Callable
+from types import ModuleType
 
 from ..runtime import RunContext
 
 Feature = Callable[[dict, RunContext], int]
 
 _REGISTRY: dict[str, Feature] = {}
+_MODULES: dict[str, ModuleType] = {}
+
+# P1 and P0 both live here; a module is imported once, by load_defaults().
+_MODULE_NAMES = [
+    # P0
+    "auto_reply",
+    "keep_online",
+    "mass_send",
+    # P1
+    "add_contact",
+    "batch_invite",
+    "batch_invite_v2",
+    "batch_join",
+    "batch_login",
+    "batch_rename",
+    "filter_group",
+    "filter_phone",
+    "proxy",
+    "video_manage",
+    "watch_chat",
+]
 
 
-def register(name: str) -> Callable[[Feature], Feature]:
+def register(name: str, module: str = "") -> Callable[[Feature], Feature]:
     def wrap(function: Feature) -> Feature:
         _REGISTRY[name] = function
+        if module:
+            _MODULES[name] = importlib.import_module(f".{module}", __package__)
         return function
 
     return wrap
@@ -25,10 +50,18 @@ def get(name: str) -> Feature:
     return _REGISTRY[name]
 
 
+def module(name: str) -> ModuleType:
+    if name not in _MODULES:
+        raise KeyError(f"unknown feature: {name}")
+    return _MODULES[name]
+
+
 def names() -> list[str]:
     return sorted(_REGISTRY)
 
 
 def load_defaults() -> None:
     """Import the feature modules so their decorators run."""
-    from . import auto_reply, keep_online, mass_send  # noqa: F401
+    for name in _MODULE_NAMES:
+        loaded = importlib.import_module(f".{name}", __package__)
+        _MODULES.setdefault(name, loaded)

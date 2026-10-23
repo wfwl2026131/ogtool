@@ -33,7 +33,9 @@ def test_accounts_list_and_test(tmp_path, capsys):
     output = capsys.readouterr().out
     assert "acc1" in output and "acc2" in output and "total: 2" in output
 
-    assert run(["--config", config, "accounts", "test"]) == 0
+    # One of the two session files exists, so the summary is not all green:
+    # the exit code has to say so, or automation cannot tell.
+    assert run(["--config", config, "accounts", "test"]) == 1
     tested = capsys.readouterr().out
     assert "dry-run: session file present" in tested
     assert "ok: 1" in tested

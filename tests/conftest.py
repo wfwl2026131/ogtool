@@ -9,6 +9,7 @@ import pytest
 
 from ogtool.config import Settings
 from ogtool.runtime import RunContext
+from ogtool.simulate import Script
 from ogtool.store import Account, Store
 
 CONFIG = """\
@@ -46,6 +47,19 @@ def pooled(settings: Settings, store: Store) -> list[str]:
         session.write_bytes(b"")
         store.add_account(Account(label, session=str(session)))
     return labels
+
+
+@pytest.fixture
+def scripted(ctx: RunContext):
+    """Feed the dry-run sender a list of answers, in order."""
+
+    def _make(codes: list[str]) -> RunContext:
+        ctx.script = Script(codes)
+        ctx.close()
+        ctx._sender = None
+        return ctx
+
+    return _make
 
 
 @pytest.fixture
