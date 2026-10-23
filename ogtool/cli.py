@@ -145,6 +145,20 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     test.add_argument("--dry-run", action="store_true", help="the default")
     test.add_argument("--live", action="store_true")
 
+    login = account_subs.add_parser(
+        "login", help="live login, the code read from a file (no prompts)")
+    login.add_argument("--label", default="", help="pool label for the account")
+    login.add_argument("--phone", default="", help="phone number to sign in")
+    login.add_argument("--code-file", default="",
+                       help="file the harness drops the login code into")
+    login.add_argument("--password-file", default="",
+                       help="file the harness drops the 2FA password into")
+    login.add_argument("--timeout", type=float, default=300.0,
+                       help="seconds to wait for each file")
+    login.add_argument("--dry-run", action="store_true",
+                       help="print the plan, connect to nothing")
+    login.add_argument("--live", action="store_true", help="the default here")
+
 
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--task", default=None, help="task YAML merged over config")
@@ -369,6 +383,17 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(settings.db_path)
     pool = _Pool(settings, store)
     try:
+        if args.action == "login":
+            from .login import LoginConfig, login
+
+            return login(LoginConfig(
+                label=args.label,
+                phone=args.phone,
+                code_file=args.code_file,
+                password_file=args.password_file,
+                timeout=args.timeout,
+                dry_run=bool(args.dry_run),
+            ), settings, store)
         if args.action == "add":
             if args.session:
                 account = pool.add_session(args.session, args.label)

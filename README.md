@@ -105,6 +105,19 @@ api_id: ${OGTOOL_API_ID:0}
 api_hash: ${OGTOOL_API_HASH:}
 ```
 
+凭据的解析顺序（`ogtool/login.py:resolve_credentials`）：
+
+1. **`$DSH_SECRET_TG_API_CREDENTIALS`**（也认 `$TG_API_CREDENTIALS`）：一个可能
+   混着标签文本的 blob。先找带标签的 `api_id\D*(\d{5,12})` +
+   `api_hash\D*([0-9a-fA-F]{32})`，找不到再取「第一个 5–12 位纯数字」+
+   「第一个 32 位 hex」。
+2. `$TG_API_ID` + `$TG_API_HASH`（也认 `$OGTOOL_*`）。
+3. `config.yaml` 里的 `api_id` / `api_hash`。
+
+**任何路径都不打印凭据原文**：`api_id` 只出现前两位（`api_id=12***`），
+手机号只出现 `+8613****` 这种掩码。这条由 `tests/test_login.py` 里
+「blob 进了 env、跑完 stdout+stderr 不含它」的断言守着。
+
 `require_credentials()` 只在 `--live` 路径上调用；dry-run 全程不碰它。
 
 ## 注入服务端响应（P1 的关键机制）
@@ -141,6 +154,11 @@ ogtool accounts add --phone +15551230001 --label demo1
 ogtool accounts add --session /path/to/xxx.session --label seat2
 ogtool accounts list
 ogtool accounts test
+ogtool accounts test --live            # 真 get_me()：user_id / username / 手机号掩码 / 受限
+
+# 非交互 live 登录：验证码和 2FA 密码都由外部写文件，进程只轮询
+ogtool accounts login --label demo1 --phone +8613800000000 \
+  --code-file /tmp/og_code.txt --password-file /tmp/og_pw.txt --timeout 300
 
 ogtool mass_send --task-name "demo blast" \
   --targets "@demo_chat,@demo_group,https://t.me/demo_channel" \
@@ -299,6 +317,38 @@ steps:
 解析失败会指名文件与步号，例如
 `scripts/x.yaml: steps[2]: unknown action 'teleport' (have: ...)`。
 
+## 非交互 live 登录
+
+给自动化准备的登录路径：进程不读 stdin、不弹任何提示，外部把验证码写进
+`--code-file`、把 2FA 密码写进 `--password-file` 即可。
+
+```bash
+ogtool --config config.yaml accounts login --label demo1 \
+  --phone +8613800000000 --code-file /tmp/og_code.txt \
+  --password-file /tmp/og_pw.txt --timeout 300
+```
+
+流程与输出行（全部 `flush=True`，逐行可被外部 tail）：
+
+| 行 | 时机 |
+|---|---|
+| `credentials: api_id=12***` | 凭据解析成功（只打印前两位） |
+| `CODE_SENT` | `send_code_request` 已发出，**此时才该跟用户要验证码** |
+| `PASSWORD_NEEDED` | 账号开了 2FA，需要写 `--password-file` |
+| `LOGIN_OK user_id=… username=@… phone=+8613****` | 登录成功，账号与 profile 已入库 |
+| `CODE_INVALID` | 验证码错，最多重试 2 次（共收 3 个码） |
+| `PHONE_CODE_EXPIRED` | 码过期，要重新发 |
+| `FLOOD_WAIT_<秒>` | 被限流，打印剩余秒数后退出 |
+| `TIMEOUT_NO_CODE` / `TIMEOUT_NO_PASSWORD` | 等到 `--timeout` 没等到文件 |
+
+细节：
+
+- 轮询间隔 1 秒，文件**读到第一行就删掉**（防重复消费）。
+- 退出码：成功 `0`、登录失败 `1`、凭据缺失或用法错 `2`。
+- `accounts test --live` 同样走真 `get_me()`，输出
+  `user_id=… username=@… phone=+8613**** restricted=no`；没有 session 文件仍是
+  `SESSION_NOT_FOUND`。
+
 ## 全局参数（`globals:`）
 
 设置页里的非授权项落在 `config.yaml` 的 `globals:` 段，`settings` 命令只读展示：
@@ -420,8 +470,10 @@ tests/            295 条
 
 ## 已知缺口
 
-1. **`accounts test` 的 `--live` 路径没端到端跑过**：没有可用 api_id，
-   dry-run 只查 session 文件在不在。
+1. **`accounts login` / `accounts test --live` 还没用真号跑过**：代码路径、
+   Telethon 1.45 的 `sign_in` / `send_code_request` 签名、错误类名都已核对，
+   全部行为由 mock client 覆盖（20 条测试，含 2FA、错码重试、超时、限流、
+   凭据不落日志）；真实验证要等 api 凭据 + 测试号。
 2. **`TelethonSender` 的 join / invite / profile / contact / participants /
    proxy 只在签名层对齐**，没有真实账号跑过；参数形式按 Telethon 1.43 的
    `client.*` 写，P2 接真号时可能要调。

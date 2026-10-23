@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import Settings
+from .config import ConfigError, Settings
 from .senders import SESSION_NOT_FOUND
 from .store import Account, Store
 
@@ -84,9 +84,17 @@ class AccountPool:
             chosen.append(account)
         return chosen
 
-    def test(self, names: list[str] | None, live: bool) -> list[tuple[str, bool, str]]:
-        """Connectivity check. In dry-run it only proves the file is there."""
+    def test(self, names: list[str] | None, live: bool,
+             client_factory=None) -> list[tuple[str, bool, str]]:
+        """Connectivity check. In dry-run it only proves the file is there.
+
+        Live means a real ``get_me()``: the row shows the user id, the username,
+        the phone masked and whether the account is restricted.  A failure shows
+        the exception class only, never its message, so nothing echoed by the
+        server can put a credential or a phone into the report.
+        """
         rows: list[tuple[str, bool, str]] = []
+        credentials = None
         for account in self.resolve(names):
             path = Path(account.session)
             if not path.exists():
@@ -95,24 +103,52 @@ class AccountPool:
             if not live:
                 rows.append((account.label, True, "dry-run: session file present"))
                 continue
+            if credentials is None:
+                try:
+                    credentials = _credentials(self.settings)
+                except ConfigError as error:
+                    rows.append((account.label, False, str(error)))
+                    continue
             try:
-                from telethon.sync import TelegramClient
-            except ImportError:  # pragma: no cover - live only
-                rows.append((account.label, False, "telethon is not installed"))
-                continue
-            api_id, api_hash = self.settings.require_credentials()
-            try:
-                client = TelegramClient(str(path), api_id, api_hash)
+                client = _client(client_factory, str(path), credentials)
                 client.connect()
                 me = client.get_me()
-                rows.append((account.label, True,
-                             f"@{getattr(me, 'username', '') or me.id}"))
+                if me is None:
+                    rows.append((account.label, False, "LOGIN_FAILED empty get_me"))
+                    self.store.set_account_status(account.label, "error")
+                    continue
+                rows.append((account.label, True, _describe(me)))
                 client.disconnect()
                 self.store.set_account_status(account.label, "ok")
             except Exception as error:  # noqa: BLE001 - reported as a row
-                rows.append((account.label, False, f"{type(error).__name__}: {error}"))
+                rows.append((account.label, False, type(error).__name__))
                 self.store.set_account_status(account.label, "error")
         return rows
+
+
+def _credentials(settings: Settings):
+    from .login import resolve_credentials
+
+    return resolve_credentials(settings)
+
+
+def _client(factory, path: str, credentials):
+    if factory is not None:
+        return factory(path, credentials)
+    from .login import build_client
+
+    return build_client(path, credentials)
+
+
+def _describe(me) -> str:
+    from .login import mask_phone
+
+    username = getattr(me, "username", "") or ""
+    restricted = "yes" if getattr(me, "restricted", False) else "no"
+    return (f"user_id={getattr(me, 'id', '')} "
+            f"username={('@' + username) if username else '-'} "
+            f"phone={mask_phone(getattr(me, 'phone', '') or '')} "
+            f"restricted={restricted}")
 
 
 def _proxy_text(settings: Settings) -> str:
