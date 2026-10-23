@@ -9,7 +9,7 @@ posts one run carries over, so a dry run stays short even on a busy channel.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
@@ -26,6 +26,7 @@ from ..sources import (
     parse_replacements,
     replace_keywords,
 )
+from ..sources import parse_many as parse_source_messages
 from ..targets import Target, parse_many
 from . import register
 from ._common import (
@@ -194,9 +195,43 @@ def _prompt(ctx: RunContext, config: CloneConfig, item: Item) -> str:
                    author=config.author or "-")
 
 
+def capture(sender: object, account: str,
+            sources: list[str], limit: int) -> tuple[list[SourceMessage],
+                                                     list[tuple[str, str]]]:
+    """Read the source channels live: the last ``limit`` posts of each.
+
+    The page has no time window on this one -- ``max`` is how many posts a run
+    carries -- so the limit is both the read size and the carry size.  A source
+    that cannot be read comes back as a failure with its code.
+    """
+    entries: list[str] = []
+    failures: list[tuple[str, str]] = []
+    for source in sources:
+        target = parse_many([source], "channel")[0]
+        result = sender.history(account, target, minutes=0,  # type: ignore[attr-defined]
+                                limit=limit)
+        if not result.ok:
+            failures.append((source, result.code))
+            print(f"source={source} capture failed: {result.code}")
+            continue
+        entries.extend(result.items)
+        print(f"source={source} captured {len(result.items)}/{result.count} "
+              f"limit={limit}")
+    return parse_source_messages(entries), failures
+
+
 def run(config: CloneConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
+    failures: list[tuple[str, str]] = []
+    if ctx.live and not config.messages and config.sources and accounts:
+        messages, failures = capture(ctx.sender(), labels[0], config.sources,
+                                     config.max_items)
+        config = replace(config, messages=messages)
+        if not messages and failures:
+            print("ERROR: no source history was captured: "
+                  + ", ".join(f"{source}={code}" for source, code in failures))
+            return 1
     items, collected = plan(config, labels)
     rewriting = config.mode in ("ai", "rewrite")
 
@@ -273,5 +308,5 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(CloneConfig.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["CloneConfig", "Item", "TITLE", "main", "parse_mapping", "plan",
-           "run"]
+__all__ = ["CloneConfig", "Item", "TITLE", "capture", "main", "parse_mapping",
+           "plan", "run"]

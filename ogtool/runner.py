@@ -88,19 +88,28 @@ def execute(
     missing_codes: Iterable[str] = DEFAULT_MISSING,
     label: str = "job",
     quiet: bool = False,
+    interval: float | Callable[[Job, Job | None], float] = 0.0,
 ) -> Outcome:
     """Run every job, honouring the caps, the retry rule and the flood policy.
 
     ``exec_cap`` counts attempts, ``success_cap`` counts successes; whichever
     trips first ends the run with ``outcome.stopped`` naming it, which is how
     the reference pages stop early without pretending they finished.
+
+    ``interval`` is the page's pace between two requests: a number, or a
+    function of ``(job, previous job)`` for the pages that show a global and a
+    per account interval separately.  It is slept only in a live run -- a dry
+    run reports the pace in its ETA instead of waiting for it.
     """
+    from .features._common import pause
+
     items = list(jobs)
     outcome = Outcome()
     outcome.stats.total = total or len(items)
     missing = set(missing_codes)
     backoff = PeerFloodBackoff()
     sender = ctx.sender()
+    previous: Job | None = None
 
     for index, job in enumerate(items, start=1):
         if exec_cap and index > exec_cap:
@@ -109,6 +118,12 @@ def execute(
         if success_cap and outcome.stats.ok >= success_cap:
             outcome.stopped = "success_cap"
             break
+
+        if previous is not None:
+            wait = float(interval(job, previous) if callable(interval)
+                         else interval)
+            pause(ctx, wait)
+        previous = job
 
         floods = 0
         retries = 0

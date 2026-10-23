@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -109,6 +110,7 @@ class AccountPool:
                 except ConfigError as error:
                     rows.append((account.label, False, str(error)))
                     continue
+            client = None
             try:
                 client = _client(client_factory, str(path), credentials,
                                 self.settings.proxy)
@@ -119,11 +121,17 @@ class AccountPool:
                     self.store.set_account_status(account.label, "error")
                     continue
                 rows.append((account.label, True, _describe(me)))
-                client.disconnect()
                 self.store.set_account_status(account.label, "ok")
             except Exception as error:  # noqa: BLE001 - reported as a row
                 rows.append((account.label, False, type(error).__name__))
                 self.store.set_account_status(account.label, "error")
+            finally:
+                # Every opened connection is closed here, including the early
+                # ``continue`` above: a client left open keeps a loop task
+                # pending, which is what printed "Task was destroyed" at exit.
+                if client is not None:
+                    with contextlib.suppress(Exception):
+                        client.disconnect()
         return rows
 
 

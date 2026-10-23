@@ -65,3 +65,37 @@ def test_logs_are_written(tmp_path):
         task = store.create_task("demo", "keep_online")
         store.add_log(task.id, "hello", "info")
         assert store.stats()["logs"] == 1
+
+
+def test_the_daily_day_bounds_convert_local_midnight_to_utc():
+    from datetime import datetime, timedelta, timezone
+
+    from ogtool.store import local_day_bounds
+
+    east = timezone(timedelta(hours=8))
+    start, end = local_day_bounds(datetime(2026, 10, 24, 0, 30, tzinfo=east))
+    assert start == "2026-10-23T16:00:00+00:00"
+    assert end == "2026-10-24T16:00:00+00:00"
+
+
+def test_the_daily_counter_follows_the_local_day_across_midnight(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    with make_store(tmp_path) as store:
+        task = store.create_task("demo", "mass_send")
+        store.add_result(task.id, "acc", "@a", "sent")
+        local_midnight = datetime.now().astimezone().replace(
+            hour=0, minute=0, second=0, microsecond=0)
+        now = local_midnight + timedelta(minutes=5)
+
+        after = (local_midnight + timedelta(seconds=1)).astimezone(UTC).replace(
+            microsecond=0).isoformat()
+        store._conn.execute("UPDATE results SET created_at = ?", (after,))
+        store._conn.commit()
+        assert store.count_sent_today("acc", now=now) == 1
+
+        before = (local_midnight - timedelta(seconds=1)).astimezone(UTC).replace(
+            microsecond=0).isoformat()
+        store._conn.execute("UPDATE results SET created_at = ?", (before,))
+        store._conn.commit()
+        assert store.count_sent_today("acc", now=now) == 0

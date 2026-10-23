@@ -89,3 +89,71 @@ def test_a_failing_model_falls_back_to_the_original(ctx, capsys, fake_ai):
     output = capsys.readouterr().out
     assert "text=original" in output
     assert "fallback 1" in output
+
+
+class CloneHistorySender:
+    """A live transport with a canned channel history and a post log."""
+
+    def __init__(self, items: list[str], code: str = "ok") -> None:
+        self.items = items
+        self.code = code
+        self.history_calls: list[tuple[str, int, int]] = []
+        self.sent: list[str] = []
+
+    def history(self, account, target, minutes=0, limit=0):
+        from ogtool.senders import result_for
+
+        self.history_calls.append((target.ref, minutes, limit))
+        result = result_for(self.code)
+        if result.ok:
+            result.items = list(self.items)
+            result.count = len(self.items)
+        return result
+
+    def send(self, account, target, content):
+        from ogtool.senders import SendResult
+
+        self.sent.append(content.text)
+        return SendResult(ok=True, message_id=len(self.sent))
+
+    def close(self) -> None:
+        pass
+
+
+def test_a_live_run_captures_the_source_channel(ctx, live, capsys):
+    live(CloneHistorySender(["@src|ch|hello", "@src|ch|world"]))
+    config = CloneConfig(sources=["@src"], targets=["@t1"], max_items=5,
+                         post_interval_min=0.0, post_interval_max=0.0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "source=@src captured 2/2" in output
+    assert "captured: captured 2/2" in output
+
+
+def test_the_capture_is_read_with_the_carry_limit(ctx, live):
+    sender = CloneHistorySender(["@src|ch|one"])
+    live(sender)
+    config = CloneConfig(sources=["@src"], targets=["@t1"], max_items=7,
+                         post_interval_min=0.0, post_interval_max=0.0)
+    run(config, ctx)
+    assert sender.history_calls == [("@src", 0, 7)]
+    assert sender.sent == ["one"]
+
+
+def test_a_captured_post_still_goes_through_the_filter(ctx, live):
+    live(CloneHistorySender(["@src|ch|keep this", "@src|ch|spam here"]))
+    config = CloneConfig(sources=["@src"], targets=["@t1"], max_items=5,
+                         keywords=["spam"], post_interval_min=0.0,
+                         post_interval_max=0.0)
+    run(config, ctx)
+    sender = ctx._sender
+    assert sender.sent == ["keep this"]
+
+
+def test_a_capture_failure_is_reported_not_swallowed(ctx, live, capsys):
+    live(CloneHistorySender([], code="CHANNEL_PRIVATE"))
+    config = CloneConfig(sources=["@src"], targets=["@t1"])
+    assert run(config, ctx) == 1
+    output = capsys.readouterr().out
+    assert "capture failed: CHANNEL_PRIVATE" in output
+    assert "ERROR: no source history" in output

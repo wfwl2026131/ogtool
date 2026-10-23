@@ -76,3 +76,22 @@ def test_success_counts_are_reported(ctx, capsys):
     output = capsys.readouterr().out
     assert "成功: 2" in output
     assert "PLAN: 2 invites" in output
+
+
+def test_a_live_run_waits_between_two_invites(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = InviteConfig(groups=["@g1"], members=["@m1", "@m2", "@m3"],
+                          strategy=STRATEGY_LOOP, request_interval=4.0,
+                          invite_interval=9.0)
+    assert run(config, ctx) == 0
+    # The two intervals both pace one invite; the longer one wins.
+    assert slept == [9.0, 9.0]
+
+
+def test_a_dry_run_invites_without_waiting(ctx, slept, capsys):
+    config = InviteConfig(groups=["@g1"], members=["@m1", "@m2"],
+                          strategy=STRATEGY_LOOP, request_interval=4.0,
+                          invite_interval=9.0)
+    assert run(config, ctx) == 0
+    assert slept == []
+    assert "waited: " not in capsys.readouterr().out

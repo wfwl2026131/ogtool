@@ -371,6 +371,16 @@ class DryRunSender:
     def close(self) -> None:
         """Nothing to release; kept so both backends share one interface."""
 
+    def history(self, account: str, target: Target, minutes: int = 0,
+                limit: int = 0) -> SendResult:
+        """Source messages a live run would read; offline there are none."""
+        result = self._answer(
+            "history", account,
+            f"target={target.display()} minutes={minutes} limit={limit}")
+        if result.ok:
+            result.items = []
+        return result
+
 
 def _deliver(client: Any, peer: Any, content: Content) -> Any:
     """One message, whichever shape the content asks for."""
@@ -385,6 +395,15 @@ def _deliver(client: Any, peer: Any, content: Content) -> Any:
                                 caption=content.text or None,
                                 reply_to=reply_to)
     return client.send_message(peer, content.text, reply_to=reply_to)
+
+
+def _sender_ref(message: Any) -> str:
+    """Who said it: the username when there is one, else the numeric id."""
+    sender = getattr(message, "sender", None)
+    username = getattr(sender, "username", "") or ""
+    if username:
+        return f"@{username}"
+    return str(getattr(message, "sender_id", 0) or 0)
 
 
 def _proxy_tuple(url: str) -> Any:
@@ -427,7 +446,15 @@ class TelethonSender:
         client = _AwaitedClient(
             TelegramClient(str(session_path), api_id, api_hash, proxy=proxy)
         )
-        client.connect()
+        try:
+            client.connect()
+        except Exception:
+            # A half opened client keeps Telethon's send/receive loops pending
+            # and they only show up as "Task was destroyed" at interpreter
+            # exit; closing it here is the only place both are still known.
+            with contextlib.suppress(Exception):
+                client.disconnect()
+            raise
         self._clients[account] = client
         return client
 
@@ -619,6 +646,48 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("logout", account, action)
+
+    def history(self, account: str, target: Target, minutes: int = 0,
+                limit: int = 0) -> SendResult:
+        """The recent messages of one chat, oldest first, as source strings.
+
+        Each item is ``peer|sender|text``, the shape ``sources.parse_many``
+        reads, so a live capture and a task file feed the same parser.  A
+        caption is flattened to one line and ``|`` becomes ``/``: those two
+        characters are the record separator of that format.  A post carrying
+        only media has no text to copy and is skipped, so ``count`` (scanned)
+        can be larger than the number of items returned.
+        """
+
+        def call(client: Any, peer: Any) -> SendResult:
+            from datetime import UTC, datetime, timedelta
+
+            # ``minutes`` is a window that ends now, not an offset into the
+            # past: iterate newest first and stop at the first older message.
+            # Passing it as ``offset_date`` would read everything *before* that
+            # point -- the opposite set, and on a busy chat a 200 message replay.
+            cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)
+                      if minutes > 0 else None)
+            scanned = 0
+            captured: list[tuple[str, str]] = []
+            for message in client.iter_messages(peer, limit=limit or None):
+                stamp = getattr(message, "date", None)
+                if cutoff is not None and stamp is not None:
+                    if stamp.tzinfo is None:
+                        stamp = stamp.replace(tzinfo=UTC)
+                    if stamp < cutoff:
+                        break
+                scanned += 1
+                body = " ".join((getattr(message, "message", "") or "").split())
+                body = body.replace("|", "/")
+                if body:
+                    captured.append((_sender_ref(message), body))
+            captured.reverse()  # Telethon yields newest first
+            return SendResult(ok=True, count=scanned,
+                              items=[f"{target.ref}|{sender}|{body}"
+                                     for sender, body in captured])
+
+        return self._on_target(account, target, "history", call)
 
     def close(self) -> None:
         for client in self._clients.values():

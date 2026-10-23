@@ -80,3 +80,34 @@ def test_a_live_run_records_the_real_outcome_of_each_join(ctx, live, capsys):
     assert run(config, ctx) == 1
     rows = ctx.store.results_for(ctx.task_id)
     assert [row["status"] for row in rows] == ["sent", "failed"]
+
+
+def test_the_account_interval_applies_when_one_account_goes_twice():
+    from ogtool.features.batch_join import gap
+    from ogtool.runner import Job
+
+    config = JoinConfig(request_interval=5.0, account_interval=10.0)
+    first = Job(account="a", subject="@g1")
+    same = Job(account="a", subject="@g2")
+    other = Job(account="b", subject="@g3")
+    assert gap(config, first, None) == 5.0
+    assert gap(config, same, first) == 10.0
+    assert gap(config, other, first) == 5.0
+
+
+def test_a_live_run_keeps_the_request_interval(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = JoinConfig(targets=parse_many(["@g1", "@g2", "@g3"], "group"),
+                        request_interval=5.0, account_interval=10.0)
+    assert run(config, ctx) == 0
+    # The pool alternates between the two accounts, so every gap is the pool
+    # interval; the account interval only bites when one account repeats.
+    assert slept == [5.0, 5.0]
+
+
+def test_a_dry_run_joins_without_waiting(ctx, slept):
+    config = JoinConfig(targets=parse_many(["@g1", "@g2", "@g3"], "group"),
+                        account_labels=["acc1"], request_interval=5.0,
+                        account_interval=10.0)
+    assert run(config, ctx) == 0
+    assert slept == []

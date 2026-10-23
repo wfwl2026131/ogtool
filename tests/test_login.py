@@ -446,3 +446,41 @@ def test_the_cli_accepts_login_and_dry_runs_it(tmp_path, capsys):
     assert code == 0
     assert "dry-run: would log in x" in capsys.readouterr().out
     assert run(["--config", str(config), "accounts", "login"]) == 2
+
+
+def test_a_failed_live_check_still_disconnects(settings, store, creds):
+    from ogtool.store import Account
+
+    session = settings.session_path("nodis")
+    session.write_bytes(b"")
+    store.add_account(Account("nodis", session=str(session)))
+
+    class NoIdentity(FakeClient):
+        def get_me(self) -> object:
+            return None
+
+    client = NoIdentity()
+    rows = AccountPool(settings, store).test(
+        ["nodis"], live=True, client_factory=lambda _p, _c: client)
+    assert rows[0][1] is False
+    assert "LOGIN_FAILED" in rows[0][2]
+    assert client.disconnected is True
+
+
+def test_an_error_during_the_live_check_still_disconnects(settings, store, creds):
+    from ogtool.store import Account
+
+    session = settings.session_path("boom")
+    session.write_bytes(b"")
+    store.add_account(Account("boom", session=str(session)))
+
+    class CannotConnect(FakeClient):
+        def connect(self) -> None:
+            raise TimeoutError("the connection was dropped")
+
+    client = CannotConnect()
+    rows = AccountPool(settings, store).test(
+        ["boom"], live=True, client_factory=lambda _p, _c: client)
+    assert rows[0][1] is False
+    assert rows[0][2] == "TimeoutError"
+    assert client.disconnected is True

@@ -9,10 +9,12 @@ perform it, with the account that would perform it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import partial
 
 from ..config import Settings
 from ..flags import Flag
 from ..progress import Stats
+from ..runner import Job, execute, print_outcome
 from ..runtime import RunContext
 from ..targets import Target
 from . import register
@@ -44,7 +46,8 @@ FLAGS = (
          "seconds between two joins of the same account"),
     Flag("--per-account-cap", "per_account_cap", int,
          "joins one account may perform"),
-    Flag("--threads", "threads", int, "how many accounts run at once"),
+    Flag("--threads", "threads", int,
+         "planning concurrency only (requests are serial)"),
     Flag("--success-cap", "success_cap", int, "stop after this many joins"),
     Flag("--exec-cap", "exec_cap", int, "stop after this many attempts"),
     Flag("--flood-cap", "flood_cap", int, "PEER_FLOOD retries per target"),
@@ -104,6 +107,19 @@ def assign(accounts: list[str], targets: list[Target],
     return pairs
 
 
+def gap(config: JoinConfig, job: Job, previous: Job | None = None) -> float:
+    """Seconds before one join.
+
+    The pool wide request interval always applies; two joins in a row by the
+    same account also have to clear that account's own interval, which is the
+    longer of the two.
+    """
+    wait = config.request_interval
+    if previous is not None and previous.account == job.account:
+        wait = max(wait, config.account_interval)
+    return wait
+
+
 def run(config: JoinConfig, ctx: RunContext) -> int:
     if not config.targets:
         print("ERROR: no targets (use --targets or --targets-file)")
@@ -115,10 +131,7 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
     if not labels:
         pairs = [("-", target) for target in config.targets]
 
-    from ..runner import Job, execute, print_outcome
-
-    header(
-        config.task_name,
+    header(config.task_name,
         accounts=f"{len(labels)}"
                  + (" (no account bound, plan only)" if not labels else ""),
         groups=len(config.targets),
@@ -142,7 +155,8 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
             for account, target in pairs]
     outcome = execute(jobs, ctx, call, total=len(jobs),
                       success_cap=config.success_cap, exec_cap=config.exec_cap,
-                      flood_cap=config.flood_cap, retry_cap=1, label="group")
+                      flood_cap=config.flood_cap, retry_cap=1, label="group",
+                      interval=partial(gap, config))
 
     for job in jobs:
         if "ok" not in job.extra:

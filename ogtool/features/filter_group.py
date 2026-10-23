@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
+from ..limiter import format_duration
 from ..progress import Stats
 from ..report import write_lines
 from ..runtime import RunContext
@@ -31,6 +32,7 @@ from ._common import (
     num,
     open_task,
     out_dir,
+    pause,
     record,
     section,
     text,
@@ -53,7 +55,8 @@ FLAGS = (
     Flag("--groups", "groups", str, "groups, comma separated"),
     Flag("--groups-file", "files", str, "file with one group per line",
          action="append"),
-    Flag("--threads", "threads", int, "concurrent accounts"),
+    Flag("--threads", "threads", int,
+         "planning concurrency only (requests are serial)"),
     Flag("--global-interval-ms", "global_interval_ms", int,
          "global request interval in milliseconds"),
     Flag("--account-interval-ms", "account_interval_ms", int,
@@ -117,6 +120,18 @@ class GroupConfig:
         )
 
 
+def gap(config: GroupConfig, previous: str = "", account: str = "") -> float:
+    """Seconds before one resolve.
+
+    ``global_interval_ms`` paces every request; a group handled by the account
+    that handled the previous one also has to clear ``account_interval_ms``.
+    """
+    wait = config.global_interval_ms / 1000.0
+    if previous and previous == account:
+        wait = max(wait, config.account_interval_ms / 1000.0)
+    return wait
+
+
 def run(config: GroupConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts] or ["-"]
@@ -140,10 +155,17 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
     stats = Stats(total=len(config.groups))
     buckets: dict[str, list[str]] = {name: [] for name in BUCKETS}
     current = "-"
+    previous_account = ""
+    waited = 0.0
 
     for index, group in enumerate(config.groups, start=1):
         current = group
         account = labels[(index - 1) % len(labels)]
+        if index > 1:
+            delay = gap(config, previous_account, account)
+            waited += delay
+            pause(ctx, delay)
+        previous_account = account
         target = parse_many([group], "group")[0]
         result = sender.resolve(account, target)
         bucket = classify(result.code, result.ok, config.deep)
@@ -164,6 +186,8 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
         write_lines(f"{base}/filter_group_{_slug(name)}.txt", buckets[name],
                     header=name)
     print(f"输出目录：{base}")
+    if ctx.live and waited:
+        print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {len(config.groups)} groups, {len(accounts)} accounts, "
           f"can_send {len(buckets[CAN_SEND])}")
     close_task(ctx, task, ok=stats.ok, failed=stats.failed)

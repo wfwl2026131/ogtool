@@ -46,3 +46,17 @@ def test_unknown_action_is_a_config_error():
     with pytest.raises(ConfigError):
         VideoConfig.from_dict({"video_manage": {"link": "@g", "action": "fly"}},
                               None)  # type: ignore[arg-type]
+
+
+def test_a_live_run_waits_the_operation_interval(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = VideoConfig(link="@g1", interval_ms=250)
+    assert run(config, ctx) == 0
+    # Two accounts from the pool fixture, so one gap of 250 ms.
+    assert slept == [0.25]
+
+
+def test_a_dry_run_operates_without_waiting(ctx, slept):
+    config = VideoConfig(link="@g1", interval_ms=250)
+    assert run(config, ctx) == 0
+    assert slept == []

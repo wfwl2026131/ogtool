@@ -480,20 +480,20 @@ tests/            295 条
 
 | feature | live 走向 | 判定 | 证据（函数名:行号） |
 |---|---|---|---|
-| `add_contact` | `add_contact()` 真调用，按 `ok/code` 入 results | 真 | `add_contact.py:157` |
+| `add_contact` | `add_contact()` 真调用；请求/操作间隔真等 | 真 | `add_contact.py:157/171` |
 | `ai_chat` | AI 生成 → `send_message()`，间隔真等 | 真 | `ai_chat.py:184/186` |
-| `ai_clone` | AI 改写 → 发正文/媒体；**源消息只来自任务文件** | 部分 | `ai_clone.py:241` |
+| `ai_clone` | live 回读源频道最近 `max` 条 → 过滤/改写 → 真发 | 真 | `ai_clone.py:241/268` |
 | `ai_comment` | `send_message(reply_to=post_id)` 真落在帖子下 | 部分 | `ai_comment.py:266`（点赞/表情未落 reaction） |
 | `auto_reply` | `add_event_handler()` + `run_forever()`，命中即回 | 真 | `auto_reply.py:209/214` |
 | `auto_script` | 每步真调 sender；`wait` 步真等 | 真 | `auto_script.py:159/172` |
-| `batch_invite` | `invite()` + PEER_FLOOD 退避 | 真 | `batch_invite.py:231/239` |
-| `batch_invite_v2` | 同上，目标取自己联系人 | 真 | `batch_invite_v2.py:200/208` |
-| `batch_join` | `join()` 真调用，按每个 job 的结果入 results | 真 | `batch_join.py:139` |
+| `batch_invite` | `invite()` + PEER_FLOOD 退避 + 邀请间隔真等 | 真 | `batch_invite.py:231/245` |
+| `batch_invite_v2` | 同上，目标取自己联系人 + 邀请间隔真等 | 真 | `batch_invite_v2.py:200/218` |
+| `batch_join` | `join()` 真调用，按 job 结果入 rows；请求/单号间隔真等 | 真 | `batch_join.py:156` |
 | `batch_login` | 导入是文件操作；`--logout` 真 `log_out()` | 真 | `batch_login.py:216` |
-| `batch_rename` | `edit_profile()` 真调用；操作间隔只入 ETA | 部分 | `batch_rename.py:154` |
-| `copy_chat` | 过滤/替换/排期后真发；**源消息只来自任务文件** | 部分 | `copy_chat.py:312/313` |
+| `batch_rename` | `edit_profile()` 真调用；操作间隔真等 | 真 | `batch_rename.py:154/161` |
+| `copy_chat` | live 回读源历史（`capture_minutes` 窗口）→ 过滤/替换/排期 → 真发 | 真 | `copy_chat.py:296/349` |
 | `export_accounts` | 只读库与文件，无网络语义（会话归档是复制） | 真 | `export_accounts.py:182` |
-| `filter_group` | `get_entity()` 真解析后六分类 | 真 | `filter_group.py:148` |
+| `filter_group` | `get_entity()` 真解析后六分类；全局/单号间隔真等 | 真 | `filter_group.py:148/160` |
 | `filter_phone` | `get_entity()` 真解析；号码一律按电话解析 | 真 | `filter_phone.py:145` |
 | `keep_online` | `ping` → `is_user_authorized()` + `get_me()` | 真 | `keep_online.py:91` |
 | `mass_send` | `send_message()`，message id 入库，间隔真等 | 真 | `mass_send.py:232/234` |
@@ -502,7 +502,7 @@ tests/            295 条
 | `proxy` | `--test` 真 TCP connect；`--bind` 真 `set_proxy()` | 真 | `proxy.py:174/195` |
 | `puppet_chat` | `send_message()` + 间隔真 sleep | 真 | `puppet_chat.py:221/228` |
 | `puppet_chat_v2` | 复用 `play()`，启动偏移已加进 delay | 真 | `puppet_chat_v2.py:143` → `puppet_chat.py:221` |
-| `video_manage` | `join()`/`leave()` 真调用 | 真 | `video_manage.py:97` |
+| `video_manage` | `join()`/`leave()` 真调用；操作间隔真等 | 真 | `video_manage.py:97/101` |
 | `watch_chat` | `add_event_handler()` + `run_forever()`，命中后 `await send_message()` | 真（本轮修） | `watch_chat.py:260/266/284` |
 
 **本轮修掉的 7 处假 live**（每处都有能在旧代码上变红的测试）：
@@ -525,45 +525,49 @@ tests/            295 条
    失败的 join 也写成 `sent`。现在按 `execute()` 里的真实结果入 rows。
    顺带：`ai_comment` 的评论原来发到频道本身而不是帖子下，现在带 `reply_to`。
 
-**仍未修的 live 缺口** 见「已知缺口」第 1–4 条。
+**这一轮（P0–P2）修的**（每处都有能在旧代码上变红的测试，测试名见报告）：
+
+1. **六个页面的间隔在 live 下不 sleep**：`add_contact` / `batch_rename` /
+   `batch_join` / `batch_invite` / `batch_invite_v2` / `video_manage`，间隔只进
+   ETA，真号连发等于没有节流。现在全部走 `_common.pause()`，只在 live 睡、
+   dry-run 秒回；`filter_group` 的 `--global-interval-ms` / `--account-interval-ms`
+   同样落地（这两个参数只有它有）。
+2. **`copy_chat` / `ai_clone` 在 live 下不读源历史**：新增
+   `senders.history(account, target, minutes, limit)`（`iter_messages` +
+   `offset_date`），回读结果按 `peer|sender|text` 喂 `sources.parse_many`，
+   和任务文件走同一条解析。采集失败按错误码报出来，不再静默成空。
+3. **live 收尾不 `disconnect()`**：`accounts test --live` 在「`get_me()` 空」
+   和抛异常两条分支上都会漏掉 `disconnect()`，留下 pending task（退出时那屏
+   `Task was destroyed but it is pending!`）。现在 `finally` 里统一关，且
+   `TelethonSender.close()` 有测试守着（两个 client 各断一次、可重复调用）。
+4. **`--threads` 名字有误导**：它只是计划期并发度（决定账号交叉粒度），不是
+   线程池。旗标名保留（跟参考端一致），帮助文字改成
+   `planning concurrency only (requests are serial)`，README 见缺口第 3 条。
+
+**仍未做的** 见「已知缺口」。
 
 ## 已知缺口
 
-1. **`copy_chat` / `ai_clone` 在 live 下不回读历史**：源消息只从任务文件的
-   `messages:`（或 `--simulate-messages`）读，所以「采集回溯时长」这类字段在
-   live 里没有作用，等于「手工抓一份再真发」。修法明确：给 `senders.py` 加
-   `history(account, target, minutes, limit)`，用
-   `client.iter_messages(peer, offset_date=now-minutes)` 取回再喂
-   `sources.parse_many`。本轮没做，因为要新增网络面、且没有可安全回读的样本群
-   做真机验证。
-2. **`ai_comment` 的点赞与表情只计数不落地**：Telethon 1.45 没有
+1. **`ai_comment` 的点赞与表情只计数不落地**：Telethon 1.45 没有
    `send_reaction()`，要裸 `functions.messages.SendReactionRequest`；而且一个账号
-   对一条帖子只能点一次，所以「每帖点赞数」实际被账号池大小卡住。
-3. **六个页面的间隔字段在 live 下不 sleep**（只进 ETA / 只打印）：
-   `add_contact`（请求/操作间隔）、`batch_rename`（操作间隔）、`batch_join`
-   （请求间隔/单号间隔）、`batch_invite` / `batch_invite_v2`（邀请间隔，
-   只有 PEER_FLOOD 那次退避会睡）、`video_manage`（操作间隔）。已 sleep 的是
-   `puppet_chat` / `puppet_chat_v2` / `keep_online` / `ai_chat` /
-   `ai_comment` / `ai_clone` / `copy_chat` / `mass_send`（后五个用 `pause()`），做法见 `_common.pause()`，照它补即可。
-4. **`TelethonSender` 的部分方法仍只在签名层对齐**：`batch_login` 的三个批量退出
-   模式（冻结/所有/双向号）在这里指向同一个账号池，因为 `accounts` 表不记录
-   冻结与双向号的区分；`--threads` 是计划期并发度，不是真线程池。
-3. **`batch_login` 不读 `tdata`**：只处理 `.session` + sidecar `*.json`，
-   二进制 tdata 解析不在范围内。
-4. **AI 的真实 endpoint 没跑过**：无 key 降级、假 transport（正常/超时/报错）
+   对一条帖子只能点一次，所以「每帖点赞数」实际被账号池大小卡住。（本轮登记，未做）
+2. **`batch_login` 的三种批量退出模式指向同一个账号池**：冻结号 / 所有号 /
+   双向号在 `accounts` 表里没有区分字段，`--logout` 目前就是「这批号全退」。
+   （本轮登记，未做）
+3. **`--threads` 是计划期并发度**（决定账号交叉粒度），不是真线程池：所有请求
+   在一个进程里串行发出，页面的「线程数」只影响排期。
+4. **`batch_login` 不读 `tdata`**：只处理 `.session` + sidecar `*.json`，二进制
+   tdata 解析不在范围内。
+5. **AI 的真实 endpoint 没跑过**：无 key 降级、假 transport（正常/超时/报错）
    三条分支都有单测，但没有用真 key 打过 `chat/completions`。
-5. **`--threads` 是计划期的并发度**（决定账号交叉粒度），不是真线程池。
 6. **`proxy --test` 在 `--live` 下只做 TCP 连通性探测**（socket connect），
    不是真的走代理打 MTProto。
 7. **贴纸的 `unknown/setId/...` 两种写法在 `--live` 下不解析**：只有能落到本地
    文件的引用会真的发；unknown 形态 dry-run 照常打印，live 退化成发正文。
 8. **#0/#19 的 `A<n>` 槽位重绑只在日限额触发时发生**，不按真实在线状态重排。
-9. **`export_accounts` 不做 tdata 二进制转换**：报表里明确写
-   `not_implemented`，原因是要自己写 TDATA 二进制格式，超出脚本版范围。
-10. **`mix_market` 的阶段 3 会另开一条 `task` 行**（名字 `<task>:3`），
-    阶段 1/2/4/5 直接调 sender，不入 `results`；只有死群记 `DEAD_CHAT`。
-11. **`create_group` 在 dry-run 里返回 `channel:<标题>`**；真机若频道没有
-    username 会返回数字 id，`@og_<slug>` 只是为了让后三段能解析。
-12. **`restart_interval` / `restart_timed` 只做配置与校验**，不实现自杀重启。
-13. **`auto_script` 的 `if` 只支持四个计数器**（`ok` / `failed` / `skipped` /
-    `steps`）与整数比较；`loop` 上限 1000，防止写错把任务挂死。
+9. **live 回读历史只取正文**：`senders.history()` 跳过纯媒体帖（`count` 是扫描
+   条数，可能大于返回条数），也不下载媒体——搬运带图的帖子目前会丢图；要保留
+   媒体得先下载到本地再走 `Content.media`。
+10. **历史回读的上限是写死的**：`copy_chat` 每个源最多 200 条
+    （`CAPTURE_LIMIT`），`ai_clone` 用页面自己的 `max_items`。参考端没有单独的
+    「条数」字段，所以没有做成旗标。

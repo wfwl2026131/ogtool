@@ -30,6 +30,7 @@ from ..sources import (
     parse_replacements,
     replace_keywords,
 )
+from ..sources import parse_many as parse_source_messages
 from ..targets import Target, parse_many
 from . import register
 from ._common import (
@@ -52,6 +53,9 @@ TITLE = "#1 复制炒群"
 
 #: The page refuses a longer source list (``Sources: 0/1000``).
 SOURCE_LIMIT = 1000
+
+#: How many messages one live capture reads from each source chat.
+CAPTURE_LIMIT = 200
 
 FLAGS = (
     Flag("--targets", "targets", str, "targets, comma separated"),
@@ -259,9 +263,45 @@ def pick(accounts: list[str], budget: dict[str, int], limit: int,
     return None
 
 
+def capture(sender: object, account: str, sources: list[str], minutes: int,
+            limit: int = CAPTURE_LIMIT) -> tuple[list[SourceMessage],
+                                                list[tuple[str, str]]]:
+    """Read the source chats live; ``(messages, failures)``.
+
+    The capture window is the page's ``copy back for N minutes``; the limit is
+    how many messages one source gives up so a busy chat cannot stall the run.
+    A source that cannot be read is returned as a failure with its code, not
+    dropped: an empty capture and an empty chat must not look the same.
+    """
+    entries: list[str] = []
+    failures: list[tuple[str, str]] = []
+    for source in sources:
+        target = parse_many([source], "group")[0]
+        result = sender.history(account, target, minutes=minutes,  # type: ignore[attr-defined]
+                                limit=limit)
+        if not result.ok:
+            failures.append((source, result.code))
+            print(f"source={source} capture failed: {result.code}")
+            continue
+        entries.extend(result.items)
+        print(f"source={source} captured {len(result.items)}/{result.count} "
+              f"minutes={minutes} limit={limit}")
+    return parse_source_messages(entries), failures
+
+
 def run(config: CopyConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts] or ["-"]
+    sender = ctx.sender()
+    failures: list[tuple[str, str]] = []
+    if ctx.live and not config.messages and config.sources and accounts:
+        messages, failures = capture(sender, labels[0], config.sources,
+                                     config.capture_minutes)
+        config = replace(config, messages=messages)
+        if not messages and failures:
+            print("ERROR: no source history was captured: "
+                  + ", ".join(f"{source}={code}" for source, code in failures))
+            return 1
     plans = plan_targets(config, labels)
     total = sum(len(plan.collected.kept) for plan in plans) * config.multiplier
 
@@ -284,7 +324,6 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     task = open_task(ctx, config.task_name, FEATURE,
                      {"targets": config.targets,
                       "sources": config.sources}, total)
-    sender = ctx.sender()
     rng = random.Random()
     ok = failed = skipped = 0
     waited = 0.0
@@ -343,10 +382,12 @@ def main(raw: dict, ctx: RunContext) -> int:
 
 
 __all__ = [
+    "CAPTURE_LIMIT",
     "CopyConfig",
     "SOURCE_LIMIT",
     "TITLE",
     "account_groups",
+    "capture",
     "keyword_groups",
     "main",
     "pick",

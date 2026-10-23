@@ -57,3 +57,20 @@ def test_missing_target_is_a_config_error():
     with pytest.raises(ConfigError):
         InviteV2Config.from_dict(
             {"batch_invite_v2": {"contacts": ["@c1"]}}, None)  # type: ignore[arg-type]
+
+
+def test_a_live_run_waits_the_invite_interval(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2", "@c3"],
+                            request_interval=4.0, invite_interval_min=6.0,
+                            invite_interval_max=6.0)
+    assert run(config, ctx) == 0
+    assert slept == [6.0, 6.0]
+
+
+def test_a_dry_run_invites_without_waiting(ctx, slept):
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2"],
+                            request_interval=4.0, invite_interval_min=6.0,
+                            invite_interval_max=9.0)
+    assert run(config, ctx) == 0
+    assert slept == []

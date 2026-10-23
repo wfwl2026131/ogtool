@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
+from ..limiter import format_duration
 from ..runtime import RunContext
 from ..targets import parse_many
 from . import register
@@ -21,6 +22,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     section,
     text,
@@ -93,7 +95,12 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
 
     joined: list[str] = []
     failed = 0
+    waited = 0.0
     for index, account in enumerate(labels, start=1):
+        if index > 1:
+            delay = config.interval_ms / 1000.0
+            waited += delay
+            pause(ctx, delay)
         result = (sender.join(account, target) if config.action == JOIN
                   else sender.leave(account, target))
         if result.ok:
@@ -106,6 +113,8 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
               f"{'ok' if result.ok else result.code}")
 
     print(f"已加入账号：{', '.join(joined) or '-'}")
+    if ctx.live and waited:
+        print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {len(labels)} operations, {len(joined)} ok, {failed} failed")
     close_task(ctx, task, ok=len(joined), failed=failed)
     return 0 if not failed else 1

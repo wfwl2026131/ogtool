@@ -50,3 +50,25 @@ def test_duplicates_in_the_contact_list_are_collapsed():
     config = ContactConfig.from_dict(
         {"add_contact": {"contacts": "@c1,@c1,@c2"}}, None)  # type: ignore[arg-type]
     assert config.contacts == ["@c1", "@c2"]
+
+
+def test_a_live_run_waits_the_request_gap_between_two_requests(
+        ctx, live, ok_sender, slept, capsys):
+    live(ok_sender)
+    config = ContactConfig(contacts=["@c1", "@c2", "@c3"], per_target_cap=1,
+                           request_interval_ms=1000,
+                           operation_interval_min_ms=500,
+                           operation_interval_max_ms=500)
+    assert run(config, ctx) == 0
+    # Three requests, so two gaps; each is the request interval plus the
+    # operation interval (1s + 0.5s).
+    assert slept == [1.5, 1.5]
+    assert "waited: " in capsys.readouterr().out
+
+
+def test_a_dry_run_never_sleeps(ctx, slept, capsys):
+    config = ContactConfig(contacts=["@c1", "@c2", "@c3"], per_target_cap=1,
+                           request_interval_ms=1000)
+    run(config, ctx)
+    assert slept == []
+    assert "waited: " not in capsys.readouterr().out

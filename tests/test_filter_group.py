@@ -60,3 +60,29 @@ def test_deep_off_reports_approval_as_can_send(ctx, scripted, capsys):
     config = GroupConfig(groups=["@g1"], deep=False)
     run(config, ctx)
     assert f"{CAN_SEND}：1" in capsys.readouterr().out
+
+
+def test_the_account_interval_only_applies_to_a_repeated_account():
+    from ogtool.features.filter_group import gap
+
+    config = GroupConfig(global_interval_ms=500, account_interval_ms=800)
+    assert gap(config, "acc1", "acc2") == 0.5
+    assert gap(config, "acc2", "acc2") == 0.8
+    assert gap(config, "", "acc1") == 0.5
+
+
+def test_a_live_run_keeps_the_global_interval(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = GroupConfig(groups=["@g1", "@g2", "@g3"],
+                         global_interval_ms=500, account_interval_ms=800)
+    run(config, ctx)
+    # acc1, acc2, acc1: no account repeats back to back, so only the global
+    # interval paces the three resolves.
+    assert slept == [0.5, 0.5]
+
+
+def test_a_dry_run_filters_without_waiting(ctx, slept):
+    config = GroupConfig(groups=["@g1", "@g2", "@g3"],
+                         global_interval_ms=500, account_interval_ms=800)
+    run(config, ctx)
+    assert slept == []

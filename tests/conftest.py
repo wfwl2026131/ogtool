@@ -74,6 +74,50 @@ def live(ctx: RunContext):
     return _make
 
 
+class OkTransport:
+    """A transport that accepts every call, recording the operation names.
+
+    The pacing tests only care that the page asked, waited and moved on; the
+    answer is always the same, so ``calls`` is the whole record of what ran.
+    """
+
+    live = True
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def __getattr__(self, name: str):
+        if name.startswith("_"):
+            raise AttributeError(name)
+
+        def call(*args: object, **kwargs: object):
+            from ogtool.senders import SendResult
+
+            self.calls.append(name)
+            return SendResult(ok=True)
+
+        return call
+
+
+@pytest.fixture
+def ok_sender() -> OkTransport:
+    return OkTransport()
+
+
+@pytest.fixture
+def slept(monkeypatch) -> list[float]:
+    """Record every pause a page takes instead of waiting for it.
+
+    ``time.sleep`` is patched on the module object every feature shares, so it
+    covers ``_common.pause`` and the backoff sleeps in the runner alike.
+    """
+    from ogtool.features import _common
+
+    seen: list[float] = []
+    monkeypatch.setattr(_common.time, "sleep", seen.append)
+    return seen
+
+
 @pytest.fixture
 def ctx(settings: Settings, store: Store, pooled: list[str]) -> RunContext:
     logger = logging.getLogger("ogtool.test")

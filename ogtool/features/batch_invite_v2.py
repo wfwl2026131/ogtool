@@ -9,12 +9,13 @@ PEER_FLOOD caps and the export path.
 
 from __future__ import annotations
 
+import random
 import time
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import PeerFloodBackoff
+from ..limiter import PeerFloodBackoff, format_duration
 from ..report import export
 from ..runtime import RunContext
 from ..targets import parse_many
@@ -27,6 +28,7 @@ from ._common import (
     num,
     open_task,
     out_dir,
+    pause,
     read_list_file,
     record,
     section,
@@ -47,7 +49,8 @@ FLAGS = (
          "file with one contact per line", action="append"),
     Flag("--request-interval", "request_interval", float,
          "minimum seconds between two requests"),
-    Flag("--threads", "threads", int, "threads"),
+    Flag("--threads", "threads", int,
+         "planning concurrency only (requests are serial)"),
     Flag("--target-success-cap", "target_success_cap", int,
          "invites one target accepts"),
     Flag("--success-cap", "success_cap", int, "total successes"),
@@ -155,6 +158,18 @@ def build_jobs(targets: list[str], contacts: list[str], handlers: list[str],
     return jobs
 
 
+def gap(config: InviteV2Config, rng: random.Random | None = None) -> float:
+    """Seconds between two invites: the request gap, or the invite range.
+
+    The page shows an invite interval *range*; the sample is drawn per gap so
+    a long run does not settle into one detectable rhythm.
+    """
+    generator = rng or random.Random()
+    return max(config.request_interval,
+               generator.uniform(config.invite_interval_min,
+                                 config.invite_interval_max))
+
+
 def run(config: InviteV2Config, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
@@ -189,10 +204,16 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
     backoff = PeerFloodBackoff()
     flood: list[str] = []
     timeouts: list[str] = []
+    waited = 0.0
+    rng = random.Random()
     for index, (handler, group, contact) in enumerate(jobs, start=1):
         if config.success_cap and ok >= config.success_cap:
             print(f"stopped: success_cap ({config.success_cap})")
             break
+        if index > 1:
+            delay = gap(config, rng)
+            waited += delay
+            pause(ctx, delay)
         target = parse_many([group], "group")[0]
         member = parse_many([contact], "custom")[0]
         floods = 0
@@ -223,6 +244,8 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
 
     print(f"ok: {ok}  failed: {failed}  PEER_FLOOD: {len(flood)}  "
           f"TIMEOUT: {len(timeouts)}")
+    if ctx.live and waited:
+        print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {len(jobs)} invites, {len(handlers)} handlers, "
           f"exec {ok + failed}")
 
@@ -240,4 +263,4 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(InviteV2Config.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["InviteV2Config", "TITLE", "build_jobs", "main", "run"]
+__all__ = ["InviteV2Config", "TITLE", "build_jobs", "gap", "main", "run"]

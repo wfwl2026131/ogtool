@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import PeerFloodBackoff
+from ..limiter import PeerFloodBackoff, format_duration
 from ..report import export, write_report
 from ..runtime import RunContext
 from ..targets import parse_many
@@ -32,6 +32,7 @@ from ._common import (
     num,
     open_task,
     out_dir,
+    pause,
     read_list_file,
     record,
     section,
@@ -55,7 +56,8 @@ FLAGS = (
     Flag("--strategy", "strategy", str, "continue|loop"),
     Flag("--request-interval", "request_interval", float,
          "minimum seconds between two requests"),
-    Flag("--threads", "threads", int, "concurrent accounts"),
+    Flag("--threads", "threads", int,
+         "planning concurrency only (requests are serial)"),
     Flag("--target-success-cap", "target_success_cap", int,
          "invites one target group accepts"),
     Flag("--handler-success-cap", "handler_success_cap", int,
@@ -186,6 +188,15 @@ def build_jobs(groups: list[str], members: list[str], handlers: list[str],
     return jobs
 
 
+def gap(config: InviteConfig) -> float:
+    """Seconds between two invites.
+
+    ``request_interval`` paces the pool and ``invite_interval`` paces the
+    invite call itself; the serial run has to clear both, so the longer wins.
+    """
+    return max(config.request_interval, config.invite_interval)
+
+
 def run(config: InviteConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
@@ -223,7 +234,12 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
     missing: list[str] = []
     flood: list[str] = []
     backoff = PeerFloodBackoff()
+    waited = 0.0
     for index, (handler, group, member) in enumerate(jobs, start=1):
+        if index > 1:
+            delay = gap(config)
+            waited += delay
+            pause(ctx, delay)
         target = parse_many([group], "group")[0]
         invitee = parse_many([member], "custom")[0]
         floods = 0
@@ -255,6 +271,8 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
                 flood.append(member)
 
     print(f"成功: {ok}  执行数: {failed + ok}  失败: {failed}")
+    if ctx.live and waited:
+        print(f"waited: {format_duration(waited)}")
     print(f"MISSING: {len(missing)}")
     print(f"FLOOD: {len(flood)}")
     print(f"PLAN: {len(jobs)} invites, {len(handlers)} handlers, "
@@ -286,6 +304,7 @@ __all__ = [
     "STRATEGY_LOOP",
     "TITLE",
     "build_jobs",
+    "gap",
     "main",
     "run",
 ]

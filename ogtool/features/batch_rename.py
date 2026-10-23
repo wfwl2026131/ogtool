@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
+from ..limiter import format_duration
 from ..runtime import RunContext
 from . import register
 from ._common import (
@@ -21,6 +22,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     read_list_file,
     record,
     section,
@@ -140,6 +142,7 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
 
     state.status = RUNNING
     print(f"状态：{state.status}")
+    waited = 0.0
     for index, (first, last) in enumerate(config.names, start=1):
         if state.stop_at and index >= state.stop_at:
             state.status = STOPPED
@@ -149,6 +152,11 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
             print(f"stopped: success_cap ({config.success_cap})")
             break
 
+        if index > 1:
+            # The rename interval is the page's anti-flood knob: one profile
+            # edit per interval, on the account that does the edit.
+            waited += config.operation_interval
+            pause(ctx, config.operation_interval)
         account = labels[(index - 1) % len(labels)]
         state.current = account
         result = sender.update_profile(account, first, last)
@@ -169,6 +177,8 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
 
     state.status = state.status if state.status == STOPPED else IDLE
     print(f"状态：{state.status}")
+    if ctx.live and waited:
+        print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {state.processed} renames, {len(accounts)} accounts, "
           f"failed {state.failed}, skipped {state.skipped}")
     close_task(ctx, task, ok=state.processed - state.failed, failed=state.failed)

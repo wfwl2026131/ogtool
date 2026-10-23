@@ -71,3 +71,20 @@ def test_failure_is_counted(ctx, scripted, capsys):
     assert run(config, ctx) == 1
     output = capsys.readouterr().out
     assert "失败: 1" in output
+
+
+def test_a_live_run_waits_the_rename_interval(ctx, live, ok_sender, slept):
+    live(ok_sender)
+    config = RenameConfig(names=[("Alice", ""), ("Bob", ""), ("Cid", "")],
+                          operation_interval=7.0)
+    assert run(config, ctx) == 0
+    # Three renames, two gaps, each exactly the interval the page shows.
+    assert slept == [7.0, 7.0]
+
+
+def test_a_dry_run_renames_without_waiting(ctx, slept, capsys):
+    config = RenameConfig(names=[("Alice", ""), ("Bob", "")],
+                          operation_interval=7.0)
+    assert run(config, ctx) == 0
+    assert slept == []
+    assert "waited: " not in capsys.readouterr().out

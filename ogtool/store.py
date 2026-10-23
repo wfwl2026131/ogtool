@@ -11,7 +11,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -129,6 +129,23 @@ def utcnow() -> str:
 
 def today() -> str:
     return date.today().isoformat()
+
+
+def local_day_bounds(now: datetime | None = None) -> tuple[str, str]:
+    """The half open UTC interval that is "today" on this machine.
+
+    Rows carry a UTC stamp, while the page's ``daily limit`` is a calendar day
+    for whoever is reading it.  Comparing the first ten characters of a UTC
+    stamp with a local date counts zero for the first hours of a local day east
+    of UTC (00:00-08:00 in UTC+8), so the daily limit would silently stop
+    applying.  Converting the two boundaries is the comparison that holds on
+    both sides of midnight.
+    """
+    local = (now or datetime.now()).astimezone()
+    start = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    return (start.astimezone(UTC).replace(microsecond=0).isoformat(),
+            end.astimezone(UTC).replace(microsecond=0).isoformat())
 
 
 @dataclass(slots=True)
@@ -419,12 +436,14 @@ class Store:
             "SELECT * FROM ai_calls WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
 
-    def count_sent_today(self, account: str) -> int:
+    def count_sent_today(self, account: str,
+                         now: datetime | None = None) -> int:
+        start, end = local_day_bounds(now)
         row = self._conn.execute(
             """SELECT COUNT(*) AS n FROM results
                WHERE account = ? AND status = 'sent'
-                 AND substr(created_at, 1, 10) = ?""",
-            (account, today()),
+                 AND created_at >= ? AND created_at < ?""",
+            (account, start, end),
         ).fetchone()
         return int(row["n"])
 

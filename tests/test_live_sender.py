@@ -252,3 +252,130 @@ def test_logout_really_calls_the_client(settings, session, credentials,
     assert result.ok is True
     assert RecordingClient.instances[-1].logged_out is True
     assert "t1" not in sender._clients, "a logged out session must be dropped"
+
+
+class TrackingClient(SyncClient):
+    """Counts disconnects, so a leaked connection is visible."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.disconnects = 0
+
+    def disconnect(self) -> None:
+        self.disconnects += 1
+
+
+def test_close_disconnects_every_open_client(settings):
+    sender = sender_for(settings)
+    first, second = TrackingClient(), TrackingClient()
+    sender._clients = {"t1": first, "t2": second}
+    sender.close()
+    assert first.disconnects == 1
+    assert second.disconnects == 1
+    assert sender._clients == {}
+    sender.close()  # closing an empty sender must not raise
+
+
+class Said:
+    """One message as Telethon hands it over."""
+
+    def __init__(self, text: str, username: str = "alice",
+                 sender_id: int = 7, date: object = None) -> None:
+        self.message = text
+        self.sender_id = sender_id
+        self.date = date
+        self.sender = type("Sender", (), {"username": username})()
+
+
+class HistoryClient(SyncClient):
+    """Yields the rows newest first, the way ``iter_messages`` does."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.rows: list[Said] = []
+        self.kwargs: dict[str, object] = {}
+
+    def iter_messages(self, peer: object, limit: object = None):
+        self.kwargs = {"limit": limit}
+        return list(self.rows)
+
+
+def history_sender(settings, monkeypatch, rows: list[Said]) -> tuple[object, object]:
+    client = HistoryClient()
+    client.rows = rows
+    monkeypatch.setattr("telethon.sync.TelegramClient",
+                        lambda *args, **kwargs: client)
+    return sender_for(settings), client
+
+
+def test_history_reads_the_chat_oldest_first(settings, session, credentials,
+                                             monkeypatch):
+    sender, client = history_sender(
+        settings, monkeypatch, [Said("second"), Said("first")])
+    result = sender.history("t1", target(), minutes=0, limit=10)
+    assert result.ok
+    assert result.count == 2
+    assert result.items == ["@demo_chat|@alice|first",
+                            "@demo_chat|@alice|second"]
+    assert client.kwargs == {"limit": 10}
+
+
+def test_history_stops_at_the_capture_window(settings, session, credentials,
+                                             monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    rows = [Said("fresh", date=now - timedelta(minutes=2)),
+            Said("also fresh", date=now - timedelta(minutes=9)),
+            Said("too old", date=now - timedelta(minutes=40)),
+            Said("ancient", date=now - timedelta(minutes=300))]
+    sender, _client = history_sender(settings, monkeypatch, rows)
+    result = sender.history("t1", target(), minutes=15, limit=100)
+    # The window ends now; the walk stops at the first message before it,
+    # instead of reading everything older than that point.
+    # Returned oldest first, the order the messages were said in.
+    assert result.items == ["@demo_chat|@alice|also fresh",
+                            "@demo_chat|@alice|fresh"]
+    assert result.count == 2
+
+
+def test_history_flattens_the_record_separators(settings, session, credentials,
+                                                monkeypatch):
+    sender, _client = history_sender(settings, monkeypatch,
+                                     [Said("a | b\nc")])
+    result = sender.history("t1", target(), minutes=0, limit=5)
+    assert result.items == ["@demo_chat|@alice|a / b c"]
+
+
+def test_history_skips_a_post_that_carries_only_media(settings, session,
+                                                      credentials, monkeypatch):
+    sender, _client = history_sender(settings, monkeypatch, [Said(""), Said("hi")])
+    result = sender.history("t1", target(), minutes=0, limit=5)
+    assert result.items == ["@demo_chat|@alice|hi"]
+    assert result.count == 2          # scanned, not captured
+
+
+class CannotConnect(SyncClient):
+    """A client whose connection attempt fails after the socket is up."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.disconnects = 0
+
+    def connect(self) -> bool:
+        raise ConnectionError("the proxy dropped the connection")
+
+    def disconnect(self) -> None:
+        self.disconnects += 1
+
+
+def test_a_failed_connect_closes_the_half_open_client(settings, session,
+                                                      credentials, monkeypatch):
+    client = CannotConnect()
+    monkeypatch.setattr("telethon.sync.TelegramClient",
+                        lambda *args, **kwargs: client)
+    sender = sender_for(settings)
+    with pytest.raises(ConnectionError):
+        sender._client("t1")
+    assert client.disconnects == 1
+    assert sender._clients == {}
