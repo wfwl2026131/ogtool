@@ -21,7 +21,7 @@ from .flags import section
 from .loggers import task_logger
 from .runtime import RunContext
 from .simulate import Script
-from .store import Store
+from .store import KINDS, Store
 from .targets import TargetError
 
 DEFAULT_CONFIG = "config.yaml"
@@ -139,6 +139,12 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
 
     listing = account_subs.add_parser("list", help="list the pool")
     listing.add_argument("--json", action="store_true")
+
+    kind = account_subs.add_parser(
+        "kind", help="record frozen / one_way / two_way for a number")
+    kind.add_argument("--label", default="", help="pool label")
+    kind.add_argument("--kind", default="",
+                      help="frozen|one_way|two_way, or empty to clear it")
 
     test = account_subs.add_parser("test", help="connectivity test")
     test.add_argument("--accounts", nargs="*", default=None)
@@ -405,6 +411,21 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             print(f"added {account.label} session={account.session} "
                   f"status={account.status}")
             return 0
+        if args.action == "kind":
+            if not args.label:
+                print("ERROR: --kind needs --label")
+                return 2
+            wanted = args.kind.strip()
+            if wanted not in KINDS:
+                print(f"ERROR: --kind wants {'|'.join(KINDS)} or empty, "
+                      f"not {args.kind!r}")
+                return 2
+            if args.label not in {row.label for row in pool.list()}:
+                print(f"ERROR: no such account: {args.label}")
+                return 2
+            store.set_account_kind(args.label, wanted)
+            print(f"{args.label} kind={wanted or '-'}")
+            return 0
         if args.action == "list":
             rows = pool.list()
             if args.json:
@@ -414,7 +435,7 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             else:
                 for row in rows:
                     print(f"{row.label}\t{row.phone or '-'}\t{row.status}\t"
-                          f"{row.session}")
+                          f"kind={row.kind or '-'}\t{row.session}")
                 print(f"total: {len(rows)}")
             return 0
         rows = pool.test(args.accounts, live=bool(args.live))

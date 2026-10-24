@@ -185,14 +185,21 @@ def _import(folder: Path, config: LoginConfig, ctx: RunContext) -> int:
     return imported
 
 
+#: Which recorded kind each mode logs out.  ``all`` is the only mode that
+#: ignores the column: it means every account, classified or not.
+MODE_KIND = {LOGOUT_FROZEN: "frozen", LOGOUT_BOTH: "two_way"}
+
+
 def _logout(mode: str, ctx: RunContext) -> int:
     """The three bulk logouts: printed in a dry run, performed when live.
 
-    The three modes name the same pool here, because the account table does not
-    record the frozen / two way distinction the reference keeps on its side.
+    ``frozen`` and ``both`` pick accounts whose recorded kind matches; an
+    account nobody classified is skipped and counted, never quietly swept into
+    a mode it does not belong to.  ``accounts kind --label X --kind frozen``
+    is how the pool learns the distinction.
     """
-    labels = [account.label for account in ctx.store.list_accounts()]
-    if not labels:
+    accounts = ctx.store.list_accounts()
+    if not accounts:
         print("no accounts to log out")
         return 0
     plan = {
@@ -203,6 +210,21 @@ def _logout(mode: str, ctx: RunContext) -> int:
     if mode not in plan:
         print(f"ERROR: --logout wants frozen|all|both, not {mode!r}")
         return -1
+    wanted = MODE_KIND.get(mode)
+    if wanted:
+        labels = [a.label for a in accounts if a.kind == wanted]
+        skipped = [a.label for a in accounts if a.kind != wanted]
+    else:
+        labels = [a.label for a in accounts]
+        skipped = []
+    if wanted and skipped:
+        detail = ", ".join(f"{a.label}={a.kind or '-'}"
+                           for a in accounts if a.kind != wanted)
+        print(f"{plan[mode]}：跳过 {len(skipped)} 个非本类别（{detail}）")
+    if wanted and not labels:
+        print(f"批量退出{plan[mode]}：0 accounts")
+        print("nothing to log out for this mode")
+        return 0
     print(f"批量退出{plan[mode]}：{len(labels)} accounts")
     if not ctx.live:
         for label in labels:

@@ -11,6 +11,7 @@ import pytest
 from ogtool.config import ConfigError
 from ogtool.features.batch_login import (
     LOGOUT_ALL,
+    LOGOUT_BOTH,
     LOGOUT_FROZEN,
     LoginConfig,
     find_sessions,
@@ -86,9 +87,45 @@ def test_logout_modes_are_named(ctx, capsys):
     assert "批量退出所有账号：2 accounts" in capsys.readouterr().out
 
 
-def test_unknown_logout_mode_is_rejected(ctx, capsys):
+def test_an_unclassified_account_is_not_swept_into_a_mode(ctx, capsys):
+    # frozen and both name a kind; an account nobody classified belongs to
+    # neither, and logging it out would be a guessing game.
     assert run(LoginConfig(logout=LOGOUT_FROZEN), ctx) == 0
-    assert "批量退出冻结账号：2 accounts" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "批量退出冻结账号：0 accounts" in out
+    assert "跳过 2 个非本类别" in out
+
+
+def test_the_frozen_mode_picks_only_the_frozen_accounts(ctx, capsys):
+    from ogtool.store import KINDS  # noqa: F401 - the vocabulary is the contract
+
+    ctx.store.set_account_kind("acc1", "frozen")
+    ctx.store.set_account_kind("acc2", "two_way")
+    assert run(LoginConfig(logout=LOGOUT_FROZEN), ctx) == 0
+    out = capsys.readouterr().out
+    assert "批量退出冻结账号：1 accounts" in out
+    assert "acc2=two_way" in out
+
+
+def test_the_two_way_mode_is_the_other_bucket(ctx, capsys):
+    ctx.store.set_account_kind("acc1", "frozen")
+    ctx.store.set_account_kind("acc2", "two_way")
+    assert run(LoginConfig(logout=LOGOUT_BOTH), ctx) == 0
+    out = capsys.readouterr().out
+    assert "批量退出双向号：1 accounts" in out
+    assert "acc1=frozen" in out
+
+
+def test_all_ignores_the_kind_column(ctx, capsys):
+    ctx.store.set_account_kind("acc1", "frozen")
+    ctx.store.set_account_kind("acc2", "one_way")
+    assert run(LoginConfig(logout=LOGOUT_ALL), ctx) == 0
+    assert "批量退出所有账号：2 accounts" in capsys.readouterr().out
+
+
+def test_an_unknown_logout_mode_is_rejected(ctx, capsys):
+    assert run(LoginConfig(logout="everything"), ctx) == 2
+    assert "--logout wants frozen|all|both" in capsys.readouterr().out
 
 
 def test_nothing_to_do_is_a_config_error():

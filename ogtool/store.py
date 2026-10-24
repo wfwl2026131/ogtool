@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     session     TEXT NOT NULL DEFAULT '',
     proxy       TEXT NOT NULL DEFAULT '',
     status      TEXT NOT NULL DEFAULT 'new',
+    kind        TEXT NOT NULL DEFAULT '',
     added_at    TEXT NOT NULL,
     last_seen   TEXT NOT NULL DEFAULT '',
     notes       TEXT NOT NULL DEFAULT ''
@@ -157,6 +158,13 @@ class Account:
     proxy: str = ""
     status: str = "new"
     notes: str = ""
+    #: ``frozen`` / ``one_way`` / ``two_way``, or empty when nobody said.
+    kind: str = ""
+
+
+#: What the pool may record about a number.  Empty means nobody said, and an
+#: unclassified account must never be silently treated as one of these.
+KINDS = ("frozen", "one_way", "two_way")
 
 
 @dataclass(slots=True)
@@ -228,7 +236,20 @@ class Store:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
+
+    def _migrate(self) -> None:
+        """Add the columns a database from an earlier version is missing.
+
+        ``CREATE TABLE IF NOT EXISTS`` leaves an existing table alone, so a new
+        column has to be added explicitly or every read of it fails.
+        """
+        known = {row["name"] for row in
+                 self._conn.execute("PRAGMA table_info(accounts)")}
+        if "kind" not in known:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self._conn.close()
@@ -272,6 +293,13 @@ class Store:
         rows = self._conn.execute(sql, params).fetchall()
         return [self._account(row) for row in rows]
 
+    def set_account_kind(self, label: str, kind: str) -> None:
+        """Record what the pool knows about a number: frozen, one or two way."""
+        with self._lock:
+            self._conn.execute("UPDATE accounts SET kind = ? WHERE label = ?",
+                               (kind, label))
+            self._conn.commit()
+
     def count_accounts(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()
         return int(row["n"])
@@ -288,6 +316,7 @@ class Store:
         return Account(
             label=row["label"], phone=row["phone"], session=row["session"],
             proxy=row["proxy"], status=row["status"], notes=row["notes"],
+            kind=row["kind"],
         )
 
     # proxies ----------------------------------------------------------
