@@ -69,6 +69,12 @@ FLAGS = (
 )
 
 POSITIVE = "positive"
+
+#: Emoji a comment may end with, and the reaction an account leaves on the post.
+#: These are two different things: the first is part of the text, the second is
+#: a reaction the server records separately from it.
+BODY_EMOJI = ("\U0001F642", "\U0001F44D", "\U0001F525", "\U0001F4AF")
+DEFAULT_REACTION = "\U0001F44D"
 NEUTRAL = "neutral"
 
 
@@ -281,6 +287,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
     waited = 0.0
     ai_fallback = 0
     emoji_used = 0
+    reactions = 0
 
     for index, spec in enumerate(stats.specs, start=1):
         target: Target = parse_many([spec.target], "custom")[0]
@@ -295,15 +302,27 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         body = _clip(generated.response, config.max_chars)
         if spec.emoji:
             emoji_used += 1
-            body = f"{body} {config.like_emoji or 'emoji'}".strip()
+            body = f"{body} {random.choice(BODY_EMOJI)}".strip()
         outcome = sender.send(spec.account, target,
                               Content(text=body, reply_to=spec.post_id))
         waited += spec.delay
         if outcome.ok:
             ok += 1
+            reacted = 0
+            for like in range(max(0, spec.likes)):
+                if like >= len(labels):
+                    break  # an account may leave only one reaction per post
+                one = sender.react(labels[like], target, spec.post_id,
+                                   config.like_emoji or DEFAULT_REACTION)
+                if not one.ok:
+                    print(f"reaction on {spec.post_id} from {labels[like]} "
+                          f"-> {one.code}")
+                    continue
+                reacted += 1
+            reactions += reacted
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
-                   True, detail=f"likes={spec.likes}")
-            state = "ok"
+                   True, detail=f"likes={spec.likes} reactions={reacted}")
+            state = f"ok reactions={reacted}/{spec.likes}"
         else:
             failed += 1
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
@@ -320,6 +339,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
     print(f"failed: {failed}")
     print(f"positive: {stats.positive} ({stats.ratio(stats.positive):.0f}%)")
     print(f"emoji: {emoji_used} ({stats.ratio(emoji_used):.0f}%)")
+    print(f"reactions: {reactions}")
     print(f"ai calls: {len(ai.calls)} (fallback {ai_fallback})")
     print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {stats.total} comments, {max(1, len(labels))} accounts, "

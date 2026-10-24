@@ -442,6 +442,11 @@ class DryRunSender:
 
     # sending ---------------------------------------------------------
 
+    def react(self, account: str, target: Target, message_id: int,
+              emoji: str = "\U0001F44D") -> SendResult:
+        self.calls.append(("react", f"{account}:{target.ref}#{message_id}"))
+        return SendResult(ok=True)
+
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         self.sent.append((account, target, content))
         return self._answer("send", account,
@@ -644,6 +649,24 @@ class TelethonSender:
             raise last
 
         return self._guard(operation, account, action)
+
+    def react(self, account: str, target: Target, message_id: int,
+              emoji: str = "\U0001F44D") -> SendResult:
+        """One reaction on one message: an account may add at most one."""
+
+        def call(client: Any, peer: Any) -> SendResult:
+            from telethon.tl.functions.messages import SendReactionRequest
+            from telethon.tl.types import ReactionEmoji
+
+            if not message_id:
+                return SendResult(ok=False, code=TARGET_INVALID,
+                                  detail="a reaction needs a message id")
+            client(SendReactionRequest(
+                peer=peer, msg_id=int(message_id),
+                reaction=[ReactionEmoji(emoticon=emoji)]))
+            return SendResult(ok=True, message_id=int(message_id))
+
+        return self._on_target(account, target, "react", call)
 
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         def call(client: Any, peer: Any) -> SendResult:

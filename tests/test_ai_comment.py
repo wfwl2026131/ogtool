@@ -87,7 +87,15 @@ class CapturingSender:
 
     def __init__(self, posts: list[tuple[int, str]] | None = None) -> None:
         self.sent: list[tuple[str, object]] = []
+        self.reacted: list[tuple[str, int, str]] = []
         self.posts = posts or []
+
+    def react(self, account: str, target: object, message_id: int,
+              emoji: str = "") -> object:
+        from ogtool.senders import SendResult
+
+        self.reacted.append((account, message_id, emoji))
+        return SendResult(ok=True, message_id=message_id)
 
     def history(self, account: str, target: object, minutes: int = 0,
                 limit: int = 0):
@@ -135,3 +143,38 @@ def test_a_comment_is_answered_under_its_post(ctx, live, fake_ai, monkeypatch):
     assert run(config, ctx) == 0
     assert [content.reply_to for _account, content in sender.sent] == [1, 2]
     assert sum(slept) > 0, "a live run has to keep the comment interval"
+
+
+def test_a_like_is_a_reaction_the_server_records(ctx, live, fake_ai,
+                                                 monkeypatch):
+    # The planned like count used to be printed and recorded while nothing was
+    # sent: the comment said likes=3 and the post carried no reaction at all.
+    from ogtool.features import _common
+
+    monkeypatch.setattr(_common.time, "sleep", lambda seconds: None)
+    ctx.ai = fake_ai(lambda prompt, system, config: ("nice post", 3))
+    sender = CapturingSender(posts=[(77, "a real post")])
+    live(sender)
+    config = config_for(posts=2, poll_recent=1, per_post_min=1,
+                        per_post_max=1, likes_min=2, likes_max=2)
+    assert run(config, ctx) == 0
+    assert sender.reacted == [("acc1", 77, "\U0001F44D"),
+                              ("acc2", 77, "\U0001F44D")]
+
+
+def test_one_account_never_reacts_twice_to_the_same_post(ctx, live, fake_ai,
+                                                          monkeypatch):
+    # Telegram keeps one reaction per account per message; asking one account
+    # for three likes can only ever produce one, so the run reports one.
+    from ogtool.features import _common
+
+    monkeypatch.setattr(_common.time, "sleep", lambda seconds: None)
+    ctx.ai = fake_ai(lambda prompt, system, config: ("nice post", 3))
+    sender = CapturingSender(posts=[(77, "a real post")])
+    live(sender)
+    config = config_for(posts=2, poll_recent=1, per_post_min=1,
+                        per_post_max=1, likes_min=3, likes_max=3)
+    run(config, ctx)
+    accounts = [account for account, _mid, _e in sender.reacted]
+    assert accounts == ["acc1", "acc2"], "one reaction per account, no repeats"
+    assert len(accounts) == len(set(accounts))
