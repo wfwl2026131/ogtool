@@ -69,19 +69,6 @@ class UnauthorizedClient(SyncClient):
         self.authorized = False
 
 
-@pytest.fixture
-def session(settings):
-    path = settings.session_path("t1")
-    path.write_bytes(b"")
-    return path
-
-
-@pytest.fixture
-def credentials(monkeypatch):
-    monkeypatch.setenv("DSH_SECRET_TG_API_CREDENTIALS",
-                       "api_id 1234567 api_hash " + "ca" * 16)
-
-
 def sender_for(settings) -> TelethonSender:
     return TelethonSender(settings=settings)
 

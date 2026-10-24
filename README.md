@@ -571,3 +571,43 @@ tests/            295 条
 10. **历史回读的上限是写死的**：`copy_chat` 每个源最多 200 条
     （`CAPTURE_LIMIT`），`ai_clone` 用页面自己的 `max_items`。参考端没有单独的
     「条数」字段，所以没有做成旗标。
+
+## 未接通（不做）
+
+下面这些功能**对外发起的批量路径在 `--live` 下是空的**：它们会跑完计划、
+打印进度，然后每一条都落成 `UNKNOWN`（failed 计数加 1，退出码非 0）。
+
+原因是 `ogtool/senders.py` 里有 6 个方法调在 `TelegramClient` 上根本不存在
+（Telethon 1.45 实测 `hasattr()` 为假）：
+
+| 被调用的名字 | 真实 API |
+|---|---|
+| `client.join` | `functions.channels.JoinChannelRequest` / `functions.messages.ImportChatInviteRequest` |
+| `client.leave` | `functions.channels.LeaveChannelRequest` / `functions.messages.DeleteChatRequest` |
+| `client.invite` | `functions.channels.InviteToChannelRequest` |
+| `client.add_contact` | `functions.contacts.AddContactRequest` |
+| `client.edit_profile` | `functions.account.UpdateProfileRequest` |
+| `client.get_contacts` | `functions.contacts.GetContactsRequest` |
+
+**本轮不修，是明确的不做，不是「计划中」。** 受影响的命令：
+
+`batch_join`、`batch_invite`、`batch_invite_v2`、`mass_send_v2`（联系人池）、
+`mix_market`（加人 + 邀请两个阶段）、`add_contact`、`batch_rename`（改名走
+`edit_profile`）、`auto_script`（`join`/`leave`/`invite`/`contact`/`profile` 五个
+动作）、`puppet_chat` / `puppet_chat_v2` / `ai_chat` / `ai_comment`（只影响需要
+先加入目标群的那条路径，直接发消息不受影响）。
+
+**已经确认能用**（真号实测）：`send` 家族（`send_message` / `send_file` /
+`forward_messages`）、`resolve`、`get_participants`、`get_entity`、`history`、
+`ping`、`proxy`、`log_out`、`create_group`，以及本轮的 `filter_group` 链接形态
+——后者走只读的 `CheckChatInviteRequest`，不加入、不发消息。
+
+这个缺口现在有测试守着，`tests/test_client_surface.py`：
+- `test_every_method_the_sender_calls_exists_on_the_real_client` 把
+  `senders.py` 里每个 `client.<name>` 抽出来跟 `TelegramClient` 对一遍；
+- `KNOWN_MISSING` 是上面这 6 条的白名单，**双向校验**：多出一个新名字即红，
+  修好一条后忘了删白名单同样即红；
+- `conftest.py` 的 `spec_client` fixture 是 `MagicMock(spec=TelegramClient)`，
+  新测试拿它当替身，生造方法当场 `AttributeError`，不会再静默通过。
+
+在 `3bd22e7` 上用空白名单跑这条测试是红的，报的就是上面 6 个名字。

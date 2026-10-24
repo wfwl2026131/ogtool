@@ -25,6 +25,7 @@ from .simulate import (
     CLASSIFIED,
     FLOOD_WAIT,
     INVITE_HASH_EXPIRED,
+    JOIN_REQUEST,
     NETWORK_ERROR,
     OK,
     PEER_FLOOD,
@@ -149,6 +150,40 @@ def peer_variants(target: Target) -> list[Any]:
             forms.append(target.phone_fallback)
         return forms
     return [ref]
+
+
+def _resolve_link(client: Any, target: Target) -> SendResult:
+    """What a link says about its group, read only.
+
+    A link is not an address, so nothing can look it up as a peer: the hash has
+    to be checked instead.  ``CheckChatInviteRequest`` only reads -- it joins
+    nothing and requests nothing -- which is exactly why a classification page
+    may ask it and may not use ``ImportChatInviteRequest``.
+    """
+    from telethon.tl.functions.messages import CheckChatInviteRequest
+    from telethon.tl.types import ChatInvite
+
+    checked = client(CheckChatInviteRequest(target.invite_hash))
+    chat = getattr(checked, "chat", None)
+    face = chat if chat is not None else checked
+    title = str(getattr(face, "title", "") or "")
+    count = int(getattr(face, "participants_count", 0) or 0)
+    detail = title or target.ref
+    if chat is not None:
+        # Already a member: the answer carries the chat itself.
+        return SendResult(ok=True, count=count, detail=detail)
+    if isinstance(checked, ChatInvite):
+        # Not joined: the server still shows the group's face, which is all a
+        # sort needs, and says whether it is a channel or needs approval.
+        if getattr(checked, "broadcast", False):
+            return SendResult(ok=True, code="CHANNEL", count=count,
+                              detail=detail)
+        if getattr(checked, "request_needed", False):
+            return SendResult(ok=True, code=JOIN_REQUEST, count=count,
+                              detail=detail)
+        return SendResult(ok=True, count=count, detail=detail)
+    return SendResult(ok=False, code=TARGET_INVALID,
+                      detail="the link answered with nothing readable")
 
 
 def result_for(code: str, detail: str = "") -> SendResult:
@@ -568,14 +603,28 @@ class TelethonSender:
         return self._on_target(account, target, "contact", call)
 
     def resolve(self, account: str, target: Target) -> SendResult:
-        def call(client: Any, peer: Any) -> SendResult:
-            entity = client.get_entity(peer)
-            title = getattr(entity, "title", "") or getattr(entity, "username", "")
-            count = int(getattr(entity, "participants_count", 0) or 0)
-            return SendResult(ok=True, detail=str(title or target.ref),
-                              count=count)
+        def action() -> SendResult:
+            client = self._client(account)
+            if target.is_invite():
+                return _resolve_link(client, target)
+            last: Exception | None = None
+            for peer in peer_variants(target):
+                try:
+                    entity = client.get_entity(peer)
+                except Exception as error:  # noqa: BLE001 - retried below
+                    if not _unresolved(error):
+                        raise
+                    last = error
+                    continue
+                title = (getattr(entity, "title", "")
+                         or getattr(entity, "username", ""))
+                count = int(getattr(entity, "participants_count", 0) or 0)
+                return SendResult(ok=True, detail=str(title or target.ref),
+                                  count=count)
+            assert last is not None
+            raise last
 
-        return self._on_target(account, target, "resolve", call)
+        return self._guard("resolve", account, action)
 
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         def action() -> SendResult:

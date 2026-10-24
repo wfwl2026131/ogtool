@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -72,6 +73,34 @@ def live(ctx: RunContext):
         return ctx
 
     return _make
+
+
+@pytest.fixture
+def session(settings: Settings):
+    """An empty session file, so the live backend gets past its existence check."""
+    path = settings.session_path("t1")
+    path.write_bytes(b"")
+    return path
+
+
+@pytest.fixture
+def credentials(monkeypatch):
+    """The api id/hash blob the live backend reads from the secret store."""
+    monkeypatch.setenv("DSH_SECRET_TG_API_CREDENTIALS",
+                       "api_id 1234567 api_hash " + "ca" * 16)
+
+
+@pytest.fixture
+def spec_client() -> MagicMock:
+    """A client stand-in with exactly the methods ``TelegramClient`` has.
+
+    ``spec`` is the whole point: a made up ``client.join`` raises here the way
+    it raises on a real session.  A bare mock answers it instead, which is how
+    six nonexistent methods kept 386 tests green.
+    """
+    from telethon.sync import TelegramClient
+
+    return MagicMock(spec=TelegramClient)
 
 
 class OkTransport:

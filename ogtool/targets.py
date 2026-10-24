@@ -24,9 +24,18 @@ class Target:
     title: str = ""
     #: A bare number is an id first; this keeps its phone form for the retry.
     phone_fallback: str = ""
+    #: The hash of a private invite link, without its plus.  A link is not an
+    #: address: nothing can look it up as a peer, so the transport has to ask
+    #: the server about the hash instead.  ``ref`` keeps the normalised
+    #: ``+hash`` form, which is what two spellings of one link dedupe on.
+    invite_hash: str = ""
 
     def display(self) -> str:
         return self.title or self.ref
+
+    def is_invite(self) -> bool:
+        """True when the entry was a private invite link, not a chat address."""
+        return bool(self.invite_hash)
 
 
 _USERNAME = re.compile(r"^@?([A-Za-z][A-Za-z0-9_]{0,31})$")
@@ -57,7 +66,7 @@ def parse_entry(entry: str, kind: str = "custom") -> Target:
             hash_part = rest.split("/", 1)[-1].lstrip("+")
             if not hash_part:
                 raise TargetError(f"invite link without a hash: {text}")
-            return Target("group", f"+{hash_part}")
+            return Target("group", f"+{hash_part}", invite_hash=hash_part)
         if rest.startswith("c/"):
             return Target("channel", rest)
         name = _USERNAME.match(rest.split("/", 1)[0].split("?")[0])
@@ -88,7 +97,8 @@ def parse_entry(entry: str, kind: str = "custom") -> Target:
 
     invite = _INVITE.match(text)
     if invite:
-        return Target("group", f"+{invite.group('hash')}")
+        return Target("group", f"+{invite.group('hash')}",
+                      invite_hash=invite.group("hash"))
 
     raise TargetError(f"cannot read target: {text}")
 
