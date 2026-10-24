@@ -85,8 +85,15 @@ def test_a_failing_model_still_produces_comments(ctx, capsys, fake_ai):
 class CapturingSender:
     """Keeps the Content the page handed over, so the thread id is visible."""
 
-    def __init__(self) -> None:
+    def __init__(self, posts: list[tuple[int, str]] | None = None) -> None:
         self.sent: list[tuple[str, object]] = []
+        self.posts = posts or []
+
+    def history(self, account: str, target: object, minutes: int = 0,
+                limit: int = 0):
+        from ogtool.senders import SendResult
+
+        return SendResult(ok=True, count=len(self.posts), posts=list(self.posts))
 
     def send(self, account: str, target: object, content: object):
         from ogtool.senders import SendResult
@@ -96,6 +103,22 @@ class CapturingSender:
 
     def close(self) -> None:
         pass
+
+
+def test_a_live_run_replies_to_the_posts_the_chat_actually_has(
+        ctx, live, fake_ai, monkeypatch):
+    # The offline stand-ins are numbered 1..N, which on a real chat means the
+    # group service message; a live run has to read the ids it is commenting on.
+    from ogtool.features import _common
+
+    monkeypatch.setattr(_common.time, "sleep", lambda seconds: None)
+    ctx.ai = fake_ai(lambda prompt, system, config: ("nice post", 3))
+    sender = CapturingSender(posts=[(77, "a real post")])
+    live(sender)
+    config = config_for(posts=2, poll_recent=1, per_post_min=1,
+                        per_post_max=1)
+    assert run(config, ctx) == 0
+    assert [content.reply_to for _account, content in sender.sent] == [77]
 
 
 def test_a_comment_is_answered_under_its_post(ctx, live, fake_ai, monkeypatch):

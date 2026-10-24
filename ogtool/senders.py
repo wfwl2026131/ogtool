@@ -87,6 +87,10 @@ class SendResult:
     retry_after: float = 0.0
     count: int = 0
     items: list[str] = field(default_factory=list)
+    #: ``(message id, text)`` of every item, in the same order as ``items``.
+    #: A page that has to answer *in* a post (ai_comment) needs the id, and the
+    #: string form above deliberately carries no id so a task file can feed it.
+    posts: list[tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -827,7 +831,7 @@ class TelethonSender:
             cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)
                       if minutes > 0 else None)
             scanned = 0
-            captured: list[tuple[str, str]] = []
+            captured: list[tuple[int, str, str]] = []
             for message in client.iter_messages(peer, limit=limit or None):
                 stamp = getattr(message, "date", None)
                 if cutoff is not None and stamp is not None:
@@ -839,11 +843,14 @@ class TelethonSender:
                 body = " ".join((getattr(message, "message", "") or "").split())
                 body = body.replace("|", "/")
                 if body:
-                    captured.append((_sender_ref(message), body))
+                    captured.append((int(message.id), _sender_ref(message), body))
             captured.reverse()  # Telethon yields newest first
-            return SendResult(ok=True, count=scanned,
-                              items=[f"{target.ref}|{sender}|{body}"
-                                     for sender, body in captured])
+            return SendResult(
+                ok=True, count=scanned,
+                items=[f"{target.ref}|{sender}|{body}"
+                       for _mid, sender, body in captured],
+                posts=[(mid, body) for mid, _sender, body in captured],
+            )
 
         return self._on_target(account, target, "history", call)
 

@@ -266,8 +266,12 @@ def test_close_disconnects_every_open_client(settings):
 class Said:
     """One message as Telethon hands it over."""
 
+    next_id = 0
+
     def __init__(self, text: str, username: str = "alice",
                  sender_id: int = 7, date: object = None) -> None:
+        Said.next_id += 1
+        self.id = Said.next_id
         self.message = text
         self.sender_id = sender_id
         self.date = date
@@ -332,6 +336,15 @@ def test_history_flattens_the_record_separators(settings, session, credentials,
                                      [Said("a | b\nc")])
     result = sender.history("t1", target(), minutes=0, limit=5)
     assert result.items == ["@demo_chat|@alice|a / b c"]
+
+
+def test_history_carries_the_post_id_a_comment_has_to_reply_to(
+        settings, session, credentials, monkeypatch):
+    first, second = Said("one"), Said("two")
+    sender, _client = history_sender(settings, monkeypatch, [second, first])
+    result = sender.history("t1", target(), minutes=0, limit=5)
+    assert result.posts == [(first.id, "one"), (second.id, "two")]
+    assert len(result.items) == len(result.posts)
 
 
 def test_history_skips_a_post_that_carries_only_media(settings, session,

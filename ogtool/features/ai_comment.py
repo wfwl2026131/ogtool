@@ -10,7 +10,7 @@ windows), and a missing key only changes the wording, not the distribution.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
@@ -216,9 +216,42 @@ def _clip(text_value: str, limit: int) -> str:
     return body if len(body) <= limit else body[:limit].rstrip()
 
 
+def capture_posts(sender: object, account: str, targets: list[str],
+                  limit: int) -> list[SourceMessage]:
+    """Read each target's recent posts live, keeping their real ids.
+
+    A comment is a reply, so the id is the whole point: the offline stand-ins
+    are numbered 1..N and a real run that used them would be replying to
+    whatever happens to sit at those ids.  ``history`` already drops a post
+    with no text, so a service message never becomes a comment target.
+    """
+    captured: list[SourceMessage] = []
+    for target in targets:
+        parsed = parse_many([target], "custom")[0]
+        result = sender.history(account, parsed, minutes=0,  # type: ignore[attr-defined]
+                                limit=limit)
+        if not result.ok:
+            print(f"target={target} capture failed: {result.code}")
+            continue
+        for post_id, body in result.posts:
+            captured.append(SourceMessage(peer=target, sender="", text=body,
+                                          message_id=post_id))
+        print(f"target={target} captured {len(result.posts)}/{result.count} "
+              f"limit={limit}")
+    return captured
+
+
 def run(config: CommentConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
+    if ctx.live and not config.messages and accounts:
+        captured = capture_posts(ctx.sender(), labels[0], config.targets,
+                                 config.poll_recent or config.posts)
+        if captured:
+            config = replace(config, messages=captured)
+        else:
+            print("warning: no post was captured, the run has nothing to "
+                  "comment on")
     stats = plan(config, labels)
 
     header(
