@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from .simulate import (
     OK,
     PEER_FLOOD,
     PHONE_OCCUPIED,
+    RETRYABLE,
     SESSION_NOT_FOUND,
     TARGET_INVALID,
     TIMEOUT,
@@ -43,6 +45,25 @@ from .simulate import (
     describe,
 )
 from .targets import Target
+
+#: Every code a run can report; a class name that lands here needs no mapping.
+KNOWN_CODES = RETRYABLE | {
+    CHANNEL_PRIVATE,
+    CHAT_ADMIN_REQUIRED,
+    CHAT_WRITE_FORBIDDEN,
+    INVITE_HASH_EXPIRED,
+    JOIN_REQUEST,
+    OK,
+    PHONE_OCCUPIED,
+    SESSION_NOT_FOUND,
+    TARGET_INVALID,
+    UNKNOWN,
+    USER_ALREADY_PARTICIPANT,
+    USER_BANNED_IN_CHANNEL,
+    USER_ID_INVALID,
+    USER_NOT_MUTUAL_CONTACT,
+    USER_PRIVACY_RESTRICTED,
+}
 
 #: A backend returned a coroutine instead of a value: the call never ran.
 CLIENT_NOT_AWAITED = "CLIENT_NOT_AWAITED"
@@ -266,6 +287,18 @@ def result_for(code: str, detail: str = "") -> SendResult:
                       retryable=retryable, retry_after=wait)
 
 
+def _code_from_class(name: str) -> str:
+    """``InviteHashExpiredError`` -> ``INVITE_HASH_EXPIRED``.
+
+    Telethon names its error classes after the server's answer, but the text of
+    the exception is a human sentence that usually does not repeat the code
+    (``The chat the user tried to join has expired...``), so matching the class
+    name is the only reliable read.
+    """
+    base = name[:-5] if name.endswith("Error") else name
+    return re.sub(r"(?<!^)(?=[A-Z])", "_", base).upper()
+
+
 def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
     """Map a Telethon error to one of the exported codes."""
     name = type(error).__name__
@@ -303,6 +336,12 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
         return SESSION_NOT_FOUND, text, False
     if "PHONE_NUMBER_OCCUPIED" in upper or "PHONE_OCCUPIED" in upper:
         return PHONE_OCCUPIED, text, False
+    # Last resort: the class name itself is the answer, which is how the errors
+    # whose message is a sentence (expired invite, banned, admin required) get
+    # their real code instead of UNKNOWN.
+    by_class = _code_from_class(name)
+    if by_class in KNOWN_CODES:
+        return by_class, text, by_class in RETRYABLE
     return UNKNOWN, f"{name}: {text}", False
 
 

@@ -94,6 +94,9 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
     sender = ctx.sender()
 
     joined: list[str] = []
+    # The page keeps one list for whichever action ran; saying "joined" after a
+    # leave would be a plain lie in the run report.
+    done_label = "已加入账号" if config.action == JOIN else "已退出账号"
     failed = 0
     waited = 0.0
     for index, account in enumerate(labels, start=1):
@@ -112,7 +115,7 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
         print(f"进度：{index}/{len(labels)}  {account} -> "
               f"{'ok' if result.ok else result.code}")
 
-    print(f"已加入账号：{', '.join(joined) or '-'}")
+    print(f"{done_label}：{', '.join(joined) or '-'}")
     if ctx.live and waited:
         print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {len(labels)} operations, {len(joined)} ok, {failed} failed")

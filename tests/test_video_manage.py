@@ -19,7 +19,11 @@ def test_join_reports_progress_for_every_account(ctx, capsys):
 def test_leave_uses_the_same_counter(ctx, capsys):
     config = VideoConfig(link="@video", action=LEAVE)
     assert run(config, ctx) == 0
-    assert "DRY-RUN leave" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "DRY-RUN leave" in output
+    # The list holds whichever action ran: after a leave it is not "joined".
+    assert "已退出账号：acc1, acc2" in output
+    assert "已加入账号" not in output
 
 
 def test_flood_on_leave_is_counted(ctx, scripted, capsys):

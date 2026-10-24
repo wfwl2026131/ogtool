@@ -7,9 +7,12 @@ import pytest
 from ogtool.config import ProxyConfig
 from ogtool.senders import (
     CLIENT_NOT_AWAITED,
+    INVITE_HASH_EXPIRED,
     Content,
     TelethonSender,
+    _code_from_class,
     _proxy_tuple,
+    code_from_exception,
 )
 from ogtool.targets import parse_many
 
@@ -379,3 +382,34 @@ def test_a_failed_connect_closes_the_half_open_client(settings, session,
         sender._client("t1")
     assert client.disconnects == 1
     assert sender._clients == {}
+
+
+class InviteHashExpiredError(Exception):
+    """Telethon names the class after the answer, not the message."""
+
+
+def test_the_class_name_gives_the_code_when_the_text_is_a_sentence():
+    # The real exception reads "The chat the user tried to join has expired and
+    # is not valid anymore", which contains no code at all.
+    error = InviteHashExpiredError(
+        "The chat the user tried to join has expired and is not valid "
+        "anymore (caused by ImportChatInviteRequest)")
+    code, detail, retryable = code_from_exception(error)
+    assert code == INVITE_HASH_EXPIRED
+    assert "expired" in detail
+    assert retryable is False
+
+
+def test_a_class_name_outside_the_table_is_still_unknown():
+    class SomethingNewError(Exception):
+        pass
+
+    code, detail, _retryable = code_from_exception(SomethingNewError("nope"))
+    assert code == "UNKNOWN"
+    assert detail.startswith("SomethingNewError: ")
+
+
+def test_a_class_name_becomes_the_code_spelling():
+    assert _code_from_class("InviteHashExpiredError") == "INVITE_HASH_EXPIRED"
+    assert _code_from_class("ChatAdminRequiredError") == "CHAT_ADMIN_REQUIRED"
+    assert _code_from_class("TimeoutError") == "TIMEOUT"
