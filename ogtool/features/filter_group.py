@@ -56,7 +56,7 @@ FLAGS = (
     Flag("--groups-file", "files", str, "file with one group per line",
          action="append"),
     Flag("--threads", "threads", int,
-         "planning concurrency only (requests are serial)"),
+         "one account probes one group at a time (planning only)"),
     Flag("--global-interval-ms", "global_interval_ms", int,
          "global request interval in milliseconds"),
     Flag("--account-interval-ms", "account_interval_ms", int,

@@ -47,7 +47,7 @@ FLAGS = (
     Flag("--per-account-cap", "per_account_cap", int,
          "joins one account may perform"),
     Flag("--threads", "threads", int,
-         "planning concurrency only (requests are serial)"),
+         "one lane per account, lanes join at the same time"),
     Flag("--success-cap", "success_cap", int, "stop after this many joins"),
     Flag("--exec-cap", "exec_cap", int, "stop after this many attempts"),
     Flag("--flood-cap", "flood_cap", int, "PEER_FLOOD retries per target"),
@@ -156,7 +156,7 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
     outcome = execute(jobs, ctx, call, total=len(jobs),
                       success_cap=config.success_cap, exec_cap=config.exec_cap,
                       flood_cap=config.flood_cap, retry_cap=1, label="group",
-                      interval=partial(gap, config))
+                      interval=partial(gap, config), lanes=config.threads)
 
     for job in jobs:
         if "ok" not in job.extra:

@@ -111,3 +111,70 @@ def test_a_dry_run_joins_without_waiting(ctx, slept):
                         account_interval=10.0)
     assert run(config, ctx) == 0
     assert slept == []
+
+
+class LaneSender:
+    """Records when each join happened, so two lanes can be told apart."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, float]] = []
+
+    def join(self, account: str, target: object):
+        import time as clock
+
+        from ogtool.senders import SendResult
+
+        self.calls.append((account, getattr(target, "ref", "?"),
+                           clock.monotonic()))
+        return SendResult(ok=True)
+
+    def close(self) -> None:
+        pass
+
+
+def test_one_account_is_never_worked_by_two_lanes(ctx, live, monkeypatch):
+    import time as clock
+
+    sender = LaneSender()
+    live(sender)
+    real_sleep = clock.sleep
+    monkeypatch.setattr("ogtool.features._common.time.sleep", real_sleep)
+    config = JoinConfig(targets=parse_many(["@g1", "@g2", "@g3", "@g4"], "group"),
+                        account_labels=["acc1", "acc2"], threads=4,
+                        request_interval=0.0, account_interval=0.0)
+    assert run(config, ctx) == 0
+    per_account: dict[str, int] = {}
+    for account, _, _ in sender.calls:
+        per_account[account] = per_account.get(account, 0) + 1
+    assert sum(per_account.values()) == len(sender.calls)
+    assert "acc1" in per_account
+
+
+def test_two_accounts_really_join_at_the_same_time(ctx, live, monkeypatch):
+    import time as clock
+
+    sender = LaneSender()
+    live(sender)
+    real_sleep = clock.sleep
+    monkeypatch.setattr("ogtool.features._common.time.sleep", real_sleep)
+    monkeypatch.setattr("ogtool.runner.time.sleep", real_sleep)
+    config = JoinConfig(
+        targets=parse_many(["@g1", "@g2", "@g3", "@g4"], "group"),
+        account_labels=["acc1", "acc2"], threads=2,
+        request_interval=1.0, account_interval=1.0)
+    assert run(config, ctx) == 0
+    seen: dict[str, list[float]] = {}
+    for account, _, at in sender.calls:
+        seen.setdefault(account, []).append(at)
+    # Serial would finish acc1 entirely before acc2 starts; lanes overlap.
+    assert min(seen["acc2"]) < max(seen["acc1"])
+
+
+def test_more_threads_than_accounts_does_not_invent_lanes(ctx, live):
+    sender = LaneSender()
+    live(sender)
+    config = JoinConfig(targets=parse_many(["@g1", "@g2"], "group"),
+                        account_labels=["acc1"], threads=8,
+                        request_interval=0.0, account_interval=0.0)
+    assert run(config, ctx) == 0
+    assert {account for account, _, _ in sender.calls} == {"acc1"}

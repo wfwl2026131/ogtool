@@ -72,3 +72,52 @@ def test_a_dry_run_never_sleeps(ctx, slept, capsys):
     run(config, ctx)
     assert slept == []
     assert "waited: " not in capsys.readouterr().out
+
+
+class LaneSender:
+    """Records which account added whom, and when."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, float]] = []
+
+    def add_contact(self, account: str, target: object):
+        import time as clock
+
+        from ogtool.senders import SendResult
+
+        self.calls.append((account, getattr(target, "ref", "?"),
+                           clock.monotonic()))
+        return SendResult(ok=True)
+
+    def close(self) -> None:
+        pass
+
+
+def test_two_accounts_add_at_the_same_time(ctx, live):
+
+    sender = LaneSender()
+    live(sender)
+    config = ContactConfig(contacts=["@c1", "@c2", "@c3", "@c4"],
+                           account_labels=["acc1", "acc2"], threads=2,
+                           request_interval_ms=0,
+                           operation_interval_min_ms=100,
+                           operation_interval_max_ms=100)
+    assert run(config, ctx) == 0
+    seen: dict[str, list[float]] = {}
+    for account, _, at in sender.calls:
+        seen.setdefault(account, []).append(at)
+    assert set(seen) == {"acc1", "acc2"}
+    assert min(seen["acc2"]) < max(seen["acc1"])
+
+
+def test_one_account_is_never_worked_by_two_lanes(ctx, live):
+    sender = LaneSender()
+    live(sender)
+    config = ContactConfig(contacts=["@c1", "@c2", "@c3"],
+                           account_labels=["acc1"], threads=8,
+                           request_interval_ms=0,
+                           operation_interval_min_ms=0,
+                           operation_interval_max_ms=0)
+    assert run(config, ctx) == 0
+    assert {account for account, _, _ in sender.calls} == {"acc1"}
+    assert len(sender.calls) == 3

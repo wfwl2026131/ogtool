@@ -9,8 +9,9 @@ page -- and a dry run prints exactly what a live run would do, minus the wait.
 
 from __future__ import annotations
 
+import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -75,6 +76,62 @@ class Outcome:
             self.timeouts.append(subject)
 
 
+@dataclass
+class _Budget:
+    """The caps, shared by every lane, claimed one slot at a time.
+
+    ``success_cap`` and ``exec_cap`` are promises about the whole run, so two
+    lanes must not each spend the full budget: they reserve a slot under a
+    lock before doing the work.
+    """
+
+    success_cap: int = 0
+    exec_cap: int = 0
+    attempts: int = 0
+    successes: int = 0
+    stopped: str = ""
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def claim_attempt(self) -> bool:
+        with self._lock:
+            if self.exec_cap and self.attempts >= self.exec_cap:
+                self.stopped = self.stopped or "exec_cap"
+                return False
+            self.attempts += 1
+            return True
+
+    def claim_success(self) -> bool:
+        """Reserve room for one more success, or report the cap is spent."""
+        with self._lock:
+            if self.success_cap and self.successes >= self.success_cap:
+                self.stopped = self.stopped or "success_cap"
+                return False
+            self.successes += 1
+            return True
+
+
+def _split_lanes(jobs: Sequence[Job], lanes: int,
+                 lane_key: Callable[[Job], str] | None) -> list[list[Job]]:
+    """Bucket jobs so one key (normally one account) never spans two lanes."""
+    key = lane_key or (lambda job: job.account)
+    order: list[str] = []
+    bucket: dict[str, list[tuple[int, Job]]] = {}
+    for position, job in enumerate(jobs):
+        name = key(job)
+        if name not in bucket:
+            bucket[name] = []
+            order.append(name)
+        bucket[name].append((position, job))
+    count = max(1, min(max(1, lanes), len(order)))
+    lanes_out: list[list[tuple[int, Job]]] = [[] for _ in range(count)]
+    for position, name in enumerate(order):
+        lanes_out[position % count].extend(bucket[name])
+    # Within a lane the jobs keep their planned order: the pool interval is
+    # measured against the previous job, so regrouping would change the pace.
+    return [list(job for _, job in sorted(lane))
+            for lane in lanes_out if lane]
+
+
 def execute(
     jobs: Iterable[Job],
     ctx: RunContext,
@@ -89,6 +146,8 @@ def execute(
     label: str = "job",
     quiet: bool = False,
     interval: float | Callable[[Job, Job | None], float] = 0.0,
+    lanes: int = 1,
+    lane_key: Callable[[Job], str] | None = None,
 ) -> Outcome:
     """Run every job, honouring the caps, the retry rule and the flood policy.
 
@@ -107,23 +166,38 @@ def execute(
     outcome = Outcome()
     outcome.stats.total = total or len(items)
     missing = set(missing_codes)
-    backoff = PeerFloodBackoff()
-    sender = ctx.sender()
-    previous: Job | None = None
+    ctx.sender()
+    budget = _Budget(success_cap=success_cap, exec_cap=exec_cap)
+    print_lock = threading.Lock()
+    outcome_lock = threading.Lock()
 
-    for index, job in enumerate(items, start=1):
-        if exec_cap and index > exec_cap:
-            outcome.stopped = "exec_cap"
-            break
+    def speak(text: str) -> None:
+        if quiet:
+            return
+        with print_lock:
+            print(text)
+
+    def run_lane(lane: Sequence[Job]) -> None:
+        backoff = PeerFloodBackoff()
+        previous: Job | None = None
+        for job in lane:
+            _run_one(job, previous, backoff)
+            previous = job
+
+    def _run_one(job: Job, previous: Job | None,
+                 backoff: PeerFloodBackoff) -> None:
+        index = items.index(job) + 1
+        if not budget.claim_attempt():
+            return
         if success_cap and outcome.stats.ok >= success_cap:
-            outcome.stopped = "success_cap"
-            break
+            with outcome_lock:
+                outcome.stopped = outcome.stopped or "success_cap"
+            return
 
         if previous is not None:
             wait = float(interval(job, previous) if callable(interval)
                          else interval)
             pause(ctx, wait)
-        previous = job
 
         floods = 0
         retries = 0
@@ -133,47 +207,58 @@ def execute(
             if result.ok:
                 break
             if result.code == PEER_FLOOD:
-                outcome.note_flood(job.subject)
+                with outcome_lock:
+                    outcome.note_flood(job.subject)
                 floods += 1
                 if floods > flood_cap:
                     break
                 wait = result.retry_after or backoff.wait_for(floods - 1)
-                outcome.waited += wait
-                if not quiet:
-                    print(f"  PEER_FLOOD backoff {wait:.0f}s "
-                          f"(attempt {floods}/{flood_cap}) {job.subject}")
+                with outcome_lock:
+                    outcome.waited += wait
+                speak(f"  PEER_FLOOD backoff {wait:.0f}s "
+                      f"(attempt {floods}/{flood_cap}) {job.subject}")
                 if ctx.live:
                     time.sleep(wait)
                 continue
             if result.retryable and retries < retry_cap:
                 retries += 1
                 wait = result.retry_after or backoff.wait_for(retries - 1)
-                outcome.waited += wait
-                if not quiet:
-                    print(f"  retry {result.code} after {wait:.0f}s "
-                          f"(attempt {retries}/{retry_cap}) {job.subject}")
+                with outcome_lock:
+                    outcome.waited += wait
+                speak(f"  retry {result.code} after {wait:.0f}s "
+                      f"(attempt {retries}/{retry_cap}) {job.subject}")
                 if ctx.live:
                     time.sleep(wait)
                 continue
             break
 
         assert result is not None
-        outcome.stats.record(result.ok, result.code)
         # The page records one row per job afterwards, so the answer has to
         # survive the loop; a job the caps stopped early never gets a row.
         job.extra["ok"] = "1" if result.ok else ""
         job.extra["code"] = result.code
-        if not result.ok:
-            if result.code in missing:
-                outcome.note_missing(job.subject)
-            if result.code == TIMEOUT:
-                outcome.note_timeout(job.subject)
-        if not quiet:
-            state = "ok" if result.ok else result.code
-            print(f"[{index:03d}/{outcome.stats.total or len(items):03d}] "
-                  f"account={job.account} {label}={job.subject} -> {state}")
+        with outcome_lock:
+            outcome.stats.record(result.ok, result.code)
+            if not result.ok:
+                if result.code in missing:
+                    outcome.note_missing(job.subject)
+                if result.code == TIMEOUT:
+                    outcome.note_timeout(job.subject)
+        state = "ok" if result.ok else result.code
+        speak(f"[{index:03d}/{outcome.stats.total or len(items):03d}] "
+              f"account={job.account} {label}={job.subject} -> {state}")
 
-    del sender
+    lane_jobs = _split_lanes(items, lanes if ctx.live else 1, lane_key)
+    if len(lane_jobs) <= 1:
+        run_lane(lane_jobs[0] if lane_jobs else [])
+    else:
+        threads = [threading.Thread(target=run_lane, args=(lane,), daemon=True)
+                   for lane in lane_jobs]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    outcome.stopped = outcome.stopped or budget.stopped
     return outcome
 
 

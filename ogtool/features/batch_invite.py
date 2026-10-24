@@ -57,7 +57,7 @@ FLAGS = (
     Flag("--request-interval", "request_interval", float,
          "minimum seconds between two requests"),
     Flag("--threads", "threads", int,
-         "planning concurrency only (requests are serial)"),
+         "planning only; use batch_invite_v2 for one lane per account"),
     Flag("--target-success-cap", "target_success_cap", int,
          "invites one target group accepts"),
     Flag("--handler-success-cap", "handler_success_cap", int,

@@ -9,6 +9,7 @@ number is never added twice beyond it.
 from __future__ import annotations
 
 import random
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
@@ -21,6 +22,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     lines,
     name_of,
     num,
@@ -49,7 +51,7 @@ FLAGS = (
     Flag("--operation-interval-max-ms", "operation_interval_max_ms", int,
          "maximum operation interval in milliseconds"),
     Flag("--threads", "threads", int,
-         "planning concurrency only (requests are serial)"),
+         "one lane per account, lanes add at the same time"),
     Flag("--flood-cap", "flood_cap", int, "PEER_FLOOD retries per contact"),
 )
 
@@ -169,26 +171,46 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
                      {"contacts": config.contacts}, len(jobs))
     sender = ctx.sender()
 
-    ok = failed = 0
-    waited = 0.0
-    rng = random.Random()
-    for index, (account, contact, round_index) in enumerate(jobs, start=1):
-        if index > 1:
-            delay = gap(config, rng)
-            waited += delay
-            pause(ctx, delay)
-        target = parse_many([contact], "custom")[0]
-        result = sender.add_contact(account, target)
-        if result.ok:
-            ok += 1
-            record(ctx, task, account, contact, True)
-            print(f"[{index:03d}/{len(jobs):03d}] account={account} "
-                  f"contact={contact} round={round_index} -> ok")
-        else:
-            failed += 1
-            record(ctx, task, account, contact, False, result.code, result.detail)
-            print(f"[{index:03d}/{len(jobs):03d}] account={account} "
-                  f"contact={contact} round={round_index} -> {result.code}")
+    positions = {job: index for index, job in enumerate(jobs, start=1)}
+    total = len(jobs)
+
+    def add_lane(lane: list[tuple[str, str, int]]) -> tuple[int, int, float]:
+        ok_count = failed_count = 0
+        waited = 0.0
+        rng = random.Random(lane[0][0])
+        for position, (account, contact, round_index) in enumerate(lane):
+            if position:
+                delay = gap(config, rng)
+                waited += delay
+                pause(ctx, delay)
+            target = parse_many([contact], "custom")[0]
+            result = sender.add_contact(account, target)
+            if result.ok:
+                ok_count += 1
+                record(ctx, task, account, contact, True)
+                state = "ok"
+            else:
+                failed_count += 1
+                record(ctx, task, account, contact, False, result.code,
+                       result.detail)
+                state = result.code
+            print(f"[{positions[(account, contact, round_index)]:03d}/"
+                  f"{total:03d}] account={account} contact={contact} "
+                  f"round={round_index} -> {state}")
+        return ok_count, failed_count, waited
+
+    # One lane per account: the operation interval is a promise to that
+    # account, so two threads must never work the same one.
+    lanes = lanes_by(lambda job: job[0], jobs, config.threads)
+    if len(lanes) <= 1:
+        outcomes = [add_lane(lanes[0] if lanes else [])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            outcomes = list(pool.map(add_lane, lanes))
+
+    ok = sum(row[0] for row in outcomes)
+    failed = sum(row[1] for row in outcomes)
+    waited = sum(row[2] for row in outcomes)
 
     print(f"联系人：{len(config.contacts)}  成功: {ok}  失败: {failed}")
     if ctx.live and waited:
