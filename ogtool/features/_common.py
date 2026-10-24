@@ -17,6 +17,10 @@ from ..runtime import RunContext
 from ..store import TaskRef
 from ..targets import Target, collect
 
+# How much of a failure reason fits in one row of the results table.  The
+# column is read in a terminal, so a long traceback is worse than useless.
+DETAIL_LIMIT = 500
+
 
 def section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     """One named block of the task YAML, or an empty one."""
@@ -125,7 +129,10 @@ def record(ctx: RunContext, task: TaskRef, account: str, subject: str,
     status = "sent" if ok else "failed"
     if not ctx.live and ok:
         status = "planned"
-    ctx.store.add_result(task.id, account, subject, status, code, detail)
+    # A failure with an empty detail is undebuggable: the code alone says
+    # nothing about why, and UNKNOWN is by definition a gap in the mapping.
+    ctx.store.add_result(task.id, account, subject, status, code,
+                         " ".join(str(detail or "").split())[:DETAIL_LIMIT])
 
 
 def blocks(data: dict[str, Any], key: str) -> list[str]:

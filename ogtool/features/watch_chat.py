@@ -181,7 +181,7 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
                   f"{message.sender or '-'} -> relayed to {relay}")
         else:
             counts.dropped += 1
-            record(ctx, task, account, relay, False, result.code)
+            record(ctx, task, account, relay, False, result.code, result.detail)
             print(f"[{index:03d}] peer={target.ref} -> {result.code}")
 
     print(f"targets: {len(config.targets)}  watched: {counts.watched}  "

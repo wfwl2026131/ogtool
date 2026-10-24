@@ -196,12 +196,22 @@ def chat_entity(client: Any, target: Target) -> Any:
     """The chat behind a target, joining a private link first when needed.
 
     This build of Telethon ships no contacts/join/invite helpers, so a private
-    group is only reachable through ``ImportChatInviteRequest``: its answer
-    carries the chat itself, access hash included.
+    group is only reachable through the invite hash.  ``CheckChatInviteRequest``
+    answers for members *and* strangers alike -- it returns the chat itself once
+    we are already in -- so it goes first; importing is only for a link we have
+    not joined yet.  Without that order an already-joined group falls through to
+    the phone fallback and dies as "cannot find any entity to +<hash>".
     """
     if target.is_invite():
-        from telethon.tl.functions.messages import ImportChatInviteRequest
+        from telethon.tl.functions.messages import (
+            CheckChatInviteRequest,
+            ImportChatInviteRequest,
+        )
 
+        preview = client(CheckChatInviteRequest(target.invite_hash))
+        chat = getattr(preview, "chat", None)
+        if chat is not None:
+            return chat
         try:
             updates = client(ImportChatInviteRequest(target.invite_hash))
         except Exception as error:  # noqa: BLE001 - already joined is not a fault

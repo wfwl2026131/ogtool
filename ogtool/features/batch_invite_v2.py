@@ -234,7 +234,7 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
                   f"target={group} contact={contact} -> ok")
         else:
             failed += 1
-            record(ctx, task, handler, f"{group}<-{contact}", False, result.code)
+            record(ctx, task, handler, f"{group}<-{contact}", False, result.code, result.detail)
             print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
                   f"target={group} contact={contact} -> {result.code}")
             if result.code == "PEER_FLOOD" and contact not in flood:

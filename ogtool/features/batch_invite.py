@@ -260,7 +260,7 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
                   f"group={group} member={member} -> ok")
         else:
             failed += 1
-            record(ctx, task, handler, f"{group}<-{member}", False, result.code)
+            record(ctx, task, handler, f"{group}<-{member}", False, result.code, result.detail)
             print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
                   f"group={group} member={member} -> {result.code}")
             if (result.code in ("USER_PRIVACY_RESTRICTED",

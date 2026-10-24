@@ -186,7 +186,7 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
                   f"contact={contact} round={round_index} -> ok")
         else:
             failed += 1
-            record(ctx, task, account, contact, False, result.code)
+            record(ctx, task, account, contact, False, result.code, result.detail)
             print(f"[{index:03d}/{len(jobs):03d}] account={account} "
                   f"contact={contact} round={round_index} -> {result.code}")
 

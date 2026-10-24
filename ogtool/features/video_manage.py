@@ -108,7 +108,7 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
             record(ctx, task, account, target.ref, True)
         else:
             failed += 1
-            record(ctx, task, account, target.ref, False, result.code)
+            record(ctx, task, account, target.ref, False, result.code, result.detail)
         print(f"进度：{index}/{len(labels)}  {account} -> "
               f"{'ok' if result.ok else result.code}")
 

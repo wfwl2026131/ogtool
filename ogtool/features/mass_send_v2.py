@@ -376,7 +376,7 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
                   f"account={pair.account} target={pair.target} -> ok")
             continue
         failed += 1
-        record(ctx, task, pair.account, pair.target, False, result.code)
+        record(ctx, task, pair.account, pair.target, False, result.code, result.detail)
         print(f"[{pair.index:03d}/{len(plan.pairs):03d}] "
               f"account={pair.account} target={pair.target} -> {result.code}")
         if result.code == "PEER_FLOOD":
