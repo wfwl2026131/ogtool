@@ -481,3 +481,41 @@ def test_a_picture_without_a_caption_is_not_dropped(settings, session,
     # peer|sender||media: the empty text keeps its field, the path is the fourth
     assert result.items[0].count("|") == 3, "empty text keeps its place"
     assert result.items[0].split("|")[2] == ""
+
+
+class ColdCacheClient(SyncClient):
+    """Knows no user ids until somebody lists the dialogs."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.warm = False
+        self.dialog_calls = 0
+
+    def get_entity(self, peer: object):
+        numeric = (isinstance(peer, int)
+                   or str(peer).lstrip("+-").isdigit())
+        if not self.warm and numeric:
+            raise ValueError(
+                "Could not find the input entity for PeerUser(user_id=1). "
+                "Please read https://docs.telethon.dev/en/stable/"
+                "concepts/entities.html to find out more details.")
+        return type("User", (), {"username": "wf8wf",
+                                 "title": ""})()
+
+    def get_dialogs(self, limit: object = None) -> None:
+        self.dialog_calls += 1
+        self.warm = True
+
+
+def test_a_bare_user_id_is_resolved_after_one_dialog_listing(
+        settings, session, credentials, monkeypatch):
+    # A fresh session knows no access hashes, so a live user id looked like an
+    # invalid target until the dialogs were listed once.
+    client = ColdCacheClient()
+    monkeypatch.setattr("telethon.sync.TelegramClient",
+                        lambda *args, **kwargs: client)
+    sender = sender_for(settings)
+    result = sender.resolve("t1", parse_many(["7858307768"], "custom")[0])
+    assert result.ok, result.code
+    assert result.code == "USER"
+    assert client.dialog_calls == 1

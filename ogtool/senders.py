@@ -276,8 +276,25 @@ def chat_entity(client: Any, target: Target) -> Any:
             if not _unresolved(error):
                 raise
             last = error
+    # A bare user id carries no access hash, so a session that has not listed
+    # its chats yet cannot resolve one and reports a live user as invalid.
+    # One dialog listing seeds the cache; anything else would be a guess.
+    if _bare_id(target):
+        client.get_dialogs(limit=None)
+        for peer in peer_variants(target):
+            try:
+                return client.get_entity(peer)
+            except Exception as error:  # noqa: BLE001 - retried once above
+                if not _unresolved(error):
+                    raise
+                last = error
     assert last is not None
     raise last
+
+
+def _bare_id(target: Target) -> bool:
+    """True when the target is only a number: a user id, not a username."""
+    return bool(str(getattr(target, "ref", "") or "").lstrip("-").isdigit())
 
 
 def user_input(client: Any, target: Target) -> Any:
@@ -290,6 +307,9 @@ def user_input(client: Any, target: Target) -> Any:
             if not _unresolved(error):
                 raise
             last = error
+    if _bare_id(target):
+        client.get_dialogs(limit=None)
+        return client.get_input_entity(peer_variants(target)[0])
     assert last is not None
     raise last
 
@@ -837,6 +857,25 @@ class TelethonSender:
                 return SendResult(ok=True, code=_kind_of(entity),
                                   detail=str(title or target.ref),
                                   count=count)
+            # Same bare-id problem as chat_entity: one dialog listing turns a
+            # user id into an entity, and without it a live user reads invalid.
+            if _bare_id(target):
+                client.get_dialogs(limit=None)
+                for peer in peer_variants(target):
+                    try:
+                        entity = client.get_entity(peer)
+                    except Exception as error:  # noqa: BLE001 - retried once
+                        if not _unresolved(error):
+                            raise
+                        last = error
+                        continue
+                    title = (getattr(entity, "title", "")
+                             or getattr(entity, "username", ""))
+                    return SendResult(
+                        ok=True, code=_kind_of(entity),
+                        detail=str(title or target.ref),
+                        count=int(getattr(entity,
+                                          "participants_count", 0) or 0))
             assert last is not None
             raise last
 
