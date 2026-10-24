@@ -7,6 +7,7 @@ config, so a field can never exist in one and not the other.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,12 @@ class Flag:
             kwargs["default"] = None
         elif self.action == "store_true":
             kwargs["action"] = "store_true"
+            kwargs["default"] = None
+        elif self.action == "bool_pair":
+            # ``--flag/--no-flag``: one field, both directions, and no value.
+            # Declaring the pair as one ``store`` string made argparse demand a
+            # value for a switch, so ``--no-flag`` simply did not exist.
+            kwargs["action"] = argparse.BooleanOptionalAction
             kwargs["default"] = None
         else:
             kwargs["default"] = None

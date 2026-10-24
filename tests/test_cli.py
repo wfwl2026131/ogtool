@@ -56,6 +56,20 @@ def test_mass_send_dry_run(tmp_path, capsys):
     assert "PLAN: 3 messages, 2 accounts" in output
 
 
+def test_the_resume_switch_can_be_turned_off_from_the_cli(tmp_path, capsys):
+    # The pair used to be declared as one option string, so argparse wanted a
+    # value for a switch and --no-resume did not exist at all.
+    config = setup_repo(tmp_path)
+    code = run([
+        "--config", config, "mass_send_v2",
+        "--targets", "@demo_a", "--text", "hello", "--no-resume",
+        "--daily-limit", "99",
+    ])
+    output = capsys.readouterr().out
+    assert code == 0
+    assert "resumed: 0" in output
+
+
 def test_keep_online_dry_run(tmp_path, capsys):
     config = setup_repo(tmp_path)
     assert run(["--config", config, "keep_online", "--interval", "60",

@@ -57,8 +57,9 @@ FLAGS = (
     Flag("--exec-cap", "exec_cap", int, "total attempts"),
     Flag("--allow-duplicates", "allow_duplicates", str,
          "message one contact from every account that has it"),
-    Flag("--resume/--no-resume", "resume", str,
-         "skip pairs already delivered by an earlier run"),
+    Flag("--resume", "resume", bool,
+         "skip pairs already delivered by an earlier run (--no-resume "
+         "starts over)", action="bool_pair"),
 )
 
 
