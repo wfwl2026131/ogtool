@@ -146,3 +146,16 @@ def test_a_dry_run_never_sleeps(ctx, monkeypatch):
                         lambda seconds: slept.append(seconds))
     assert run(make_config(), ctx) == 0
     assert slept == []
+
+
+def test_an_empty_plan_does_not_crash_the_eta_line(ctx, capsys, monkeypatch):
+    # Every target dropped (an exhausted budget does exactly this): the run
+    # indexed the last planned message before checking that one existed.
+    from ogtool.features import mass_send
+
+    monkeypatch.setattr(mass_send, "schedule", lambda *a, **k: [])
+    config = make_config()
+    assert mass_send.run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "PLAN: 0 messages" in out
+    assert "ETA 0s" in out

@@ -201,9 +201,9 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     for line in render(planned, contents, start):
         print(line)
 
-    eta = planned[-1].offset + (
-        config.limits.account_min if planned else 0.0
-    )
+    # An exhausted budget or a target that filtered out leaves the plan empty;
+    # indexing the last entry first crashed the run instead of reporting that.
+    eta = (planned[-1].offset + config.limits.account_min) if planned else 0.0
     print(f"PLAN: {len(planned)} messages, {len(accounts)} accounts, "
           f"ETA {format_duration(eta)}")
 
