@@ -10,11 +10,13 @@ holds as sent.
 from __future__ import annotations
 
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import Budget, PeerFloodBackoff, format_duration
+from ..limiter import Budget, format_duration
 from ..runtime import RunContext
 from ..senders import Content, SendResult
 from ..store import Account
@@ -27,6 +29,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     section,
     text,
@@ -306,6 +309,59 @@ def collect_book(sender: object, labels: list[str],
     return book
 
 
+def lanes_for(pairs: list[Pair], threads: int) -> list[list[Pair]]:
+    """Split the queue into at most ``threads`` lanes, one account per lane.
+
+    An account is never worked by two lanes: its interval is a promise made
+    to the server per account, and two threads on one account would break
+    that promise while looking like parallelism.  With fewer accounts than
+    threads the extra lanes simply do not exist.
+    """
+    by_account: dict[str, list[Pair]] = {}
+    for pair in pairs:
+        by_account.setdefault(pair.account, []).append(pair)
+    count = max(1, min(max(1, threads), len(by_account) or 1))
+    lanes: list[list[Pair]] = [[] for _ in range(count)]
+    for index, items in enumerate(by_account.values()):
+        lanes[index % count].extend(items)
+    return [lane for lane in lanes if lane]
+
+
+def _send_lane(sender: object, ctx: RunContext, task: object,
+               lane: list[Pair], total: int, content: Content,
+               config: MassV2Config,
+               counters: dict[str, int]) -> None:
+    """One lane: its own pace, its own account, and its own tally."""
+    # Seeded from the lane itself, so a rerun paces the same way and a test
+    # can predict the waits instead of tolerating any number.
+    rng = random.Random(lane[0].index)
+    for position, pair in enumerate(lane):
+        if position:
+            pause(ctx, rng.uniform(config.account_interval_min,
+                                   config.account_interval_max))
+        target = parse_many([pair.target], "custom")[0]
+        result = sender.send(pair.account, target, content)  # type: ignore[attr-defined]
+        if result.ok:
+            with _COUNT_LOCK:
+                counters["ok"] += 1
+            record(ctx, task, pair.account, pair.target, True)
+            print(f"[{pair.index:03d}/{total:03d}] "
+                  f"account={pair.account} target={pair.target} -> ok")
+            continue
+        with _COUNT_LOCK:
+            counters["failed"] += 1
+        record(ctx, task, pair.account, pair.target, False, result.code,
+               result.detail)
+        print(f"[{pair.index:03d}/{total:03d}] "
+              f"account={pair.account} target={pair.target} -> {result.code}")
+        if result.code == "PEER_FLOOD":
+            ctx.note(f"PEER_FLOOD for {pair.account}: the lane keeps going")
+
+
+#: ``ok``/``failed`` are counted by every lane at once.
+_COUNT_LOCK = threading.Lock()
+
+
 def run(config: MassV2Config, ctx: RunContext) -> int:
     accounts: list[Account] = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -365,24 +421,21 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         close_task(ctx, task, ok=0, failed=0)
         return 0
 
-    backoff = PeerFloodBackoff()
-    ok = failed = 0
-    for pair in plan.pairs:
-        target = parse_many([pair.target], "custom")[0]
-        result = sender.send(pair.account, target, content)
-        if result.ok:
-            ok += 1
-            record(ctx, task, pair.account, pair.target, True)
-            print(f"[{pair.index:03d}/{len(plan.pairs):03d}] "
-                  f"account={pair.account} target={pair.target} -> ok")
-            continue
-        failed += 1
-        record(ctx, task, pair.account, pair.target, False, result.code, result.detail)
-        print(f"[{pair.index:03d}/{len(plan.pairs):03d}] "
-              f"account={pair.account} target={pair.target} -> {result.code}")
-        if result.code == "PEER_FLOOD":
-            wait = backoff.wait_for(0)
-            ctx.note(f"PEER_FLOOD backoff {wait:.0f}s for {pair.account}")
+    lanes = lanes_for(plan.pairs, config.threads)
+    counters = {"ok": 0, "failed": 0}
+    if len(lanes) <= 1:
+        _send_lane(sender, ctx, task, lanes[0], len(plan.pairs), content,
+                   config, counters)
+    else:
+        # One worker per lane: the accounts never meet, so the pacing above is
+        # untouched and only the wall clock shrinks.
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            work = [pool.submit(_send_lane, sender, ctx, task, lane,
+                                len(plan.pairs), content, config, counters)
+                    for lane in lanes]
+            for job in work:
+                job.result()
+    ok, failed = counters["ok"], counters["failed"]
     close_task(ctx, task, ok=ok, failed=failed)
     print(f"ok: {ok}  failed: {failed}  resumed: {plan.resumed}")
     return 0 if not failed else 1

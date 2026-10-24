@@ -120,3 +120,66 @@ def test_duplicates_send_every_target_from_every_account():
 
 def test_a_target_list_with_no_account_plans_nothing():
     assert distribute_targets(["@a"], [], False) == {}
+
+
+class RecordingSender:
+    """A live stand-in that keeps who sent what and when."""
+
+    def __init__(self, fail_first: str = "") -> None:
+        self.calls: list[tuple[str, str, float]] = []
+        self.fail_first = fail_first
+
+    def close(self) -> None:
+        return None
+
+    def send(self, account, target, content):
+        import time
+
+        from ogtool.senders import SendResult
+
+        self.calls.append((account, target.ref, time.monotonic()))
+        if self.fail_first and len(self.calls) == 1:
+            return SendResult(ok=False, code=self.fail_first)
+        return SendResult(ok=True, message_id=len(self.calls))
+
+
+def test_an_account_is_never_worked_by_two_lanes():
+    from ogtool.features.mass_send_v2 import Pair, lanes_for
+
+    pairs = [Pair(index=i, account="acc1" if i < 4 else "acc2",
+                  target=f"@t{i}") for i in range(6)]
+    lanes = lanes_for(pairs, threads=4)
+    assert len(lanes) == 2, "four threads, two accounts: two lanes"
+    places = [[pair.account for pair in lane] for lane in lanes]
+    assert all(len(set(place)) == 1 for place in places), "one account per lane"
+    assert sum(len(lane) for lane in lanes) == 6
+
+
+def test_more_threads_than_accounts_does_not_invent_lanes():
+    from ogtool.features.mass_send_v2 import Pair, lanes_for
+
+    pairs = [Pair(index=i, account="acc1", target=f"@t{i}") for i in range(3)]
+    assert len(lanes_for(pairs, threads=8)) == 1
+
+
+def test_two_accounts_really_run_at_the_same_time(ctx, live, monkeypatch):
+    import time
+
+    from ogtool.features import _common
+    from ogtool.features.mass_send_v2 import MassV2Config, run
+
+    real_sleep = time.sleep  # _common.time is this module: patch it last
+    monkeypatch.setattr(_common.time, "sleep",
+                        lambda seconds: real_sleep(min(seconds, 0.01)))
+    sender = RecordingSender()
+    live(sender)
+    config = MassV2Config(targets=["@one", "@two", "@three", "@four"],
+                          text="hello", threads=2, daily_limit=50,
+                          account_interval_min=0.05, account_interval_max=0.05,
+                          allow_duplicates=1)
+    assert run(config, ctx) == 0
+    first = [call[2] for call in sender.calls if call[0] == "acc1"]
+    second = [call[2] for call in sender.calls if call[0] == "acc2"]
+    assert first and second, "both accounts took work"
+    # Overlap: the second lane starts before the first lane has finished.
+    assert second[0] < first[-1], "the lanes were not serialized"

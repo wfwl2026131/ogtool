@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -607,8 +608,15 @@ class TelethonSender:
     settings: Settings
     live: bool = True
     _clients: dict[str, Any] = field(default_factory=dict)
+    _client_lock: Any = field(default_factory=threading.RLock, repr=False)
 
     def _client(self, account: str) -> Any:
+        # Two lanes may reach for their first client at the same moment; the
+        # lock keeps one account from being connected twice.
+        with self._client_lock:
+            return self._client_locked(account)
+
+    def _client_locked(self, account: str) -> Any:
         if account in self._clients:
             return self._clients[account]
         api_id, api_hash = self.settings.require_credentials()

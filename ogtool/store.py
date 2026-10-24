@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -219,7 +220,11 @@ class Store:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self.path)
+        # A threaded run writes results from several lanes at once, so the
+        # connection has to accept a call from any thread and be serialized
+        # here: sqlite objects are not shareable on their own.
+        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._conn.executescript(SCHEMA)
@@ -407,13 +412,15 @@ class Store:
 
     def add_result(self, task_id: int | None, account: str, target: str,
                    status: str, error_code: str = "", detail: str = "") -> None:
-        self._conn.execute(
-            """INSERT INTO results (task_id, account, target, status,
-                                    error_code, detail, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, account, target, status, error_code, detail, utcnow()),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO results (task_id, account, target, status,
+                                        error_code, detail, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (task_id, account, target, status, error_code, detail,
+                 utcnow()),
+            )
+            self._conn.commit()
 
     # ai calls ---------------------------------------------------------
 
