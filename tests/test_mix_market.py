@@ -68,6 +68,21 @@ def test_all_five_stages_run_end_to_end(ctx, pattern_file, capsys):
     assert "Processed: 5 / 5" in output
 
 
+def test_every_stage_leaves_an_audit_row(ctx, pattern_file, capsys):
+    # Stages 4 and 5 used to bump their own counters and record nothing, so a
+    # run that had invited and messaged looked like it had done neither.
+    ctx.script.codes = ["ok"] * 40
+    config = make(pattern=pattern_file(["A4|L0|D6|hello there"]))
+    assert run(config, ctx) == 0
+    # A nested feature (stage 3) opens its own task and moves ctx.task_id, so
+    # the assertion reads the whole page, not just the last task it opened.
+    rows = ctx.store.results_for_feature("mix_market")
+    targets = {row["target"] for row in rows}
+    assert "Ann|@ann" not in targets
+    assert any("<-" in target for target in targets), f"no invite row in {targets}"
+    assert targets & {"@ann", "@bob"}, f"no send row in {targets}"
+
+
 def test_the_created_groups_are_what_the_later_stages_use(ctx, pattern_file,
                                                           capsys):
     create_refs_ = create_refs(make(group_titles=["Market A"]))

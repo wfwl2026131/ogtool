@@ -27,7 +27,7 @@ from ..flags import Flag
 from ..limiter import format_duration
 from ..runtime import RunContext
 from ..senders import Content
-from ..store import Account
+from ..store import Account, TaskRef
 from ..targets import parse_many
 from . import add_contact, batch_invite_v2, mass_send_v2, register
 from ._common import (
@@ -176,6 +176,7 @@ class StageResult:
     skipped: int = 0
     seconds: float = 0.0
     rested: float = 0.0
+    refs: list[str] = field(default_factory=list)
 
     def line(self, index: int, total: int) -> str:
         return (f"stage {index}/{total} {self.name}: ok={self.ok} "
@@ -234,6 +235,8 @@ def stage_create_groups(config: MixConfig, ctx: RunContext,
         answer = sender.create_group(account, title)
         if answer.ok:
             result.ok += 1
+            if answer.detail:
+                result.refs.append(answer.detail)
             continue
         result.failed += 1
         minutes = rest_after_failure(config, result.failed)
@@ -270,8 +273,8 @@ def stage_play(config: MixConfig, ctx: RunContext, refs: list[str],
     return result
 
 
-def stage_invite(config: MixConfig, ctx: RunContext, refs: list[str],
-                 labels: list[str]) -> StageResult:
+def stage_invite(config: MixConfig, ctx: RunContext, task: TaskRef,
+                 refs: list[str], labels: list[str]) -> StageResult:
     result = StageResult("batch_invite_v2", STAGES[3][1])
     contacts = [entry.split("|", 1)[-1] for entry in config.contacts]
     jobs = batch_invite_v2.build_jobs(refs, contacts, labels or ["-"])
@@ -283,10 +286,13 @@ def stage_invite(config: MixConfig, ctx: RunContext, refs: list[str],
             result.ok += 1
         else:
             result.failed += 1
+        record(ctx, task, account, f"{group}<-{contact}", answer.ok,
+               answer.code, answer.detail)
     return result
 
 
-def stage_send(config: MixConfig, ctx: RunContext, labels: list[str],
+def stage_send(config: MixConfig, ctx: RunContext, task: TaskRef,
+               labels: list[str],
                owners: dict[str, str] | None = None) -> StageResult:
     result = StageResult("mass_send_v2", STAGES[4][1])
     book: dict[str, list[mass_send_v2.Contact]] = {}
@@ -310,13 +316,14 @@ def stage_send(config: MixConfig, ctx: RunContext, labels: list[str],
             result.ok += 1
         else:
             result.failed += 1
+        record(ctx, task, contact.account, contact.ref, answer.ok,
+               answer.code, answer.detail)
     return result
 
 
 def run(config: MixConfig, ctx: RunContext) -> int:
     accounts: list[Account] = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
-    refs = create_refs(config) + config.targets
 
     header(
         config.task_name,
@@ -337,9 +344,9 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     results: list[StageResult] = []
     waited = 0.0
 
-    def run_stage(index: int, function, *arguments) -> None:
+    def run_stage(index: int, function, *arguments) -> StageResult | None:
         if index > config.stop_after:
-            return
+            return None
         started = time.perf_counter()
         outcome = function(*arguments)
         outcome.seconds = time.perf_counter() - started
@@ -347,6 +354,7 @@ def run(config: MixConfig, ctx: RunContext) -> int:
         waited += outcome.rested
         results.append(outcome)
         print(outcome.line(index, len(STAGES)))
+        return outcome
 
     owners: dict[str, str] = {}
     if config.stop_after >= 1:
@@ -355,7 +363,12 @@ def run(config: MixConfig, ctx: RunContext) -> int:
         contacts_stage.seconds = time.perf_counter() - started
         results.append(contacts_stage)
         print(contacts_stage.line(1, len(STAGES)))
-    run_stage(2, stage_create_groups, config, ctx, labels)
+    created = run_stage(2, stage_create_groups, config, ctx, labels)
+    # A new group has no username, so a slug of its title is not a reference to
+    # anything: a live run has to follow what Telegram actually created.  A plan
+    # that creates nothing keeps the slug, because there is nothing real to use.
+    real = created.refs if created is not None and ctx.live else []
+    refs = (real or create_refs(config)) + config.targets
 
     dead = dead_chats(config, refs)
     if refs:
@@ -373,8 +386,8 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     live_refs = [ref for ref in refs if ref not in dead]
 
     run_stage(3, stage_play, config, ctx, live_refs, labels)
-    run_stage(4, stage_invite, config, ctx, live_refs, labels)
-    run_stage(5, stage_send, config, ctx, labels, owners)
+    run_stage(4, stage_invite, config, ctx, task, live_refs, labels)
+    run_stage(5, stage_send, config, ctx, task, labels, owners)
 
     ok = sum(item.ok for item in results)
     failed = sum(item.failed for item in results)

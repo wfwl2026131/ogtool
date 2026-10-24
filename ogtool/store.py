@@ -459,6 +459,20 @@ class Store:
             "SELECT * FROM results WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
 
+    def results_for_feature(self, feature: str) -> list[sqlite3.Row]:
+        """Every result row of one page, across the tasks it opened.
+
+        A page that runs another page inside it (mix_market does) writes rows
+        under more than one task id, so the task at hand cannot show what the
+        whole run did.
+        """
+        return self._conn.execute(
+            """SELECT r.* FROM results r
+               JOIN tasks t ON t.id = r.task_id
+               WHERE t.feature = ? ORDER BY r.id""",
+            (feature,),
+        ).fetchall()
+
     def sent_pairs(self, feature: str) -> set[tuple[str, str]]:
         """``(account, target)`` pairs this feature already delivered.
 
