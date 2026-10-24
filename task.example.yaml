@@ -301,6 +301,10 @@ mass_send_v2:
   exec_cap: 0                          # 执行上限
   allow_duplicates: false              # 一个联系人只发一次
   resume: true                         # 发过的跳过，重跑可续
+  # Explicit targets replace the contact books: one account per target, unless
+  # allow_duplicates is on.  Mixed forms are fine (@name, numeric id, +phone).
+  targets: "@ann_demo,7858307768"
+  targets_files: []
   # A dry run cannot read the contact book, so it is spelled out here.
   contacts:
     demo1: ["Ann|@ann_demo", "Bob|@bob_demo"]
