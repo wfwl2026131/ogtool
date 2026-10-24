@@ -206,3 +206,20 @@ def header(title: str, **fields: Any) -> None:
     for key, value in fields.items():
         label = key.replace("_", " ")
         print(f"{label}: {value}")
+
+
+def lanes_by(key: object, items: list, threads: int) -> list[list]:
+    """Split ``items`` into at most ``threads`` lanes, never splitting a key.
+
+    ``key`` returns the value that must not run twice at the same time -- an
+    account in every feature here.  Keeping one key per lane is what makes
+    the interval a real promise to the server instead of a number in a header.
+    """
+    by_key: dict[object, list] = {}
+    for item in items:
+        by_key.setdefault(key(item), []).append(item)  # type: ignore[operator]
+    count = max(1, min(max(1, threads), len(by_key) or 1))
+    lanes: list[list] = [[] for _ in range(count)]
+    for index, bucket in enumerate(by_key.values()):
+        lanes[index % count].extend(bucket)
+    return [lane for lane in lanes if lane]

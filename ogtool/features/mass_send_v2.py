@@ -26,6 +26,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     name_of,
     num,
     open_task,
@@ -54,7 +55,8 @@ FLAGS = (
          "maximum seconds between two sends of one account"),
     Flag("--group-interval", "group_interval", float,
          "seconds between two messages into the same chat"),
-    Flag("--threads", "threads", int, "send threads"),
+    Flag("--threads", "threads", int,
+         "one lane per account, lanes send at the same time"),
     Flag("--daily-limit", "daily_limit", int, "messages one account may send a day"),
     Flag("--success-cap", "success_cap", int, "total successes"),
     Flag("--exec-cap", "exec_cap", int, "total attempts"),
@@ -310,21 +312,8 @@ def collect_book(sender: object, labels: list[str],
 
 
 def lanes_for(pairs: list[Pair], threads: int) -> list[list[Pair]]:
-    """Split the queue into at most ``threads`` lanes, one account per lane.
-
-    An account is never worked by two lanes: its interval is a promise made
-    to the server per account, and two threads on one account would break
-    that promise while looking like parallelism.  With fewer accounts than
-    threads the extra lanes simply do not exist.
-    """
-    by_account: dict[str, list[Pair]] = {}
-    for pair in pairs:
-        by_account.setdefault(pair.account, []).append(pair)
-    count = max(1, min(max(1, threads), len(by_account) or 1))
-    lanes: list[list[Pair]] = [[] for _ in range(count)]
-    for index, items in enumerate(by_account.values()):
-        lanes[index % count].extend(items)
-    return [lane for lane in lanes if lane]
+    """Split the queue into at most ``threads`` lanes, one account per lane."""
+    return lanes_by(lambda pair: pair.account, pairs, threads)
 
 
 def _send_lane(sender: object, ctx: RunContext, task: object,

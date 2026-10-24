@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import random
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
@@ -24,6 +25,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     name_of,
     num,
     open_task,
@@ -50,7 +52,7 @@ FLAGS = (
     Flag("--request-interval", "request_interval", float,
          "minimum seconds between two requests"),
     Flag("--threads", "threads", int,
-         "planning concurrency only (requests are serial)"),
+         "one lane per handler account, lanes run at the same time"),
     Flag("--target-success-cap", "target_success_cap", int,
          "invites one target accepts"),
     Flag("--success-cap", "success_cap", int, "total successes"),
@@ -170,6 +172,55 @@ def gap(config: InviteV2Config, rng: random.Random | None = None) -> float:
                                  config.invite_interval_max))
 
 
+def _invite_lane(sender: object, ctx: RunContext, task: object,
+                 lane: list[tuple[str, str, str]], total: int,
+                 config: InviteV2Config, backoff: PeerFloodBackoff,
+                 waited: list[float]
+                 ) -> tuple[int, int, list[str], list[str]]:
+    """One lane: its own handler accounts, its own pace, its own tallies."""
+    ok = failed = 0
+    flood: list[str] = []
+    timeouts: list[str] = []
+    rng = random.Random(len(lane))
+    for index, (handler, group, contact) in enumerate(lane, start=1):
+        if config.success_cap and ok >= config.success_cap:
+            print(f"stopped: success_cap ({config.success_cap})")
+            break
+        if index > 1:
+            delay = gap(config, rng)
+            waited.append(delay)
+            pause(ctx, delay)
+        target = parse_many([group], "group")[0]
+        member = parse_many([contact], "custom")[0]
+        floods = 0
+        while True:
+            result = sender.invite(handler, target, member)  # type: ignore[attr-defined]
+            if result.code != "PEER_FLOOD" or floods >= config.invitee_flood_cap:
+                break
+            floods += 1
+            wait = backoff.wait_for(floods - 1)
+            print(f"  PEER_FLOOD backoff {wait:.0f}s "
+                  f"(attempt {floods}/{config.invitee_flood_cap}) {contact}")
+            if ctx.live:
+                time.sleep(wait)
+        if result.ok:
+            ok += 1
+            record(ctx, task, handler, f"{group}<-{contact}", True)
+            print(f"[{index:03d}/{total:03d}] handler={handler} "
+                  f"target={group} contact={contact} -> ok")
+            continue
+        failed += 1
+        record(ctx, task, handler, f"{group}<-{contact}", False, result.code,
+               result.detail)
+        print(f"[{index:03d}/{total:03d}] handler={handler} "
+              f"target={group} contact={contact} -> {result.code}")
+        if result.code == "PEER_FLOOD" and contact not in flood:
+            flood.append(contact)
+        if result.code == "TIMEOUT" and contact not in timeouts:
+            timeouts.append(contact)
+    return ok, failed, flood, timeouts
+
+
 def run(config: InviteV2Config, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
@@ -204,48 +255,28 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
     backoff = PeerFloodBackoff()
     flood: list[str] = []
     timeouts: list[str] = []
-    waited = 0.0
-    rng = random.Random()
-    for index, (handler, group, contact) in enumerate(jobs, start=1):
-        if config.success_cap and ok >= config.success_cap:
-            print(f"stopped: success_cap ({config.success_cap})")
-            break
-        if index > 1:
-            delay = gap(config, rng)
-            waited += delay
-            pause(ctx, delay)
-        target = parse_many([group], "group")[0]
-        member = parse_many([contact], "custom")[0]
-        floods = 0
-        while True:
-            result = sender.invite(handler, target, member)
-            if result.code != "PEER_FLOOD" or floods >= config.invitee_flood_cap:
-                break
-            floods += 1
-            wait = backoff.wait_for(floods - 1)
-            print(f"  PEER_FLOOD backoff {wait:.0f}s "
-                  f"(attempt {floods}/{config.invitee_flood_cap}) {contact}")
-            if ctx.live:
-                time.sleep(wait)
-        if result.ok:
-            ok += 1
-            record(ctx, task, handler, f"{group}<-{contact}", True)
-            print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
-                  f"target={group} contact={contact} -> ok")
-        else:
-            failed += 1
-            record(ctx, task, handler, f"{group}<-{contact}", False, result.code, result.detail)
-            print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
-                  f"target={group} contact={contact} -> {result.code}")
-            if result.code == "PEER_FLOOD" and contact not in flood:
-                flood.append(contact)
-            if result.code == "TIMEOUT" and contact not in timeouts:
-                timeouts.append(contact)
+    waited: list[float] = []
+    lanes = lanes_by(lambda job: job[0], jobs, config.threads)
+    if len(lanes) > 1:
+        print(f"threads: {len(lanes)} lanes, one handler account each")
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            work = [pool.submit(_invite_lane, sender, ctx, task, lane,
+                                len(jobs), config, backoff, waited)
+                    for lane in lanes]
+            for job in work:
+                done_ok, done_failed, done_flood, done_timeout = job.result()
+                ok += done_ok
+                failed += done_failed
+                flood.extend(done_flood)
+                timeouts.extend(done_timeout)
+    else:
+        ok, failed, flood, timeouts = _invite_lane(
+            sender, ctx, task, lanes[0], len(jobs), config, backoff, waited)
 
     print(f"ok: {ok}  failed: {failed}  PEER_FLOOD: {len(flood)}  "
           f"TIMEOUT: {len(timeouts)}")
     if ctx.live and waited:
-        print(f"waited: {format_duration(waited)}")
+        print(f"waited: {format_duration(sum(waited))}")
     print(f"PLAN: {len(jobs)} invites, {len(handlers)} handlers, "
           f"exec {ok + failed}")
 
