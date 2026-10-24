@@ -120,10 +120,10 @@ class HistorySender:
         self.history_calls: list[tuple[str, int, int]] = []
         self.sent: list[tuple[str, str, str]] = []
 
-    def history(self, account, target, minutes=0, limit=0):
+    def history(self, account, target, minutes=0, limit=0, media_dir=""):
         from ogtool.senders import result_for
 
-        self.history_calls.append((target.ref, minutes, limit))
+        self.history_calls.append((target.ref, minutes, limit, media_dir))
         result = result_for(self.code)
         if result.ok:
             result.items = list(self.items)
@@ -157,7 +157,7 @@ def test_the_capture_feeds_the_parser_oldest_first(ctx, live):
                         interval_min=0.0, interval_max=0.0)
     run(config, ctx)
     assert [text for _, _, text in sender.sent] == ["first", "second"]
-    assert sender.history_calls == [("@src", 30, 200)]
+    assert sender.history_calls == [("@src", 30, 200, "data/logs/copied")]
 
 
 def test_a_capture_failure_is_reported_not_swallowed(ctx, live, capsys):

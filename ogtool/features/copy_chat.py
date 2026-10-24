@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
@@ -274,11 +275,13 @@ def capture(sender: object, account: str, sources: list[str], minutes: int,
     dropped: an empty capture and an empty chat must not look the same.
     """
     entries: list[str] = []
+    media_dir = str(Path("data") / "logs" / "copied")
     failures: list[tuple[str, str]] = []
     for source in sources:
         target = parse_many([source], "group")[0]
-        result = sender.history(account, target, minutes=minutes,  # type: ignore[attr-defined]
-                                limit=limit)
+        result = sender.history(account, target,  # type: ignore[attr-defined]
+                                minutes=minutes, limit=limit,
+                                media_dir=media_dir)
         if not result.ok:
             failures.append((source, result.code))
             print(f"source={source} capture failed: {result.code}")

@@ -273,13 +273,21 @@ class Said:
     next_id = 0
 
     def __init__(self, text: str, username: str = "alice",
-                 sender_id: int = 7, date: object = None) -> None:
+                 sender_id: int = 7, date: object = None,
+                 media: object = None) -> None:
         Said.next_id += 1
         self.id = Said.next_id
+        self.media = media
         self.message = text
         self.sender_id = sender_id
         self.date = date
         self.sender = type("Sender", (), {"username": username})()
+
+    def download_media(self, file: str = "") -> str:
+        path = f"{file}/m{self.id}.jpg"
+        with open(path, "wb") as handle:
+            handle.write(b"x")
+        return path
 
 
 class HistoryClient(SyncClient):
@@ -446,3 +454,30 @@ def test_a_group_that_only_takes_requests_is_reported_as_such():
 def test_a_group_where_members_may_not_post_is_muted():
     rights = type("Rights", (), {"send_messages": True})()
     assert _kind_of(Channel(megagroup=True, rights=rights)) == "CHAT_WRITE_FORBIDDEN"
+
+
+def test_a_capture_can_bring_the_picture_with_it(settings, session, credentials,
+                                                 monkeypatch, tmp_path):
+    folder = tmp_path / "copied"
+    sender, _client = history_sender(
+        settings, monkeypatch, [Said("with a picture", media=object())])
+    result = sender.history("t1", target(), minutes=0, limit=5,
+                            media_dir=str(folder))
+    saved = folder / f"m{result.posts[0][0]}.jpg"
+    assert result.items == [f"@demo_chat|@alice|with a picture|{saved}"]
+    assert saved.exists()
+
+
+def test_a_picture_without_a_caption_is_not_dropped(settings, session,
+                                                    credentials, monkeypatch,
+                                                    tmp_path):
+    # The old capture skipped every post whose text was empty, which threw
+    # away exactly the photo-only posts a copy run most needs.
+    sender, _client = history_sender(
+        settings, monkeypatch, [Said("", media=object())])
+    result = sender.history("t1", target(), minutes=0, limit=5,
+                            media_dir=str(tmp_path))
+    assert len(result.items) == 1
+    # peer|sender||media: the empty text keeps its field, the path is the fourth
+    assert result.items[0].count("|") == 3, "empty text keeps its place"
+    assert result.items[0].split("|")[2] == ""

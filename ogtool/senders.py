@@ -562,6 +562,20 @@ def _deliver(client: Any, peer: Any, content: Content) -> Any:
     return client.send_message(peer, content.text, reply_to=reply_to)
 
 
+def _save_media(message: Any, folder: str) -> str:
+    """Download one message's media into ``folder``; empty when it cannot.
+
+    A failed download must not lose the text that came with it: the caller
+    keeps the message either way and only the attachment is missing.
+    """
+    try:
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        path = message.download_media(file=folder)
+    except Exception:  # noqa: BLE001 - the text still gets copied
+        return ""
+    return str(path or "")
+
+
 def _sender_ref(message: Any) -> str:
     """Who said it: the username when there is one, else the numeric id."""
     sender = getattr(message, "sender", None)
@@ -894,15 +908,20 @@ class TelethonSender:
         return self._guard("logout", account, action)
 
     def history(self, account: str, target: Target, minutes: int = 0,
-                limit: int = 0) -> SendResult:
+                limit: int = 0, media_dir: str = "") -> SendResult:
         """The recent messages of one chat, oldest first, as source strings.
 
         Each item is ``peer|sender|text``, the shape ``sources.parse_many``
         reads, so a live capture and a task file feed the same parser.  A
         caption is flattened to one line and ``|`` becomes ``/``: those two
-        characters are the record separator of that format.  A post carrying
-        only media has no text to copy and is skipped, so ``count`` (scanned)
-        can be larger than the number of items returned.
+        characters are the record separator of that format.
+
+        With ``media_dir`` the photo or document is downloaded and written to
+        that directory, and the item grows a fourth field holding its path --
+        the format's optional media field.  That is what turns a capture into
+        something a copy page can replay with the pictures still attached.  A
+        post with neither text nor media is still skipped, so ``count``
+        (scanned) can be larger than the number of items returned.
         """
 
         def call(client: Any, peer: Any) -> SendResult:
@@ -915,7 +934,7 @@ class TelethonSender:
             cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)
                       if minutes > 0 else None)
             scanned = 0
-            captured: list[tuple[int, str, str]] = []
+            captured: list[tuple[int, str, str, str]] = []
             for message in client.iter_messages(peer, limit=limit or None):
                 stamp = getattr(message, "date", None)
                 if cutoff is not None and stamp is not None:
@@ -926,14 +945,19 @@ class TelethonSender:
                 scanned += 1
                 body = " ".join((getattr(message, "message", "") or "").split())
                 body = body.replace("|", "/")
-                if body:
-                    captured.append((int(message.id), _sender_ref(message), body))
+                saved = ""
+                if media_dir and getattr(message, "media", None) is not None:
+                    saved = _save_media(message, media_dir)
+                if body or saved:
+                    captured.append((int(message.id), _sender_ref(message),
+                                     body, saved))
             captured.reverse()  # Telethon yields newest first
             return SendResult(
                 ok=True, count=scanned,
                 items=[f"{target.ref}|{sender}|{body}"
-                       for _mid, sender, body in captured],
-                posts=[(mid, body) for mid, _sender, body in captured],
+                       + (f"|{saved}" if saved else "")
+                       for _mid, sender, body, saved in captured],
+                posts=[(mid, body) for mid, _sender, body, _saved in captured],
             )
 
         return self._on_target(account, target, "history", call)
