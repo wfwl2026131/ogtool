@@ -177,6 +177,27 @@ def peer_variants(target: Target) -> list[Any]:
     return [ref]
 
 
+def _kind_of(entity: Any) -> str:
+    """What a resolved peer is, in the buckets the sort page keeps.
+
+    A username resolves to anything -- a user, a broadcast channel, a group
+    that only takes requests -- and the page sorts on that answer: reporting
+    every one of them as "can send" is how a channel ends up in the wrong list.
+    """
+    if entity.__class__.__name__ == "User":
+        return "USER"
+    if getattr(entity, "broadcast", False) and not getattr(entity, "megagroup",
+                                                           False):
+        return "CHANNEL"
+    if getattr(entity, "join_request", False):
+        return "JOIN_REQUEST"
+    rights = (getattr(entity, "default_banned_rights", None)
+              or getattr(entity, "banned_rights", None))
+    if rights is not None and getattr(rights, "send_messages", False):
+        return CHAT_WRITE_FORBIDDEN
+    return ""
+
+
 def _resolve_link(client: Any, target: Target) -> SendResult:
     """What a link says about its group, read only.
 
@@ -768,7 +789,8 @@ class TelethonSender:
                 title = (getattr(entity, "title", "")
                          or getattr(entity, "username", ""))
                 count = int(getattr(entity, "participants_count", 0) or 0)
-                return SendResult(ok=True, detail=str(title or target.ref),
+                return SendResult(ok=True, code=_kind_of(entity),
+                                  detail=str(title or target.ref),
                                   count=count)
             assert last is not None
             raise last

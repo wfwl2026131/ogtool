@@ -11,6 +11,7 @@ from ogtool.senders import (
     Content,
     TelethonSender,
     _code_from_class,
+    _kind_of,
     _proxy_tuple,
     code_from_exception,
 )
@@ -413,3 +414,35 @@ def test_a_class_name_becomes_the_code_spelling():
     assert _code_from_class("InviteHashExpiredError") == "INVITE_HASH_EXPIRED"
     assert _code_from_class("ChatAdminRequiredError") == "CHAT_ADMIN_REQUIRED"
     assert _code_from_class("TimeoutError") == "TIMEOUT"
+
+
+class User:
+    """Telethon's ``User``: the class name is the whole answer."""
+
+
+class Channel:
+    def __init__(self, *, broadcast: bool = False, megagroup: bool = False,
+                 join_request: bool = False, rights: object = None) -> None:
+        self.broadcast = broadcast
+        self.megagroup = megagroup
+        self.join_request = join_request
+        self.default_banned_rights = rights
+
+
+def test_a_resolved_user_is_not_a_group():
+    assert _kind_of(User()) == "USER"
+
+
+def test_a_broadcast_channel_is_not_somewhere_to_post():
+    assert _kind_of(Channel(broadcast=True)) == "CHANNEL"
+    assert _kind_of(Channel(broadcast=True, megagroup=True)) == ""
+    assert _kind_of(Channel(megagroup=True)) == ""
+
+
+def test_a_group_that_only_takes_requests_is_reported_as_such():
+    assert _kind_of(Channel(megagroup=True, join_request=True)) == "JOIN_REQUEST"
+
+
+def test_a_group_where_members_may_not_post_is_muted():
+    rights = type("Rights", (), {"send_messages": True})()
+    assert _kind_of(Channel(megagroup=True, rights=rights)) == "CHAT_WRITE_FORBIDDEN"
