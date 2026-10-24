@@ -18,7 +18,7 @@ from ..limiter import Budget, PeerFloodBackoff, format_duration
 from ..runtime import RunContext
 from ..senders import Content, SendResult
 from ..store import Account
-from ..targets import parse_many
+from ..targets import collect, parse_many
 from . import register
 from ._common import (
     accounts_of,
@@ -39,6 +39,10 @@ TITLE = "#18 群发私信v2"
 FLAGS = (
     Flag("--text", "text", str, "message text"),
     Flag("--media", "media", str, "message media path"),
+    Flag("--targets", "targets", str,
+         "targets to message instead of the contact books, comma separated"),
+    Flag("--targets-file", "targets_files", str,
+         "file with one target per line", action="append"),
     Flag("--contact", "contact", str,
          "simulated contact: account|name|ref (repeatable)", action="append"),
     Flag("--account-interval-min", "account_interval_min", float,
@@ -123,6 +127,7 @@ class MassV2Config:
     exec_cap: int = 0
     allow_duplicates: bool = False
     resume: bool = True
+    targets: list[str] = field(default_factory=list)
     simulated: dict[str, list[Contact]] = field(default_factory=dict)
     task_name: str = "mass-send-v2"
 
@@ -146,9 +151,32 @@ class MassV2Config:
             exec_cap=num(data, "exec_cap", 0, kind=int),
             allow_duplicates=bool(data.get("allow_duplicates", False)),
             resume=bool(data.get("resume", True)),
+            targets=[target.ref for target in collect(
+                text(data, "targets"), data.get("targets_files") or [])],
             simulated=parse_contacts(data.get("contact"), data),
             task_name=name_of(raw, data, "mass-send-v2"),
         )
+
+
+def distribute_targets(refs: list[str], labels: list[str],
+                       allow_duplicates: bool) -> dict[str, list[Contact]]:
+    """Spread an explicit target list over the bound accounts.
+
+    One target is messaged by one account unless duplicates are allowed: the
+    whole point of the second version is that a contact is not approached
+    twice, and that rule has to survive a list pasted by hand.
+    """
+    book: dict[str, list[Contact]] = {label: [] for label in labels}
+    if not labels:
+        return book
+    if allow_duplicates:
+        for label in labels:
+            book[label] = [Contact(label, ref) for ref in refs]
+        return book
+    for index, ref in enumerate(refs):
+        label = labels[index % len(labels)]
+        book[label].append(Contact(label, ref))
+    return book
 
 
 @dataclass(slots=True)
@@ -282,8 +310,12 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
     labels = [account.label for account in accounts]
     sender = ctx.sender()
 
-    seed_contacts(sender, config.simulated)
-    book = collect_book(sender, labels, config.simulated) if labels else {}
+    if config.targets:
+        book = distribute_targets(config.targets, labels,
+                                  config.allow_duplicates)
+    else:
+        seed_contacts(sender, config.simulated)
+        book = collect_book(sender, labels, config.simulated) if labels else {}
     flat, duplicates = dedupe_contacts(book, config.allow_duplicates)
     already = ctx.store.sent_pairs(FEATURE) if config.resume else set()
     budgets = {label: Budget(config.daily_limit,
@@ -297,6 +329,7 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         config.task_name,
         accounts=f"{len(accounts)}"
                  + (" (no account bound, plan only)" if not accounts else ""),
+        source="targets" if config.targets else "own contacts",
         own_contacts=config.use_own_contacts,
         contacts=len(flat),
         duplicates=(f"{duplicates} dropped" if duplicates
@@ -316,7 +349,8 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         print("dry-run: no account bound, only the plan is produced")
 
     task = open_task(ctx, config.task_name, FEATURE,
-                     {"contacts": flat and len(flat), "text": config.text},
+                     {"contacts": flat and len(flat),
+                      "targets": len(config.targets), "text": config.text},
                      len(plan.pairs))
 
     if not ctx.live:
@@ -366,6 +400,7 @@ __all__ = [
     "TITLE",
     "collect_book",
     "dedupe_contacts",
+    "distribute_targets",
     "main",
     "parse_contacts",
     "render",

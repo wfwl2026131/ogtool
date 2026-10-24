@@ -186,6 +186,57 @@ def _resolve_link(client: Any, target: Target) -> SendResult:
                       detail="the link answered with nothing readable")
 
 
+def _is_already_joined(error: BaseException) -> bool:
+    """Importing a link we are already a member of answers with these."""
+    return type(error).__name__ in ("UserAlreadyParticipantError",
+                                    "InviteRequestSentError")
+
+
+def chat_entity(client: Any, target: Target) -> Any:
+    """The chat behind a target, joining a private link first when needed.
+
+    This build of Telethon ships no contacts/join/invite helpers, so a private
+    group is only reachable through ``ImportChatInviteRequest``: its answer
+    carries the chat itself, access hash included.
+    """
+    if target.is_invite():
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+
+        try:
+            updates = client(ImportChatInviteRequest(target.invite_hash))
+        except Exception as error:  # noqa: BLE001 - already joined is not a fault
+            if not _is_already_joined(error):
+                raise
+        else:
+            chats = getattr(updates, "chats", None) or []
+            if chats:
+                return chats[0]
+    last: Exception | None = None
+    for peer in peer_variants(target):
+        try:
+            return client.get_entity(peer)
+        except Exception as error:  # noqa: BLE001 - the next form may resolve
+            if not _unresolved(error):
+                raise
+            last = error
+    assert last is not None
+    raise last
+
+
+def user_input(client: Any, target: Target) -> Any:
+    """An ``InputUser`` for a target, trying each workable form in turn."""
+    last: Exception | None = None
+    for peer in peer_variants(target):
+        try:
+            return client.get_input_entity(peer)
+        except Exception as error:  # noqa: BLE001 - the next form may resolve
+            if not _unresolved(error):
+                raise
+            last = error
+    assert last is not None
+    raise last
+
+
 def result_for(code: str, detail: str = "") -> SendResult:
     """Build a :class:`SendResult` from a simulated or mapped code.
 
@@ -545,34 +596,66 @@ class TelethonSender:
         return self._guard("ping", account, action)
 
     def join(self, account: str, target: Target) -> SendResult:
-        def call(client: Any, peer: Any) -> SendResult:
-            client.join(peer)
+        """Join a group by address or by private invite link."""
+
+        def action() -> SendResult:
+            from telethon.tl.functions.channels import JoinChannelRequest
+            from telethon.tl.functions.messages import ImportChatInviteRequest
+
+            client = self._client(account)
+            if target.is_invite():
+                try:
+                    client(ImportChatInviteRequest(target.invite_hash))
+                except Exception as error:  # noqa: BLE001 - joined already
+                    if type(error).__name__ == "InviteRequestSentError":
+                        return SendResult(ok=True, code=JOIN_REQUEST,
+                                          detail="the group needs an approval")
+                    if not _is_already_joined(error):
+                        raise
+                    return SendResult(ok=True,
+                                      code=USER_ALREADY_PARTICIPANT)
+                return SendResult(ok=True)
+            chat = chat_entity(client, target)
+            try:
+                client(JoinChannelRequest(chat))
+            except Exception as error:  # noqa: BLE001 - joined already
+                if not _is_already_joined(error):
+                    raise
+                return SendResult(ok=True, code=USER_ALREADY_PARTICIPANT)
             return SendResult(ok=True)
 
-        return self._on_target(account, target, "join", call)
+        return self._guard("join", account, action)
 
     def leave(self, account: str, target: Target) -> SendResult:
-        def call(client: Any, peer: Any) -> SendResult:
-            client.leave(peer)
+        """Leave a channel or a plain group, whichever the target is."""
+
+        def action() -> SendResult:
+            from telethon.tl.functions.channels import LeaveChannelRequest
+            from telethon.tl.functions.messages import DeleteChatUserRequest
+            from telethon.tl.types import Channel
+
+            client = self._client(account)
+            chat = chat_entity(client, target)
+            if isinstance(chat, Channel):
+                client(LeaveChannelRequest(chat))
+            else:
+                me = client.get_input_entity("me")
+                client(DeleteChatUserRequest(chat_id=chat.id, user_id=me))
             return SendResult(ok=True)
 
-        return self._on_target(account, target, "leave", call)
+        return self._guard("leave", account, action)
 
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
+        """Add one user to a group, joining a private link first if needed."""
+
         def action() -> SendResult:
+            from telethon.tl.functions.channels import InviteToChannelRequest
+
             client = self._client(account)
-            last: Exception | None = None
-            for group_peer in peer_variants(group):
-                for member_peer in peer_variants(member):
-                    try:
-                        client.invite(group_peer, member_peer)
-                        return SendResult(ok=True)
-                    except Exception as error:  # noqa: BLE001 - retried
-                        if not _unresolved(error):
-                            raise
-                        last = error
-            assert last is not None
-            raise last
+            chat = chat_entity(client, group)
+            user = user_input(client, member)
+            client(InviteToChannelRequest(channel=chat, users=[user]))
+            return SendResult(ok=True)
 
         return self._guard("invite", account, action)
 
@@ -587,20 +670,33 @@ class TelethonSender:
     def update_profile(self, account: str, first: str,
                        last: str = "") -> SendResult:
         def action() -> SendResult:
+            from telethon.tl.functions.account import UpdateProfileRequest
+
             client = self._client(account)
-            client.edit_profile(first_name=first, last_name=last)
+            client(UpdateProfileRequest(first_name=first or None,
+                                        last_name=last or None))
             return SendResult(ok=True)
 
         return self._guard("profile", account, action)
 
     def add_contact(self, account: str, target: Target,
                     first: str = "") -> SendResult:
-        def call(client: Any, peer: Any) -> SendResult:
-            client.add_contact(peer, first or target.display(),
-                               add_phone_privacy_exception=False)
+        def action() -> SendResult:
+            from telethon.tl.functions.contacts import AddContactRequest
+
+            client = self._client(account)
+            user = user_input(client, target)
+            phone = target.ref if target.ref.startswith("+") else ""
+            client(AddContactRequest(
+                id=user,
+                first_name=first or target.display(),
+                last_name="",
+                phone=phone,
+                add_phone_privacy_exception=False,
+            ))
             return SendResult(ok=True)
 
-        return self._on_target(account, target, "contact", call)
+        return self._guard("contact", account, action)
 
     def resolve(self, account: str, target: Target) -> SendResult:
         def action() -> SendResult:
@@ -636,9 +732,12 @@ class TelethonSender:
 
     def get_contacts(self, account: str) -> SendResult:
         def action() -> SendResult:
+            from telethon.tl.functions.contacts import GetContactsRequest
+
             client = self._client(account)
+            answer = client(GetContactsRequest(hash=0))
             items: list[str] = []
-            for user in client.get_contacts():
+            for user in getattr(answer, "users", None) or []:
                 name = " ".join(
                     part for part in (getattr(user, "first_name", ""),
                                       getattr(user, "last_name", "")) if part

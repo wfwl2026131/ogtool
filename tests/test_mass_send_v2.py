@@ -9,6 +9,7 @@ from ogtool.features.mass_send_v2 import (
     Contact,
     MassV2Config,
     dedupe_contacts,
+    distribute_targets,
     parse_contacts,
     run,
     schedule,
@@ -92,3 +93,30 @@ def test_daily_limit_skips_the_overflow(ctx, capsys):
     output = capsys.readouterr().out
     assert "over budget: 1" in output
     assert "queue: 1" in output
+
+
+def test_an_explicit_target_list_replaces_the_contact_books():
+    """`--targets` has to reach the plan without asking Telegram anything."""
+
+    config = MassV2Config(text="hi", targets=["@a", "@b", "@c"])
+    book = distribute_targets(config.targets, ["acc1", "acc2"], False)
+    flat, dropped = dedupe_contacts(book, config.allow_duplicates)
+    assert sorted(contact.ref for contact in flat) == ["@a", "@b", "@c"]
+    assert dropped == 0
+    assert sorted(contact.account for contact in flat) == ["acc1", "acc1", "acc2"]
+
+
+def test_a_target_list_round_robins_the_accounts():
+    book = distribute_targets(["@a", "@b", "@c"], ["acc1", "acc2"], False)
+    assert [c.ref for c in book["acc1"]] == ["@a", "@c"]
+    assert [c.ref for c in book["acc2"]] == ["@b"]
+
+
+def test_duplicates_send_every_target_from_every_account():
+    book = distribute_targets(["@a"], ["acc1", "acc2"], True)
+    assert [c.ref for c in book["acc1"]] == ["@a"]
+    assert [c.ref for c in book["acc2"]] == ["@a"]
+
+
+def test_a_target_list_with_no_account_plans_nothing():
+    assert distribute_targets(["@a"], [], False) == {}

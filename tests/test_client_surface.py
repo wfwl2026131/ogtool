@@ -4,10 +4,12 @@ Six of the names ``senders.py`` used to call -- ``join``, ``leave``,
 ``invite``, ``add_contact``, ``edit_profile``, ``get_contacts`` -- do not exist
 on ``TelegramClient`` 1.45, so those live paths answered ``UNKNOWN`` and nothing
 said so: the stand-in transport the feature tests use accepts any name at all.
+They are raw requests now, and the inventory below is empty because nothing is
+missing any more.
 
-``known_missing`` below is the honest inventory of that gap, and the test is
-checked in both directions: a new made up name fails it, and a name that stops
-being called (because it was fixed) fails it too, so the list cannot rot.
+The test is checked in both directions: a new made up name fails it, and a name
+that stops being called (because it was fixed) fails it too, so the list cannot
+rot.
 """
 
 from __future__ import annotations
@@ -35,15 +37,9 @@ LAB_LINK = f"https://t.me/+{LAB_HASH}"
 
 #: What ``senders.py`` calls that the real client does not have.  Every entry is
 #: one live path that answers ``UNKNOWN`` instead of doing anything; fixing one
-#: means deleting its line here in the same change.
-KNOWN_MISSING = {
-    "add_contact": "add_contact page",
-    "edit_profile": "batch_rename / auto_script profile",
-    "get_contacts": "batch_invite_v2 / mass_send_v2 contact pool",
-    "invite": "batch_invite / batch_invite_v2 / mix_market",
-    "join": "batch_join / video_manage / auto_script",
-    "leave": "video_manage / auto_script",
-}
+#: means deleting its line here in the same change.  All six are raw requests
+#: now, so the inventory is empty and the second assertion keeps it that way.
+KNOWN_MISSING: dict[str, str] = {}
 
 
 def client_calls() -> set[str]:
