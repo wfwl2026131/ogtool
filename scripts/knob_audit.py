@@ -34,6 +34,18 @@ import sys
 
 #: ``feature.field`` -> why it is not wired, decided once, kept visible.
 KNOWN = {
+    "ai_clone.poll_interval":
+        "paces the reference's passive follow mode, which this run does not have",
+    "ai_comment.poll_interval": "same passive-mode cadence as ai_clone",
+    "batch_invite.admin_account":
+        "names which account acts as the group admin; the invite itself does not "
+        "need it, and nothing in the dump shows the promotion step",
+    "batch_join.leave_mode":
+        "the leaveMode values are not in the dump; leave/mute already follow the "
+        "operation_type and the two toggles",
+    "batch_rename.parallel_mode":
+        "renames are one profile edit per account; lanes would help only with "
+        "many accounts, and the page's own timing knobs already pace a pool",
     "ai_chat.sticker_send_per_mille":
         "needs a sticker pool; this page carries none and Content.sticker "
         "takes a path",
