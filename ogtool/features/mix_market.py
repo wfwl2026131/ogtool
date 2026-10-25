@@ -43,6 +43,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     section,
     text,
@@ -183,6 +184,9 @@ class StageResult:
     seconds: float = 0.0
     rested: float = 0.0
     refs: list[str] = field(default_factory=list)
+    #: ``heldTargets``: work the page set aside to retry after a rest instead
+    #: of failing outright ("Retry after %1 minute(s)").
+    held: list[str] = field(default_factory=list)
 
     def line(self, index: int, total: int) -> str:
         return (f"stage {index}/{total} {self.name}: ok={self.ok} "
@@ -245,12 +249,33 @@ def stage_create_groups(config: MixConfig, ctx: RunContext,
                 result.refs.append(answer.detail)
             continue
         result.failed += 1
+        result.held.append(title)
         minutes = rest_after_failure(config, result.failed)
         result.rested += minutes * 60.0
         until = datetime.now(UTC).replace(microsecond=0) + timedelta(
             minutes=minutes)
         print(f"rest: create failed at {title!r} ({answer.code}), "
               f"waiting {minutes:.0f} min until {until:%H:%M:%S}")
+    if result.held:
+        # ``heldTargets``: the failed titles are retried once, after the rest,
+        # rather than dropped. A creation failure is usually a flood reply that
+        # has expired by then, and dropping it loses a whole target silently.
+        minutes = rest_after_failure(config, 1)
+        print(f"held: {len(result.held)} target(s), Retry after "
+              f"{minutes:.0f} minute(s)")
+        pause(ctx, minutes * 60.0)
+        still: list[str] = []
+        for title in result.held:
+            answer = sender.create_group(account, title)
+            if answer.ok:
+                result.ok += 1
+                result.failed -= 1
+                if answer.detail:
+                    result.refs.append(answer.detail)
+            else:
+                still.append(title)
+                print(f"held: {title!r} failed again ({answer.code})")
+        result.held = still
     return result
 
 

@@ -119,3 +119,34 @@ def test_the_pull_does_not_join_anything(ctx):
     sender = Watched()
     stage_pull(_config(), _Ctx(sender), _TASK, ["acc1"], {})
     assert sender.invited == 0
+
+
+def test_a_failed_group_is_held_then_retried_once(ctx, capsys):
+    """``heldTargets`` + "Retry after %1 minute(s)" (1741600).
+
+    A creation failure is usually a flood reply that has expired by the time the
+    rest is over, so the title is retried once instead of being dropped - which
+    would silently lose a whole target.
+    """
+    from ogtool.features.mix_market import MixConfig, stage_create_groups
+
+    ctx.script.codes = ["FLOOD_WAIT_30", "ok"]
+    config = MixConfig(group_titles=["Market A"], create_rest_min=1,
+                       create_rest_max=1)
+    result = stage_create_groups(config, ctx, ["acc1"])
+    output = capsys.readouterr().out
+    assert "Retry after 1 minute(s)" in output
+    assert result.ok == 1
+    assert result.failed == 0
+    assert result.held == []
+
+
+def test_a_second_failure_keeps_the_target_held(ctx, capsys):
+    from ogtool.features.mix_market import MixConfig, stage_create_groups
+
+    ctx.script.codes = ["FLOOD_WAIT_30", "FLOOD_WAIT_30"]
+    config = MixConfig(group_titles=["Market A"], create_rest_min=1,
+                       create_rest_max=1)
+    result = stage_create_groups(config, ctx, ["acc1"])
+    assert result.held == ["Market A"]
+    assert "failed again" in capsys.readouterr().out
