@@ -43,6 +43,8 @@ _MODULE_NAMES = [
     "export_accounts",
     "mass_send_v2",
     "mix_market",
+    # P3
+    "settings",
 ]
 
 
