@@ -102,6 +102,23 @@ def test_a_missing_extra_file_is_normal(smoke, tmp_path):
     assert smoke.load_extra(tmp_path / "none.yaml") == ([], [])
 
 
+def test_a_case_file_cannot_declare_a_write_it_will_run(smoke, tmp_path,
+                                                        monkeypatch):
+    """'write: true' in the yaml has to be honoured, not just documented.
+
+    It was not: the gate only looked at the hard-coded WRITE_CASES, so a case file
+    that said write: true ran anyway. Found by adding one and watching it run.
+    """
+    monkeypatch.setattr(smoke, "WRITE_CASES", frozenset())
+    monkeypatch.setattr(smoke, "config_path", lambda: tmp_path / "config.yaml")
+    (tmp_path / "config.yaml").write_text("logs: l\n", encoding="utf-8")
+    path = tmp_path / "live_cases.yaml"
+    path.write_text("cases:\n  - name: shout\n    args: [mass_send]\n"
+                    "    write: true\n", encoding="utf-8")
+    monkeypatch.setattr(smoke, "extra_path", lambda: path)
+    assert smoke.main(["live_smoke"]) == 2
+
+
 def test_extra_cases_cannot_smuggle_a_write(smoke, tmp_path, monkeypatch):
     """An extra case is still a case: the write gate applies to it too."""
     monkeypatch.setattr(smoke, "WRITE_CASES", frozenset({"groups"}))

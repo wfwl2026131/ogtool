@@ -48,6 +48,8 @@ class Case:
     receipt_for: str = ""
     #: Text the output must contain for the case to count as good.
     expect: str = ""
+    #: This case writes into somebody's chat. Refused unless ``--allow-write``.
+    write: bool = False
     #: Open a listener on this machine and pass it in as ``{port}``. A proxy
     #: probe needs somewhere to connect, and the only honest target is a socket
     #: this machine owns - pointing it at a stranger would be someone else's
@@ -81,7 +83,7 @@ CASES: tuple[Case, ...] = (
     # The speed test is the proxy page's only real action: a TCP connect and a
     # latency. A local listener gives it a genuine ok without touching anyone.
     Case("proxy", ("proxy", "--live", "--add", "socks5://127.0.0.1:{port}",
-                   "--test"), None, "proxy", "ok", True),
+                   "--test"), None, "proxy", "ok", local_port=True),
 )
 
 #: Cases that would write to somebody's chat. None today: the list above is
@@ -136,6 +138,7 @@ def load_extra(path: Path) -> tuple[list[Case], list[str]]:
             interrupt_after=entry.get("interrupt_after"),
             receipt_for=str(entry.get("receipt_for", "")),
             expect=str(entry.get("expect", "")),
+            write=bool(entry.get("write", False)),
         ))
     return cases, problems
 
@@ -271,8 +274,13 @@ def main(argv: list[str]) -> int:
     allow_write = "--allow-write" in args
     # Extra cases go through the same gate: a file on disk must not be able to
     # turn a write into something this script runs by default.
+    # ``write`` is what the YAML says about itself; ``WRITE_CASES`` is the
+    # hard-coded list of built-in ones. Both count, because a case file that
+    # declares "write: true" is exactly as able to post into a chat as a case
+    # written in this file - the earlier version only checked the latter, so a
+    # yaml case marked write: true ran without the flag.
     refused = [case.name for case in list(CASES) + cases
-               if case.name in WRITE_CASES]
+               if case.write or case.name in WRITE_CASES]
     if case_problems:
         print(f"{extra_path().name} has {len(case_problems)} problem(s):")
         for problem in case_problems:
