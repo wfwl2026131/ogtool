@@ -99,3 +99,27 @@ def test_the_daily_counter_follows_the_local_day_across_midnight(tmp_path):
         store._conn.execute("UPDATE results SET created_at = ?", (before,))
         store._conn.commit()
         assert store.count_sent_today("acc", now=now) == 0
+
+
+def test_two_processes_can_write_at_once(tmp_path):
+    """The store is shared between concurrent tools; WAL lets them coexist.
+
+    Before this, 'watch_chat' holding the file while 'mass_send' wrote produced
+    'OperationalError: database is locked' -- a reader and a writer cannot both
+    hold the default rollback journal.
+    """
+    from ogtool.store import Store
+
+    path = tmp_path / "shared.sqlite"
+    first = Store(path)
+    second = Store(path)
+    try:
+        task = first.create_task("shared", "test", {}, mode="live", planned=1)
+        second.add_result(task.id, "b", "y", "sent", "", "")
+        first.add_result(task.id, "a", "x", "sent", "", "")
+        assert len(first.results_for(task.id)) == 2
+        mode = first._conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+    finally:
+        first.close()
+        second.close()

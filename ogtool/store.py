@@ -7,6 +7,7 @@ into the client can copy whole tables instead of re-deriving state.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 import threading
@@ -290,10 +291,19 @@ class Store:
         # A threaded run writes results from several lanes at once, so the
         # connection has to accept a call from any thread and be serialized
         # here: sqlite objects are not shareable on their own.
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False,
+                                     timeout=10.0)
         self._lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # Two of these tools are meant to run at the same time - 'watch_chat' on
+        # a chat while 'mass_send' posts into it - and the default rollback
+        # journal takes a lock the other process cannot wait on, which surfaced
+        # as 'OperationalError: database is locked'. WAL lets a reader and a
+        # writer coexist, and busy_timeout waits instead of failing.
+        with contextlib.suppress(sqlite3.Error):
+            self._conn.execute("PRAGMA journal_mode = WAL")
+            self._conn.execute("PRAGMA busy_timeout = 10000")
         self._conn.executescript(SCHEMA)
         self._migrate()
         self._conn.commit()

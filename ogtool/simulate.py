@@ -22,6 +22,9 @@ OK = "ok"
 BOT_RESULTS_EMPTY = "BOT_RESULTS_EMPTY"
 CHAT_WRITE_FORBIDDEN = "CHAT_WRITE_FORBIDDEN"
 SESSION_NOT_FOUND = "SESSION_NOT_FOUND"
+#: Another process holds the same .session file. It is not a Telegram answer, so
+#: it must not be confused with a revoked login: the account is fine, it is busy.
+SESSION_BUSY = "SESSION_BUSY"
 USER_BANNED_IN_CHANNEL = "USER_BANNED_IN_CHANNEL"
 PEER_FLOOD = "PEER_FLOOD"
 FLOOD_WAIT = "FLOOD_WAIT"
@@ -45,6 +48,7 @@ RETRYABLE = {PEER_FLOOD, FLOOD_WAIT, NETWORK_ERROR, TIMEOUT, BOT_RESULTS_EMPTY}
 # Answers that mean "this entry cannot succeed", so it leaves the queue.
 TERMINAL = {
     CHAT_WRITE_FORBIDDEN,
+    SESSION_BUSY,
     SESSION_NOT_FOUND,
     USER_BANNED_IN_CHANNEL,
     TARGET_INVALID,

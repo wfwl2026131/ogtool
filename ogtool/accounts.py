@@ -179,8 +179,13 @@ class AccountPool:
                         kind = "chat"
                     username = getattr(entity, "username", "") or ""
                     ref = f"@{username}" if username else str(dialog.id)
+                    # Unread and the last message time are what make the listing
+                    # useful: they say which chat is busy enough to watch.
+                    unread = int(getattr(dialog, "unread_count", 0) or 0)
+                    sent = getattr(dialog, "date", None)
+                    stamp = sent.strftime("%H:%M") if sent else "-"
                     rows.append((account.label, kind, ref,
-                                 str(dialog.name or "")))
+                                 f"{dialog.name or ''}\t{stamp}\t{unread}"))
             except Exception as error:  # noqa: BLE001 - reported as a row
                 rows.append((account.label, "?", "", type(error).__name__))
             finally:

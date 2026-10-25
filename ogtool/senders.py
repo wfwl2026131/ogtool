@@ -34,6 +34,7 @@ from .simulate import (
     PEER_FLOOD,
     PHONE_OCCUPIED,
     RETRYABLE,
+    SESSION_BUSY,
     SESSION_NOT_FOUND,
     TARGET_INVALID,
     TIMEOUT,
@@ -57,6 +58,7 @@ KNOWN_CODES = RETRYABLE | {
     JOIN_REQUEST,
     OK,
     PHONE_OCCUPIED,
+    SESSION_BUSY,
     SESSION_NOT_FOUND,
     TARGET_INVALID,
     UNKNOWN,
@@ -84,6 +86,7 @@ __all__ = [
     "OK",
     "PEER_FLOOD",
     "PHONE_OCCUPIED",
+    "SESSION_BUSY",
     "SESSION_NOT_FOUND",
     "SendResult",
     "TARGET_INVALID",
@@ -384,6 +387,11 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
         return TIMEOUT, text, True
     if "AUTH_KEY_UNREGISTERED" in upper or "SESSION_REVOKED" in upper:
         return SESSION_NOT_FOUND, text, False
+    # Two ogtool processes cannot share one Telethon session: the .session file
+    # is SQLite too, and the loser gets 'database is locked'. Saying so beats
+    # 'UNKNOWN: OperationalError', which reads like a Telegram problem.
+    if "DATABASE IS LOCKED" in upper or "SESSION IS LOCKED" in upper:
+        return SESSION_BUSY, "another ogtool process is using this session", True
     if "PHONE_NUMBER_OCCUPIED" in upper or "PHONE_OCCUPIED" in upper:
         return PHONE_OCCUPIED, text, False
     # Last resort: the class name itself is the answer, which is how the errors

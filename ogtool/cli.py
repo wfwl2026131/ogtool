@@ -899,7 +899,8 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             wanted = (args.kind or "").strip().lower()
             shown = [row for row in rows if not wanted or row[1] == wanted]
             for label, kind, ref, title in shown:
-                print(f"{kind:8s} {ref:20s} {title}  ({label})")
+                name, _, rest = title.partition("\t")
+                print(f"{kind:8s} {ref:20s} {name}  ({label}) {rest}")
             print(f"total: {len(shown)} of {len(rows)}")
             return 0
         if args.action == "spambot":
