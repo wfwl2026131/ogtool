@@ -227,6 +227,22 @@ def clip(text: str, levels: list[int],
     return cut.rstrip(" ,.;:!?-—") or flat[:cap]
 
 
+#: The page's two per-mille switches share one small pool of face emoji: the
+#: message keeps its text and gains a trailing face, which is what makes a
+#: generated line look typed rather than printed.
+BODY_EMOJI = ("\U0001F642", "\U0001F44D", "\U0001F525", "\U0001F4AF")
+
+
+def with_emoji(text: str, per_mille: int,
+               rng: random.Random | None = None) -> str:
+    """``emojiSendPerMille``: append one face, ``per_mille`` of a thousand."""
+    if per_mille <= 0 or not text:
+        return text
+    if (rng or random).randrange(1000) >= per_mille:
+        return text
+    return f"{text} {(rng or random).choice(BODY_EMOJI)}".strip()
+
+
 REPLY_WINDOW_MINUTES = 120
 REPLY_LIMIT = 20
 
@@ -273,9 +289,11 @@ def reply_round(config: AiChatConfig, ctx: RunContext, sender: object,
                              topic=message.text, news="")
             generated = ai.generate(prompt, fallback=message.text)  # type: ignore[attr-defined]
             record_ai(ctx, task, labels[0], "reply", generated)
-            body = Content(text=clip(generated.response,
+            body = Content(
+                text=with_emoji(clip(generated.response,
                                      config.text_max_chars_levels),
-                           reply_to=message.message_id)
+                                config.emoji_send_per_mille),
+                reply_to=message.message_id)
             pause(ctx, config.interval_min)
             outcome = sender.send(labels[0], target, body)  # type: ignore[attr-defined]
             if outcome.ok:
@@ -347,8 +365,10 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
         generated = ai.generate(_prompt(ctx, line),
                                 fallback=_fallback(line))
         record_ai(ctx, task, line.account, "chat", generated)
-        body = Content(text=clip(generated.response,
-                                 config.text_max_chars_levels))
+        body = Content(
+            text=with_emoji(clip(generated.response,
+                                 config.text_max_chars_levels),
+                            config.emoji_send_per_mille))
         pause(ctx, line.delay)
         outcome = sender.send(line.account, target, body)
         waited += line.delay

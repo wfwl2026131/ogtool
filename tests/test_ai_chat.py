@@ -234,3 +234,28 @@ def test_a_dry_run_says_it_answers_nothing(ctx, capsys):
     output = capsys.readouterr().out
     assert "a dry run reads no history" in output
     assert "replies: 0 answered" in output
+
+
+def test_emoji_per_mille_is_a_chance_not_a_cap():
+    """``emojiSendPerMille=1000`` always adds a face, ``0`` never does."""
+    import random
+
+    from ogtool.features.ai_chat import BODY_EMOJI, with_emoji
+
+    for _ in range(20):
+        line = with_emoji("hello", 1000, random.Random(1))
+        assert line.startswith("hello ")
+        assert line.split()[-1] in BODY_EMOJI
+    for _ in range(20):
+        assert with_emoji("hello", 0) == "hello"
+
+
+def test_a_low_per_mille_leaves_most_lines_alone():
+    import random
+
+    from ogtool.features.ai_chat import with_emoji
+
+    rng = random.Random(7)
+    lines = [with_emoji("hello", 1, rng) for _ in range(2000)]
+    decorated = sum(1 for line in lines if line != "hello")
+    assert 0 < decorated < 20
