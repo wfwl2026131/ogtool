@@ -125,3 +125,22 @@ def test_entries_preview_zero_prints_no_preview(ctx, capsys):
                           operation_interval=0.0)
     assert run(config, ctx) == 0
     assert "预览" not in capsys.readouterr().out
+
+
+def test_parallel_mode_runs_one_lane_per_account(ctx, live, ok_sender, capsys):
+    """``parallelMode``: each account edits its own lane at the same time."""
+    live(ok_sender)
+    config = RenameConfig(names=[("A", ""), ("B", ""), ("C", ""), ("D", "")],
+                          parallel_mode=True, operation_interval=0.0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "parallel: 2 lanes, one account each" in output
+    assert "PLAN: 4 renames" in output
+    assert "failed 0" in output
+
+
+def test_parallel_mode_is_off_by_default(ctx, capsys):
+    config = RenameConfig(names=[("A", ""), ("B", "")],
+                          operation_interval=0.0)
+    assert run(config, ctx) == 0
+    assert "parallel:" not in capsys.readouterr().out

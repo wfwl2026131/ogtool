@@ -19,6 +19,8 @@ looks exactly like a rename that worked.
 from __future__ import annotations
 
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -31,6 +33,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     name_of,
     num,
     open_task,
@@ -464,6 +467,7 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
     labels = [account.label for account in accounts] or ["-"]
     state = RenameState(total=len(config.names), pause_at=config.pause_at,
                         stop_at=config.stop_at)
+    state_lock = threading.Lock()
     rng = random.Random(config.seed)
     gap = config.gap()
 
@@ -495,25 +499,29 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
     print(f"状态：{state.status}")
     waited = 0.0
     backoff = PeerFloodBackoff()
-    for index, (first, last) in enumerate(config.names, start=1):
-        if state.stop_at and index >= state.stop_at:
-            state.status = STOPPED
-            print(f"状态：{state.status}（收到停止，第 {index} 条开始前）")
-            break
-        if config.success_cap and state.processed >= config.success_cap:
-            print(f"stopped: success_cap ({config.success_cap})")
-            break
+    if config.parallel_mode and len(labels) > 1:
+        # ``parallelMode``: one lane per account. The interval still holds inside
+        # a lane, so two accounts edit in parallel without either breaking its
+        # own pacing promise.
+        lanes = lanes_by(lambda pair: labels[(pair[0] - 1) % len(labels)],
+                         list(enumerate(config.names, start=1)), len(labels))
+        print(f"parallel: {len(lanes)} lanes, one account each")
+    else:
+        lanes = [list(enumerate(config.names, start=1))]
 
-        if index > 1:
-            # The rename interval is the page's anti-flood knob: one profile
-            # edit per interval, on the account that does the edit.
-            waited += gap
+    def rename_entry(position: int, index: int, first: str, last: str,
+                     account: str) -> float:
+        """One profile edit, with the page's pacing, retries and extras."""
+        lane_waited = 0.0
+        if position:
+            lane_waited += gap
             pause(ctx, gap)
-        account = labels[(index - 1) % len(labels)]
-        state.current = account
+        with state_lock:
+            state.current = account
         if not first:
             # A blank nickname is the reference's own "First name is empty".
-            state.skipped += 1
+            with state_lock:
+                state.skipped += 1
             print(f"{FIRST_EMPTY}（第 {index} 条）")
         else:
             result = sender.update_profile(account, first, last)
@@ -526,27 +534,54 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
                 delay = backoff.wait_for(attempts - 1)
                 print(f"  PEER_FLOOD backoff {delay:.0f}s "
                       f"(attempt {attempts}/{config.flood_cap})")
-                waited += delay
+                lane_waited += delay
                 pause(ctx, delay)
                 result = sender.update_profile(account, first, last)
-            state.processed += 1
-            if result.ok:
-                state.bump("昵称")
-                record(ctx, task, account, f"{first} {last}".strip(), True)
-            else:
-                state.failed += 1
-                record(ctx, task, account, f"{first} {last}".strip(), False,
-                       result.code)
+            with state_lock:
+                state.processed += 1
+                if result.ok:
+                    state.bump("昵称")
+                else:
+                    state.failed += 1
+            record(ctx, task, account, f"{first} {last}".strip(), result.ok,
+                   "" if result.ok else result.code)
 
         _edit_extras(config, state, sender, account, index - 1, rng,
                      first, last)
         print(f"[{index:03d}/{state.total:03d}] {state.line()}")
 
         if state.pause_at and index == state.pause_at:
-            state.status = PAUSED
+            with state_lock:
+                state.status = PAUSED
             print(f"状态：{state.status}")
-            state.status = RUNNING
+            with state_lock:
+                state.status = RUNNING
             print(f"状态：{state.status}（继续）")
+        return lane_waited
+
+    def run_lane(lane: list[tuple[int, tuple[str, str]]],
+                 position: int) -> float:
+        lane_waited = 0.0
+        account = labels[position % len(labels)]
+        for offset, (index, (first, last)) in enumerate(lane):
+            if state.stop_at and index >= state.stop_at:
+                with state_lock:
+                    state.status = STOPPED
+                print(f"状态：{state.status}（收到停止，第 {index} 条开始前）")
+                break
+            if config.success_cap and state.processed >= config.success_cap:
+                print(f"stopped: success_cap ({config.success_cap})")
+                break
+            lane_waited += rename_entry(offset, index, first, last, account)
+        return lane_waited
+
+    if len(lanes) > 1:
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            futures = [pool.submit(run_lane, lane, position)
+                       for position, lane in enumerate(lanes)]
+            waited = sum(future.result() for future in futures)
+    else:
+        waited = run_lane(lanes[0], 0)
 
     state.status = state.status if state.status == STOPPED else IDLE
     print(f"状态：{state.status}")
