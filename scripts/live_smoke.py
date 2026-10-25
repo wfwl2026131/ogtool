@@ -284,6 +284,12 @@ def main(argv: list[str]) -> int:
     if "--account" in args:
         account = args[args.index("--account") + 1]
     allow_write = "--allow-write" in args
+    # ``--only NAME`` runs a single case. A check that has to prove one behaviour
+    # (does the gate refuse? does the flag let it through?) should not cost the
+    # whole suite's round trips to do it.
+    only = ""
+    if "--only" in args:
+        only = args[args.index("--only") + 1]
     # Extra cases go through the same gate: a file on disk must not be able to
     # turn a write into something this script runs by default.
     # ``write`` is what the YAML says about itself; ``WRITE_CASES`` is the
@@ -313,7 +319,11 @@ def main(argv: list[str]) -> int:
         return 1
     print(f"account: {account} (@{who})")
     problems: list[str] = []
-    every = list(CASES) + cases
+    every = [case for case in list(CASES) + cases
+             if not only or case.name == only]
+    if only and not every:
+        print(f"no case named {only!r}")
+        return 2
     for case in every:
         problems.extend(run_case(case, config, account, who))
     print(f"live: {len(every)} case(s), {len(problems)} problem(s)")

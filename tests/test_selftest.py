@@ -148,3 +148,22 @@ def test_the_gate_check_names_a_refusal(monkeypatch):
     monkeypatch.setenv("OGTOOL_LIVE_CASES", str(here / "does-not-exist.yaml"))
     problems = module.gate_problems(here)
     assert problems == [], problems
+
+
+def test_the_gate_check_also_proves_the_flag_runs_the_case(tmp_path):
+    """Refusing is half of it; the flag must actually let the case through."""
+    from pathlib import Path
+
+    from ogtool import selftest as module
+
+    here = Path(__file__).resolve().parents[1]
+    cases = Path(tmp_path) / "one.yaml"
+    cases.write_text("cases:\n  - name: gate-canary\n    args: [runs, list]\n"
+                     "    write: true\n", encoding="utf-8")
+    refused = module._smoke(here, cases, ["--only", "gate-canary"])
+    assert refused.returncode == 2
+    assert "refusing" in (refused.stdout + refused.stderr)
+    allowed = module._smoke(here, cases,
+                            ["--allow-write", "--only", "gate-canary"])
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+    assert "gate-canary" in allowed.stdout

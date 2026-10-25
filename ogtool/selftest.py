@@ -250,31 +250,50 @@ def check_live(base: Path | None = None,
 
 
 def gate_problems(here: Path) -> list[str]:
-    """The write gate has to refuse, and proving it must cost nobody a message.
+    """The write gate has to refuse, and the flag has to let it through.
 
-    A case file is handed to the smoke script through ``OGTOOL_LIVE_CASES`` with a
-    case marked ``write: true``; the run must exit 2 saying it refused, without
-    reaching the account. This is the half of the gate that a passing suite can
-    never show, and it was only ever checked by hand.
+    Two runs, each handed its own case file through ``OGTOOL_LIVE_CASES`` so the
+    file naming real chats is never touched: the first must exit 2 saying it
+    refused, the second must run the same case when ``--allow-write`` is given.
+    Only ever checking the refusal would pass just as happily if the flag did
+    nothing, which is the failure mode that hid here twice.
     """
     with tempfile.TemporaryDirectory(prefix="og-gate-") as scratch:
-        path = Path(scratch) / "live_cases.yaml"
-        path.write_text("cases:\n  - name: gate-canary\n"
-                        "    args: [mass_send, --live]\n"
-                        "    write: true\n", encoding="utf-8")
-        run = subprocess.run(  # noqa: S603 - our own script, fixed arguments
-            [sys.executable, str(here / "scripts/live_smoke.py")],
-            cwd=here, capture_output=True, text=True, timeout=120, check=False,
-            env={**_env(), "PYTHONPATH": str(here),
-                 "OGTOOL_LIVE_CASES": str(path)})
-    said = (run.stdout or "") + (run.stderr or "")
-    if run.returncode != 2:
-        return [f"the write gate did not refuse (exit {run.returncode})\n"
-                f"{said[-400:]}"]
-    if "refusing" not in said or "gate-canary" not in said:
-        return [f"the write gate refused without naming the case\n"
-                f"{said[-400:]}"]
-    return []
+        refused_file = Path(scratch) / "refuse.yaml"
+        refused_file.write_text(
+            "cases:\n  - name: gate-canary\n    args: [runs, list]\n"
+            "    write: true\n", encoding="utf-8")
+        allowed_file = Path(scratch) / "allow.yaml"
+        allowed_file.write_text(
+            "cases:\n  - name: gate-allow\n    args: [runs, list]\n"
+            "    write: true\n", encoding="utf-8")
+        refused = _smoke(here, refused_file, ["--only", "gate-canary"])
+        allowed = _smoke(here, allowed_file,
+                         ["--allow-write", "--only", "gate-allow"])
+    problems: list[str] = []
+    said = (refused.stdout or "") + (refused.stderr or "")
+    if refused.returncode != 2:
+        problems.append(f"the write gate did not refuse (exit "
+                        f"{refused.returncode})\n{said[-400:]}")
+    elif "refusing" not in said or "gate-canary" not in said:
+        problems.append(f"the write gate refused without naming the case\n"
+                        f"{said[-400:]}")
+    said = (allowed.stdout or "") + (allowed.stderr or "")
+    if allowed.returncode != 0:
+        problems.append(f"the flag did not let the write case through "
+                        f"(exit {allowed.returncode})\n{said[-400:]}")
+    elif "gate-allow" not in said or "refusing" in said:
+        problems.append(f"the flag ran without running the case\n"
+                        f"{said[-400:]}")
+    return problems
+
+
+def _smoke(here: Path, cases: Path, args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(  # noqa: S603 - our own script, fixed arguments
+        [sys.executable, str(here / "scripts/live_smoke.py"), *args],
+        cwd=here, capture_output=True, text=True, timeout=180, check=False,
+        env={**_env(), "PYTHONPATH": str(here),
+             "OGTOOL_LIVE_CASES": str(cases)})
 
 
 def run(settings: Any, only: list[str] | None = None,
