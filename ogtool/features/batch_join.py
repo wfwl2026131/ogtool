@@ -25,6 +25,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     section,
     targets_of,
@@ -325,11 +326,23 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
                      {"targets": [t.ref for t in config.targets]}, len(pairs))
     sender = ctx.sender()
 
+    def wants_mute(config: JoinConfig, target: Target) -> bool:
+        """``muteChannels`` / ``mutePrivate``: which joins get silenced."""
+        if target.kind == "channel":
+            return config.mute_channels
+        return config.mute_private
+
     def call(job: Job) -> object:
         assert job.target is not None
         if leaving:
             return sender.leave(job.account, job.target)
-        return sender.join(job.account, job.target)
+        result = sender.join(job.account, job.target)
+        if getattr(result, "ok", False) and wants_mute(config, job.target):
+            if config.mute_interval:
+                pause(ctx, config.mute_interval)
+            muted = sender.mute(job.account, job.target)  # type: ignore[attr-defined]
+            job.extra["mute"] = "ok" if muted.ok else muted.code
+        return result
 
     jobs = [Job(account=account, subject=target.ref, target=target)
             for account, target in pairs]
@@ -339,12 +352,20 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
                       interval=partial(gap, config),
                       lanes=config.join_concurrency or config.threads)
 
+    muted = 0
     for job in jobs:
         if "ok" not in job.extra:
             continue
         record(ctx, task, job.account, job.subject, job.extra["ok"] == "1",
                job.extra["code"])
+        mute_state = job.extra.get("mute", "")
+        if mute_state:
+            muted += mute_state == "ok"
+            if mute_state != "ok":
+                print(f"mute {job.account} {job.subject} -> {mute_state}")
     stats: Stats = outcome.stats
+    if muted or (config.mute_channels or config.mute_private):
+        print(f"muted: {muted} chat(s)")
     print_outcome(outcome, eta_per_job=config.account_interval)
     close_task(ctx, task, ok=stats.ok, failed=stats.failed)
     return 0 if not stats.failed else 1

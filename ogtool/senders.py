@@ -490,6 +490,10 @@ class DryRunSender:
     def leave(self, account: str, target: Target) -> SendResult:
         return self._answer("leave", account, f"target={target.display()}")
 
+    def mute(self, account: str, target: Target, until: int = 0) -> SendResult:
+        return self._answer("mute", account,
+                            f"target={target.display()} until={until or 'forever'}")
+
     def pull_contacts(self, account: str) -> SendResult:
         """The account's own contact list, the pull stage's only job."""
         return self._answer("pull_contacts", account, "own contacts")
@@ -817,6 +821,26 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("leave", account, action)
+
+    def mute(self, account: str, target: Target, until: int = 0) -> SendResult:
+        """Silence one chat, the way the join page's mute switches ask for.
+
+        ``mute_until`` is the server's own field: ``0x7FFFFFFF`` is "forever",
+        which is what a mutate-after-join wants.
+        """
+
+        def action() -> SendResult:
+            from telethon.tl.functions.account import UpdateNotifySettingsRequest
+            from telethon.tl.types import InputNotifyPeer, InputPeerNotifySettings
+
+            client = self._client(account)
+            peer = chat_entity(client, target)
+            settings = InputPeerNotifySettings(mute_until=until or 0x7FFFFFFF)
+            client(UpdateNotifySettingsRequest(
+                peer=InputNotifyPeer(peer), settings=settings))
+            return SendResult(ok=True)
+
+        return self._guard("mute", account, action)
 
     def pull_contacts(self, account: str) -> SendResult:
         """``contacts.GetContactsRequest``: the account's own address book.

@@ -178,3 +178,45 @@ def test_more_threads_than_accounts_does_not_invent_lanes(ctx, live):
                         request_interval=0.0, account_interval=0.0)
     assert run(config, ctx) == 0
     assert {account for account, _, _ in sender.calls} == {"acc1"}
+
+
+class MuteAwareSender(JoinSender):
+    def __init__(self, codes: list[str]) -> None:
+        super().__init__(codes)
+        self.muted: list[tuple[str, str]] = []
+
+    def mute(self, account: str, target: object, until: int = 0):
+        from ogtool.senders import SendResult
+
+        self.muted.append((account, getattr(target, "kind", "")))
+        return SendResult(ok=True)
+
+
+def test_mute_channels_only_silences_channels(ctx, live, capsys):
+    """``muteChannels`` / ``mutePrivate`` are two switches, not one."""
+    sender = MuteAwareSender(["ok", "ok"])
+    live(sender)
+    config = JoinConfig(targets=[parse_many(["@chan"], "channel")[0],
+                                 parse_many(["@grp"], "group")[0]],
+                        mute_channels=True)
+    assert run(config, ctx) == 0
+    assert sender.muted == [("acc1", "channel")]
+    assert "muted: 1 chat(s)" in capsys.readouterr().out
+
+
+def test_mute_private_silences_plain_groups(ctx, live):
+    sender = MuteAwareSender(["ok"])
+    live(sender)
+    config = JoinConfig(targets=[parse_many(["@grp"], "group")[0]],
+                        mute_private=True)
+    assert run(config, ctx) == 0
+    assert sender.muted == [("acc1", "group")]
+
+
+def test_a_failed_join_is_not_muted(ctx, live):
+    sender = MuteAwareSender(["CHANNEL_PRIVATE"])
+    live(sender)
+    config = JoinConfig(targets=[parse_many(["@chan"], "channel")[0]],
+                        mute_channels=True)
+    assert run(config, ctx) == 1
+    assert sender.muted == []
