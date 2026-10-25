@@ -270,11 +270,23 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
     # times it is rested, not hammered for every remaining contact in it.
     target_floods: dict[str, int] = {}
     exhausted: set[str] = set()
+    # ``floodCap`` is the handler's own patience: after that many PEER_FLOOD
+    # answers this handler stops for the rest of the lane, which is a different
+    # number from ``inviteeFloodCap`` (retries for one contact).
+    handler_floods: dict[str, int] = {}
+    rested: set[str] = set()
     previous_target = ""
     for index, (handler, group, contact) in enumerate(lane, start=1):
         if config.success_cap and ok >= config.success_cap:
             print(f"stopped: success_cap ({config.success_cap})")
             break
+        if handler in rested:
+            record(ctx, task, handler, f"{group}<-{contact}", False,
+                   "HANDLER_REST")
+            print(f"[{index:03d}/{total:03d}] skipped {contact} in {group} "
+                  f"(handler rested after {handler_floods.get(handler, 0)} "
+                  f"PEER_FLOOD)")
+            continue
         if group in exhausted:
             record(ctx, task, handler, f"{group}<-{contact}", False, "TARGET_REST")
             print(f"[{index:03d}/{total:03d}] skipped {contact} in {group} "
@@ -325,6 +337,12 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
         if not config.continue_members_across_targets:
             abandoned.add(contact)
         if result.code == "PEER_FLOOD":
+            handler_floods[handler] = handler_floods.get(handler, 0) + 1
+            if config.flood_cap and handler_floods[handler] >= config.flood_cap:
+                rested.add(handler)
+                print(f"handler rested: {handler} answered PEER_FLOOD "
+                      f"{handler_floods[handler]} time(s) "
+                      f"(flood_cap={config.flood_cap})")
             target_floods[group] = target_floods.get(group, 0) + 1
             cap = config.peer_flood_target_max_retries
             if cap and target_floods[group] >= cap:

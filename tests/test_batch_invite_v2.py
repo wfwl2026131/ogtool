@@ -103,3 +103,31 @@ def test_a_zero_target_ceiling_never_rests_a_target(ctx, scripted, capsys):
     output = capsys.readouterr().out
     assert "target rested" not in output
     assert "-> ok" in output
+
+
+def test_a_handler_is_rested_after_its_own_flood_ceiling(ctx, scripted, capsys):
+    """``floodCap`` is the handler's patience, not the invitee's retry count.
+
+    ``inviteeFloodCap`` says how many times one contact may be retried;
+    ``floodCap`` says after how many PEER_FLOOD answers the handler itself stops
+    for the rest of the run (dump: separate rows on the page).
+    """
+    scripted(["PEER_FLOOD", "PEER_FLOOD", "PEER_FLOOD"])
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2", "@c3"],
+                            flood_cap=1, invitee_flood_cap=0,
+                            peer_flood_target_max_retries=0)
+    run(config, ctx)
+    output = capsys.readouterr().out
+    # Round robin puts @c1 and @c3 on acc1, @c2 on acc2: the rested handler is
+    # the one whose remaining contact gets skipped.
+    assert "handler rested: acc1" in output
+    assert "skipped @c3 in @g1 (handler rested" in output
+
+
+def test_a_zero_handler_ceiling_never_rests_it(ctx, scripted, capsys):
+    scripted(["PEER_FLOOD", "ok"])
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2"],
+                            flood_cap=0, invitee_flood_cap=0,
+                            peer_flood_target_max_retries=0)
+    run(config, ctx)
+    assert "handler rested" not in capsys.readouterr().out
