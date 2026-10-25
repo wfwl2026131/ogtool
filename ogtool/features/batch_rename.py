@@ -444,6 +444,21 @@ def _edit_extras(config: RenameConfig, state: RenameState, sender: object,
             _set_username(config, state, sender, account, wanted, rng)
 
 
+def preview(name: str, items: list[str], count: int) -> list[str]:
+    """``entriesPreview``: the first entries of one list, before the run nukes them.
+
+    Renaming is destructive - a typo'd list is only visible afterwards - so the
+    page shows a head of each list first. ``count=0`` shows nothing.
+    """
+    if count <= 0 or not items:
+        return []
+    head = [f"  {name}预览 {index:02d}: {item}"
+            for index, item in enumerate(items[:count], start=1)]
+    if len(items) > count:
+        head.append(f"  {name}预览：还有 {len(items) - count} 条未显示")
+    return head
+
+
 def run(config: RenameConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts] or ["-"]
@@ -464,7 +479,12 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
              "头像": len(config.avatars.entries),
              "用户名": len(config.usernames.entries)}
     print("四份清单：" + "  ".join(f"{k} {v}" for k, v in lists.items()))
-
+    for name, items in (("昵称", [pair[0] for pair in config.names]),
+                        ("简介", config.about.entries),
+                        ("头像", config.avatars.entries),
+                        ("用户名", config.usernames.entries)):
+        for line in preview(name, items, config.entries_preview):
+            print(line)
     task = open_task(ctx, config.task_name, FEATURE,
                      {"file": config.file, "entries": len(config.names),
                       "lists": lists},

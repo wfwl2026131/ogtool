@@ -105,3 +105,23 @@ def test_a_zero_flood_cap_does_not_retry(ctx, scripted, capsys):
     config = RenameConfig(names=[("Alice", "")], flood_cap=0)
     assert run(config, ctx) == 1
     assert "PEER_FLOOD backoff" not in capsys.readouterr().out
+
+
+def test_entries_preview_shows_the_head_of_every_list(ctx, capsys):
+    """``entriesPreview``: a destructive run shows what it is about to write."""
+    config = RenameConfig(names=[("新名A", ""), ("新名B", ""), ("新名C", "")],
+                          entries_preview=2, operation_interval=0.0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "昵称预览 01: 新名A" in output
+    assert "昵称预览 02: 新名B" in output
+    # The third name still runs, but the preview stops at two.
+    assert "昵称预览 03" not in output
+    assert "还有 1 条未显示" in output
+
+
+def test_entries_preview_zero_prints_no_preview(ctx, capsys):
+    config = RenameConfig(names=[("新名A", "")], entries_preview=0,
+                          operation_interval=0.0)
+    assert run(config, ctx) == 0
+    assert "预览" not in capsys.readouterr().out
