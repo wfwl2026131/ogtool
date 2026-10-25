@@ -204,6 +204,8 @@ class CopyConfig:
     targets: list[str] = field(default_factory=list)
     sources: list[str] = field(default_factory=list)
     copy_mode: str = "copy"
+    #: ``Copy Mode`` in the page's pairing sense (see PAIRING_MODES).
+    pairing: str = "mixed"
     capture_minutes: int = 60
     daily_limit: int = 0
     multiplier: int = 1
@@ -256,6 +258,7 @@ class CopyConfig:
             targets=targets,
             sources=sources,
             copy_mode=text(data, "copy_mode", "copy"),
+            pairing=pairing_of(data),
             capture_minutes=num(data, "capture_minutes", 60, kind=int,
                                 minimum=0),
             daily_limit=num(data, "daily_limit", 0, kind=int, minimum=0),
@@ -437,6 +440,33 @@ def _split(value: object) -> list[str]:
             if part.strip()]
 
 
+#: The page's Copy Mode: how sources are paired with targets. Mixed (every
+#: source feeds every target) is the default; the other three narrow that
+#: pairing, and two of them are gated behind a permission on the reference -
+#: "No permission to use separated mode." / "No permission to use multi-to-one
+#: mode." (1744891-1744892).
+PAIRING_MODES = ("mixed", "separated", "grouped", "multi_to_one")
+GATED_MODES = {
+    "separated": "No permission to use separated mode.",
+    "multi_to_one": "No permission to use multi-to-one mode.",
+}
+
+
+def pairing_of(data: dict) -> str:
+    """The pairing mode, read from ``copy_mode`` when it names one.
+
+    The reference spells the pairing switch ``Copy Mode`` with those four
+    values, while this module used ``copy_mode`` for the content switch
+    (copy / rewrite / ai). Reading the new vocabulary here keeps an old task
+    file - and the old meanings - working.
+    """
+    for key in ("pairing_mode", "copy_mode"):
+        value = str(data.get(key) or "").strip().lower().replace("-", "_")
+        if value in PAIRING_MODES:
+            return value
+    return "mixed"
+
+
 @dataclass(slots=True)
 class TargetPlan:
     target: str
@@ -460,6 +490,43 @@ def sources_for_target(messages: list[SourceMessage], sources: list[str],
     return chunks
 
 
+def sources_for_pairing(config: CopyConfig, index: int,
+                        all_sources: list[SourceMessage],
+                        target_count: int) -> list[SourceMessage]:
+    """The sources one target sees, under the page's Copy Mode.
+
+    - mixed: every source, which is the old behaviour and stays the default;
+    - separated: one source per target, in order, wrapping when there are fewer
+      sources than targets;
+    - grouped: the sources split into ``target_count`` contiguous blocks, so a
+      target gets a coherent slice instead of a single chat;
+    - multi_to_one: ``sourcesPerTarget`` sources per target, also in order.
+    """
+    mode = config.pairing
+    if mode == "mixed" or not all_sources or target_count <= 0:
+        return all_sources
+    peers: list[str] = []
+    for message in all_sources:
+        if message.peer not in peers:
+            peers.append(message.peer)
+    if not peers:
+        return all_sources
+    if mode == "separated":
+        chosen = [peers[index % len(peers)]]
+    elif mode == "multi_to_one":
+        per_target = max(1, config.sources_per_target or 1)
+        start = (index * per_target) % len(peers)
+        chosen = [peers[(start + step) % len(peers)]
+                  for step in range(min(per_target, len(peers)))]
+    else:  # grouped
+        blocks = max(1, min(target_count, len(peers)))
+        size = max(1, -(-len(peers) // blocks))
+        block = index % blocks
+        chosen = peers[block * size:(block + 1) * size]
+    allowed = set(chosen)
+    return [message for message in all_sources if message.peer in allowed]
+
+
 def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
     """One plan per target: its rule group, its survivors, its accounts."""
     all_sources = by_peer(config.messages, config.sources)
@@ -474,6 +541,9 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
     plans: list[TargetPlan] = []
     for index, target in enumerate(config.targets):
         sources = all_sources
+        if config.pairing != "mixed":
+            sources = sources_for_pairing(config, index, all_sources,
+                                          len(config.targets))
         if chunks:
             allowed = set(chunks[index % len(chunks)])
             sources = [message for message in all_sources
@@ -567,6 +637,7 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         sources=f"{len(config.sources)}/{SOURCE_LIMIT}",
         captured=len(config.messages),
         copy_mode=config.copy_mode,
+        pairing=config.pairing,
         capture_minutes=config.capture_minutes,
         multiplier=config.multiplier,
         polish=config.polish,
@@ -579,6 +650,12 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                              if config.collection_interval_minutes else "-"),
         crossover=(config.crossover_message_id or "-"),
     )
+    if config.pairing in GATED_MODES:
+        # The reference refuses these two modes without a permission. This
+        # rebuild has no licence layer at all, so the gate is reported instead
+        # of enforced - and the mode still behaves as the page describes.
+        print(f"permission: {GATED_MODES[config.pairing]} "
+              f"(reference gate, not enforced here)")
     on = [name for name, value in config.ignores.items() if value]
     print("忽略开关：" + ("  ".join(on) if on else "全部关闭"))
     level = polish_level(config)
