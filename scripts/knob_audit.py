@@ -17,6 +17,11 @@ Rules, learned the hard way:
   * a field used only inside ``header(...)`` IS dead: printing is not deciding.
 
 Exit code is 0 either way; the list is the deliverable.
+
+``KNOWN`` records the fields this project has looked at and decided about, with
+the reason. They stay in the report - a knob that is deliberately unwired is
+different from one nobody noticed - but they no longer need re-litigating every
+run.
 """
 
 from __future__ import annotations
@@ -26,6 +31,33 @@ import ast
 import pathlib
 import re
 import sys
+
+#: ``feature.field`` -> why it is not wired, decided once, kept visible.
+KNOWN = {
+    "ai_chat.sticker_send_per_mille":
+        "needs a sticker pool; this page carries none and Content.sticker "
+        "takes a path",
+    "ai_comment.sticker_send_percent": "same sticker pool problem as ai_chat",
+    "ai_clone.passive":
+        "the reference's own long-running follow mode; this run is one-shot",
+    "ai_clone.last_source_message_id":
+        "the reference's resumable pair watermark, not a page option",
+    "ai_clone.total_cloned": "a counter the reference persists, not an option",
+    "ai_clone.only_root_forwarded":
+        "the key exists but nothing in the dump shows what 'root' means here",
+    "ai_comment.only_root_forwarded": "same unproven semantics as ai_clone",
+    "batch_login.account_labels":
+        "consumed through accounts_of(raw, data) - a heuristic false positive",
+    "batch_login.hide_import_dialog":
+        "a GUI preference: there is no import dialog to hide in a CLI",
+    "batch_login.import_session_on_drop":
+        "a drag-and-drop behaviour of the reference's window, no CLI equivalent",
+    "mass_send.target_kind":
+        "set by the CLI override layer, not by the task file",
+    "mass_send.dry_run": "set by the CLI (not ctx.live), not by the task file",
+    "proxy.task_name": "consumed through name_of(raw, data) - false positive",
+    "settings.raw": "the base class's own raw dict, read by subclasses",
+}
 
 
 def config_fields(tree: ast.Module) -> list[str]:
@@ -98,17 +130,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path", default="ogtool/features")
     parser.add_argument("--count", action="store_true",
                         help="print only the total")
+    parser.add_argument("--known", action="store_true",
+                        help="list the decided knobs and their reasons")
     args = parser.parse_args(argv)
     root = pathlib.Path(args.path)
     total = 0
+    undecided = 0
     for path in sorted(root.glob("*.py")):
         dead = audit(path)
         if not dead:
             continue
         total += len(dead)
+        stem = path.stem
         if not args.count:
             print(f"{path.name}: {', '.join(dead)}")
-    print(f"dead: {total}")
+            if args.known:
+                for name in dead:
+                    reason = KNOWN.get(f"{stem}.{name}")
+                    if reason:
+                        print(f"  {name}: {reason}")
+        undecided += sum(1 for name in dead
+                         if f"{stem}.{name}" not in KNOWN)
+    print(f"dead: {total} (undecided: {undecided})")
     return 0
 
 
