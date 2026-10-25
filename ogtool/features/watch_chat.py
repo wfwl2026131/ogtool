@@ -48,6 +48,8 @@ FLAGS = (
     Flag("--targets-file", "files", str, "file with one target per line",
          action="append"),
     Flag("--exclude", "exclude", str, "excluded keywords, comma separated"),
+    Flag("--include", "include", str, "included keywords, comma separated"),
+    Flag("--watch-mode", "watch_mode", str, "all, or keyword filtering"),
     Flag("--relay", "relay", str, "relay group link"),
     Flag("--simulate", "simulate", str, "peer|sender|text (repeatable)",
          action="append"),
@@ -75,6 +77,8 @@ class WatchConfig:
     account_labels: list[str] = field(default_factory=list)
     targets: list[Target] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
+    include: list[str] = field(default_factory=list)
+    watch_mode: str = ""
     relay: str = ""
     incoming: list[Incoming] = field(default_factory=list)
     task_name: str = "watch-chat"
@@ -90,6 +94,8 @@ class WatchConfig:
             account_labels=accounts_of(raw, data),
             targets=watch_targets,
             exclude=lines(data, "exclude"),
+            include=lines(data, "include"),
+            watch_mode=text(data, "watch_mode"),
             relay=text(data, "relay"),
             incoming=parse_incoming(
                 data.get("messages") or data.get("simulate") or []),
@@ -109,6 +115,18 @@ def parse_incoming(entries: list) -> list[Incoming]:
     return out
 
 
+def included(text: str, keywords: list[str]) -> bool:
+    """``includeKeywords``: with a list set, the message must carry one.
+
+    An empty list means every message qualifies, which is what makes the page's
+    mode switch meaningful: ``watchAll`` ignores the include box entirely.
+    """
+    if not keywords:
+        return True
+    lowered = text.lower()
+    return any(keyword and keyword.lower() in lowered for keyword in keywords)
+
+
 def excluded(text: str, keywords: list[str]) -> str:
     """The keyword that drops this message, or an empty string."""
     lowered = text.lower()
@@ -116,6 +134,12 @@ def excluded(text: str, keywords: list[str]) -> str:
         if keyword and keyword.lower() in lowered:
             return keyword
     return ""
+
+
+def watches_all(config: WatchConfig) -> bool:
+    """``watchAll`` / ``watchMode=all``: every message qualifies."""
+    mode = config.watch_mode.strip().lower().replace("-", "_").replace(" ", "_")
+    return mode in ("all", "watch_all", "watchall", "everything")
 
 
 def watch_peers(config: WatchConfig) -> list[object]:
@@ -142,6 +166,9 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
                  + (" (no account bound, plan only)" if not accounts else ""),
         targets=", ".join(target.ref for target in config.targets),
         exclude=", ".join(config.exclude) or "-",
+        include=(", ".join(config.include) or "-")
+                + (" (watch all: ignored)" if watches_all(config) else ""),
+        mode=config.watch_mode or "-",
         relay=relay or "-",
         replay=len(config.incoming),
     )
@@ -161,6 +188,13 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
             target = config.targets[0]
         account = labels[(index - 1) % len(labels)]
         counts.watched += 1
+        if not watches_all(config) \
+                and not included(message.text, config.include):
+            counts.dropped += 1
+            record(ctx, task, account, target.ref, True, "not-included")
+            print(f"[{index:03d}] peer={target.ref} sender="
+                  f"{message.sender or '-'} -> SKIP no include keyword")
+            continue
         hit = excluded(message.text, config.exclude)
         if hit:
             counts.dropped += 1
@@ -235,6 +269,10 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
         if cache.seen(chat, ident, datetime.now(UTC)):
             log_drop(account, chat, "DUPLICATE", ident)
             print(f"DROP duplicate peer={chat} id={ident}")
+            return
+        if not watches_all(config) and not included(body, config.include):
+            log_drop(account, chat, "NOT_INCLUDED")
+            print(f"DROP no include keyword peer={chat}")
             return
         hit = excluded(body, config.exclude)
         if hit:

@@ -188,3 +188,27 @@ def test_numeric_targets_are_watched_as_ids_and_relay_as_written():
                          relay="+15550000001")
     assert watch_peers(config) == [6805350975]
     assert relay_peers(config.relay) == ["+15550000001"]
+
+
+def test_include_keywords_drop_messages_that_do_not_carry_one(ctx, capsys):
+    """``includeKeywords`` is the page's other box, next to the exclude list."""
+    config = WatchConfig(targets=parse_many(["@g1"], "custom"),
+                         relay="@relay", include=["bitcoin"],
+                         incoming=[Incoming("@g1", "Ann", "bitcoin is up"),
+                                   Incoming("@g1", "Bob", "weather today")])
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "relayed to @relay" in output
+    assert "SKIP no include keyword" in output
+
+
+def test_watch_all_ignores_the_include_box(ctx, capsys):
+    config = WatchConfig(targets=parse_many(["@g1"], "custom"),
+                         relay="@relay", include=["bitcoin"],
+                         watch_mode="all",
+                         incoming=[Incoming("@g1", "Bob", "weather today")])
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "SKIP no include keyword" not in output
+    assert "relayed to @relay" in output
+    assert "watch all" in output
