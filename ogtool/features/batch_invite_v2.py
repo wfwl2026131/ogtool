@@ -57,6 +57,29 @@ FLAGS = (
          "invites one target accepts"),
     Flag("--success-cap", "success_cap", int, "total successes"),
     Flag("--exec-cap", "exec_cap", int, "total attempts"),
+    Flag("--member-file", "member_file", str,
+         "file with one member per line (memberInputMode=file)"),
+    Flag("--member-input-mode", "member_input_mode", str,
+         "manual, text or file"),
+    Flag("--wait-minutes", "wait_minutes", float,
+         "pause between two targets, minutes"),
+    Flag("--limit-count-type", "limit_count_type", str,
+         "success or exec: what the per-target cap counts"),
+    Flag("--invites-per-request", "invites_per_request", int,
+         "how many invites share one request gap"),
+    Flag("--max-invite-interval-ms", "max_invite_interval_ms", int,
+         "upper bound of the invite interval, milliseconds"),
+    Flag("--peer-flood-target-max-retries", "peer_flood_target_max_retries",
+         int, "PEER_FLOOD retries for one target"),
+    Flag("--custom-task-key", "custom_task_key", str,
+         "task key written into the export"),
+    Flag("--task-mark/--no-task-mark", "task_mark_enabled", None,
+         "write the task key into the export (default: on)",
+         action="bool_pair"),
+    Flag("--continue-members/--no-continue-members",
+         "continue_members_across_targets", None,
+         "retry a contact on the next target after it failed on one",
+         action="bool_pair"),
     Flag("--invite-interval-min", "invite_interval_min", float,
          "minimum invite interval"),
     Flag("--invite-interval-max", "invite_interval_max", float,
@@ -94,6 +117,27 @@ class InviteV2Config:
     flood_cap: int = 3
     invitee_flood_cap: int = 2
     export_flood_timeout: str = ""
+    # --- the page's config, by its own names ---------------------------
+    #: ``memberInputMode`` / ``memberFilePath``: 手动 / 文本 / 文件 三选一。
+    member_input_mode: str = "manual"
+    member_file: str = ""
+    #: ``continueMembersAcrossTargets``: 一个联系人被某个群拒了，还要不要
+    #: 在下一个群再试一次。关掉 = 失败即全放弃。
+    continue_members_across_targets: bool = True
+    #: ``waitMinutes``: 两个目标之间的停顿，分钟。
+    wait_minutes: float = 0.0
+    #: ``limitCountType``: 上限按成功数还是按执行数算。
+    limit_count_type: str = "success"
+    #: ``customTaskKey`` / ``taskMarkEnabled``: 任务标记，写进结果导出。
+    custom_task_key_enabled: bool = False
+    custom_task_key: str = ""
+    task_mark_enabled: bool = True
+    #: ``invitesPerRequest``: 一次请求带几个人。
+    invites_per_request: int = 1
+    #: ``maxInviteIntervalMsec``: 邀请间隔的上界，毫秒。
+    max_invite_interval_ms: int = 0
+    #: ``peerFloodTargetMaxRetries``: 某个群 PEER_FLOOD 时的重试封顶。
+    peer_flood_target_max_retries: int = 3
     task_name: str = "batch-invite-v2"
 
     @classmethod
@@ -113,6 +157,22 @@ class InviteV2Config:
         contacts.extend(_file_lines(data, "contact_files"))
         if not targets:
             raise ConfigError(f"{SECTION}: no target group given")
+        mode = str(data.get("member_input_mode") or "manual").lower()
+        if mode not in ("manual", "text", "file"):
+            raise ConfigError(
+                f"{SECTION}: member_input_mode must be manual, text or file, "
+                f"is {mode}")
+        if mode == "file":
+            file_name = text(data, "member_file")
+            if not file_name:
+                raise ConfigError(
+                    f"{SECTION}: member_input_mode=file needs member_file")
+            contacts.extend(_file_lines(data, "member_file"))
+        limit_type = str(data.get("limit_count_type") or "success").lower()
+        if limit_type not in ("success", "exec"):
+            raise ConfigError(
+                f"{SECTION}: limit_count_type must be success or exec, "
+                f"is {limit_type}")
         return cls(
             account_labels=accounts_of(raw, data),
             targets=targets,
@@ -127,6 +187,21 @@ class InviteV2Config:
             flood_cap=num(data, "flood_cap", 3, kind=int),
             invitee_flood_cap=num(data, "invitee_flood_cap", 2, kind=int),
             export_flood_timeout=text(data, "export_flood_timeout"),
+            member_input_mode=mode,
+            member_file=text(data, "member_file"),
+            continue_members_across_targets=bool(
+                data.get("continue_members_across_targets", True)),
+            wait_minutes=num(data, "wait_minutes", 0.0, minimum=0.0),
+            limit_count_type=limit_type,
+            custom_task_key_enabled=bool(data.get("custom_task_key_enabled")),
+            custom_task_key=text(data, "custom_task_key"),
+            task_mark_enabled=bool(data.get("task_mark_enabled", True)),
+            invites_per_request=num(data, "invites_per_request", 1, kind=int,
+                                     minimum=1),
+            max_invite_interval_ms=num(data, "max_invite_interval_ms", 0,
+                                       kind=int, minimum=0),
+            peer_flood_target_max_retries=num(
+                data, "peer_flood_target_max_retries", 3, kind=int, minimum=0),
             task_name=name_of(raw, data, "batch-invite-v2"),
         )
 
@@ -144,14 +219,21 @@ def _unique(items: list[str]) -> list[str]:
 
 def build_jobs(targets: list[str], contacts: list[str], handlers: list[str],
                *, target_success_cap: int = 0,
-               exec_cap: int = 0) -> list[tuple[str, str, str]]:
-    """Round robin handlers over contacts, one target at a time."""
+               exec_cap: int = 0,
+               cap_by: str = "success") -> list[tuple[str, str, str]]:
+    """Round robin handlers over contacts, one target at a time.
+
+    ``cap_by`` is ``limitCountType``: the per-target number counts successes
+    (the default) or attempts. Counting attempts means a target that keeps
+    failing still consumes its cap, which is what "exec" says on the page.
+    """
     jobs: list[tuple[str, str, str]] = []
     if not handlers or not contacts:
         return jobs
+    per_target = exec_cap if cap_by == "exec" and exec_cap else target_success_cap
     for target in targets:
         for taken, member in enumerate(contacts, start=1):
-            if target_success_cap and taken > target_success_cap:
+            if per_target and taken > per_target:
                 break
             if exec_cap and len(jobs) >= exec_cap:
                 return jobs
@@ -182,14 +264,29 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
     flood: list[str] = []
     timeouts: list[str] = []
     rng = random.Random(len(lane))
+    abandoned: set[str] = set()
+    previous_target = ""
     for index, (handler, group, contact) in enumerate(lane, start=1):
         if config.success_cap and ok >= config.success_cap:
             print(f"stopped: success_cap ({config.success_cap})")
             break
+        if not config.continue_members_across_targets and contact in abandoned:
+            print(f"[{index:03d}/{total:03d}] skipped {contact} "
+                  f"(already failed on another target)")
+            continue
         if index > 1:
-            delay = gap(config, rng)
-            waited.append(delay)
-            pause(ctx, delay)
+            if group != previous_target and config.wait_minutes:
+                # waitMinutes is a pause between two targets, not between two
+                # invites: it is the page's "let the last group settle" knob.
+                rest = config.wait_minutes * 60.0
+                waited.append(rest)
+                pause(ctx, rest)
+            elif index % max(1, config.invites_per_request) == 1 \
+                    or config.invites_per_request == 1:
+                delay = gap(config, rng)
+                waited.append(delay)
+                pause(ctx, delay)
+        previous_target = group
         target = parse_many([group], "group")[0]
         member = parse_many([contact], "custom")[0]
         floods = 0
@@ -214,6 +311,8 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
                result.detail)
         print(f"[{index:03d}/{total:03d}] handler={handler} "
               f"target={group} contact={contact} -> {result.code}")
+        if not config.continue_members_across_targets:
+            abandoned.add(contact)
         if result.code == "PEER_FLOOD" and contact not in flood:
             flood.append(contact)
         if result.code == "TIMEOUT" and contact not in timeouts:
@@ -226,7 +325,8 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
     handlers = [account.label for account in accounts] or ["-"]
     jobs = build_jobs(config.targets, config.contacts, handlers,
                       target_success_cap=config.target_success_cap,
-                      exec_cap=config.exec_cap)
+                      exec_cap=config.exec_cap,
+                      cap_by=config.limit_count_type)
 
     header(
         config.task_name,
@@ -243,8 +343,16 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
                         f"{config.invite_interval_max:.0f}s",
         flood_cap=config.flood_cap,
         invitee_flood_cap=config.invitee_flood_cap,
+        member_input=f"{config.member_input_mode}"
+                     + (f" ({config.member_file})" if config.member_file else ""),
+        limit_count_type=config.limit_count_type,
+        wait_minutes=config.wait_minutes or "-",
+        invites_per_request=config.invites_per_request,
+        task_key=config.custom_task_key or "-",
         queue=len(jobs),
     )
+    if config.max_invite_interval_ms:
+        print(f"max invite interval: {config.max_invite_interval_ms} ms")
 
     task = open_task(ctx, config.task_name, FEATURE,
                      {"targets": config.targets, "contacts": config.contacts},
@@ -282,9 +390,15 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
 
     base = out_dir(ctx, {"output_dir": ""}, ctx.settings)
     path = config.export_flood_timeout or f"{base}/batch_invite_v2_flood.txt"
-    export(path, [f"PEER_FLOOD\t{item}" for item in flood]
-           + [f"TIMEOUT\t{item}" for item in timeouts],
-           "PEER_FLOOD and TIMEOUT")
+    # A key that was typed is meant to be used; the page's separate "enabled"
+    # switch only matters when a key comes from a stored config.
+    mark = (config.custom_task_key
+            if config.task_mark_enabled
+            and (config.custom_task_key or config.custom_task_key_enabled)
+            else "")
+    rows = [f"PEER_FLOOD\t{item}\t{mark}" for item in flood]
+    rows += [f"TIMEOUT\t{item}\t{mark}" for item in timeouts]
+    export(path, rows, "PEER_FLOOD and TIMEOUT")
     close_task(ctx, task, ok=ok, failed=failed)
     return 0 if not failed else 1
 

@@ -16,6 +16,7 @@ import random
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+from ..ai import AIClient
 from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..limiter import format_duration
@@ -72,6 +73,23 @@ FLAGS = (
          "text messages one account may send per day"),
     Flag("--multiplier", "multiplier", int, "message multiplier"),
     Flag("--polish", "polish", int, "polish level 0-3"),
+    Flag("--ai-polish-level", "ai_polish_level", int,
+         "aiPolishLevel: how hard the rewrite is (0-3)"),
+    Flag("--message-speed", "message_speed", int,
+         "messageSpeed: sent messages per minute, 0 = as fast as allowed"),
+    Flag("--lightweight", "lightweight_mode", None,
+         "lightweightMode: skip keyword replacement and media rewrite",
+         action="store_true"),
+    Flag("--ignore-bot", "ignore_bot_messages", None,
+         "drop messages captured from bots", action="store_true"),
+    Flag("--ignore-at", "ignore_at_messages", None,
+         "drop messages that mention someone", action="store_true"),
+    Flag("--ignore-tme", "ignore_tme_links", None,
+         "drop messages that carry a t.me link", action="store_true"),
+    Flag("--ignore-pinned", "ignore_pinned_messages", None,
+         "drop pinned messages", action="store_true"),
+    Flag("--ignore-admin", "ignore_admin_messages", None,
+         "drop messages posted by an admin", action="store_true"),
     Flag("--interval-min", "interval_min", float, "minimum send interval"),
     Flag("--interval-max", "interval_max", float, "maximum send interval"),
     Flag("--filter-keywords", "filter_keywords", str,
@@ -253,9 +271,63 @@ def _lines(value: object) -> list[str]:
     return str(value).splitlines()
 
 
+#: What each ``aiPolishLevel`` asks for. Level 0 never calls the endpoint.
+POLISH_PROMPTS = {
+    1: "只做最小润色：改错字、补标点，不改变句子结构和长度。",
+    2: "中等改写：保持原意，换掉重复的词，让句子更顺，长度接近原文。",
+    3: "彻底改写：保持原意与语气，重写句式和用词，可以明显不同于原文。",
+}
+
+
+def polish_level(config: CopyConfig) -> int:
+    """The level that actually applies: ``aiPolishLevel`` first, then ``polish``."""
+    return config.ai_polish_level or config.polish
+
+
+def polish_text(ai: object, text: str, level: int) -> tuple[str, str]:
+    """Rewrite one message at *level*; returns ``(text, source)``.
+
+    A level outside the table, or an endpoint that is not there, leaves the
+    text alone and says so: a polish that silently changes nothing looks the
+    same as one that ran and liked the original.
+    """
+    if level not in POLISH_PROMPTS or not text.strip():
+        return text, "none"
+    prompt = (f"{POLISH_PROMPTS[level]}\n\n原文：\n{text}\n\n"
+              f"只输出改写后的正文，不要解释。")
+    generated = ai.generate(prompt, fallback=text)  # type: ignore[attr-defined]
+    answer = (generated.response or "").strip()
+    if answer and generated.source == "ai":
+        return answer, "ai"
+    return text, generated.source or "template"
+
+
 def read_ignores(data: dict) -> dict[str, bool]:
     """The five switches, as they sit in the page's config."""
     return {name: bool(data.get(name)) for name in IGNORE_SENDERS}
+
+
+def polish_plan(plans: list[TargetPlan], ai: object, level: int) -> int:
+    """Rewrite the kept messages of every plan; returns how many changed.
+
+    The plans share one capture, so a message is rewritten once and then sent
+    to every target with the same wording — polishing per target would give
+    the same source message two different texts for no reason.
+    """
+    seen: dict[int, str] = {}
+    changed = 0
+    for plan in plans:
+        for message in plan.collected.kept:
+            key = message.message_id
+            if key in seen:
+                message.text = seen[key]
+                continue
+            text, source = polish_text(ai, message.text, level)
+            if source == "ai":
+                changed += 1
+            seen[key] = text
+            message.text = text
+    return changed
 
 
 def _split(value: object) -> list[str]:
@@ -374,8 +446,10 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     )
     on = [name for name, value in config.ignores.items() if value]
     print("忽略开关：" + ("  ".join(on) if on else "全部关闭"))
-    if config.ai_polish_level:
-        print(f"ai polish level: {config.ai_polish_level}")
+    level = polish_level(config)
+    if level:
+        mode = "applied when live" if not ctx.live else "applying now"
+        print(f"ai polish level: {level} ({mode})")
     if config.message_speed:
         print(f"message speed: {config.message_speed}/min")
     if config.lightweight_mode:
@@ -384,6 +458,11 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     task = open_task(ctx, config.task_name, FEATURE,
                      {"targets": config.targets,
                       "sources": config.sources}, total)
+    if ctx.live and level:
+        polished = polish_plan(plans, AIClient(ctx.settings.ai,
+                                               ctx.settings.ai.timeout),
+                               level)
+        print(f"polished: {polished} message(s) at level {level}")
     rng = random.Random()
     ok = failed = skipped = 0
     waited = 0.0
