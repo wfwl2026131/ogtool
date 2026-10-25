@@ -313,6 +313,12 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         else:
             print("warning: no post was captured, the run has nothing to "
                   "comment on")
+    if not config.require_comment and not config.require_like:
+        # "required: none" is not a run: the page starts it and the per-post
+        # work is empty, so say so instead of printing a plan of nothing.
+        print("ERROR: neither comment_required nor like_required is on, "
+              "the run would do nothing")
+        return 2
     stats = plan(config, labels)
 
     header(
@@ -366,18 +372,37 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
             with lock:
                 counters["ai_fallback"] += 1
         pause(ctx, spec.delay)
-        body = _clip(generated.response, config.max_chars)
-        if spec.emoji:
+        body = _clip(generated.response, config.max_chars) \
+            if config.require_comment else ""
+        if spec.emoji and body:
             with lock:
                 counters["emoji"] += 1
             body = f"{body} {random.choice(BODY_EMOJI)}".strip()
-        outcome = sender.send(spec.account, target,
-                              Content(text=body, reply_to=spec.post_id))
+        outcome = None
+        attempts = 0
+        if config.require_comment:
+            # ``commentRetryMax``: a comment that failed is worth another try;
+            # the page counts the attempts and gives up on the last one.
+            while True:
+                outcome = sender.send(spec.account, target,
+                                      Content(text=body,
+                                              reply_to=spec.post_id))
+                if outcome.ok or attempts >= config.retry_max:
+                    break
+                attempts += 1
+                print(f"retry {attempts}/{config.retry_max} "
+                      f"{spec.account} post={spec.post_id} -> {outcome.code}")
         with lock:
             counters["waited"] += spec.delay
             progress["index"] += 1
             index = progress["index"]
-        if outcome.ok:
+        if outcome is not None and not outcome.ok:
+            with lock:
+                counters["failed"] += 1
+            record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
+                   False, outcome.code)
+            state = outcome.code
+        else:
             reacted = 0
             for like in range(max(0, spec.likes)):
                 if like >= len(labels):
@@ -396,13 +421,12 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                 counters["reactions"] += reacted
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
                    True, detail=f"likes={spec.likes} reactions={reacted}")
-            state = f"ok reactions={reacted}/{spec.likes}"
-        else:
-            with lock:
-                counters["failed"] += 1
-            record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
-                   False, outcome.code)
-            state = outcome.code
+            if outcome is None:
+                state = f"liked reactions={reacted}/{spec.likes}"
+            else:
+                state = f"ok reactions={reacted}/{spec.likes}"
+                if attempts:
+                    state += f" retries={attempts}"
         print(f"[{index:03d}/{stats.total:03d}] account={spec.account} "
               f"target={target.display()} post={spec.post_id} "
               f"tone={spec.tone} likes={spec.likes} "

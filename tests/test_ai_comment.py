@@ -198,3 +198,119 @@ def test_one_lane_per_post_in_plan_order():
     # Same post id on a different target is a different post.
     assert [[spec.account for spec in lane] for lane in lanes] == [
         ["a1", "a2"], ["a1"], ["a1"]]
+
+
+def test_a_run_that_neither_comments_nor_likes_is_a_usage_error(ctx, capsys):
+    """``required: none`` would print a full plan and do nothing."""
+    from ogtool.features.ai_comment import CommentConfig, run
+
+    config = CommentConfig(targets=["@g1"], require_comment=False,
+                           require_like=False, messages=[])
+    assert run(config, ctx) == 2
+    assert "would do nothing" in capsys.readouterr().out
+
+
+def test_like_only_mode_reacts_without_commenting(ctx, capsys):
+    from ogtool.features.ai_comment import CommentConfig, run
+
+    class LikeSender:
+        def __init__(self):
+            self.sent = 0
+            self.reacted = 0
+
+        def send(self, account, target, content):
+            self.sent += 1
+            raise AssertionError("like-only mode must not comment")
+
+        def react(self, account, target, message_id, reaction):
+            from ogtool.senders import SendResult
+
+            self.reacted += 1
+            return SendResult(ok=True)
+
+    sender = LikeSender()
+
+    class LiveCtx:
+        live = False
+        task_id = None
+
+        def __init__(self, inner):
+            self.inner = inner
+            self.settings = inner.settings
+            self.store = inner.store
+
+        def sender(self):
+            return sender
+
+        def note(self, message):
+            pass
+
+        def bind(self, labels):
+            return self.inner.bind(labels)
+
+        @property
+        def ai(self):
+            return self.inner.ai
+
+    from ogtool.sources import parse_many as parse_sources
+
+    config = CommentConfig(targets=["@g1"], require_comment=False,
+                           require_like=True, likes_min=1, likes_max=1,
+                           posts=1, per_post_min=1, per_post_max=1,
+                           messages=parse_sources(["@g1|Ann|hello"]))
+    run(config, LiveCtx(ctx))
+    assert sender.sent == 0
+    assert sender.reacted >= 1
+
+
+def test_retry_max_retries_a_failed_comment(ctx, capsys):
+    """``commentRetryMax``: a failed comment is worth another try."""
+    from ogtool.features.ai_comment import CommentConfig, run
+    from ogtool.senders import SendResult
+    from ogtool.sources import parse_many as parse_sources
+
+    class FlakySender:
+        def __init__(self):
+            self.calls = 0
+
+        def send(self, account, target, content):
+            self.calls += 1
+            if self.calls == 1:
+                return SendResult(ok=False, code="FLOOD", detail="slow down")
+            return SendResult(ok=True)
+
+        def react(self, account, target, message_id, reaction):
+            return SendResult(ok=True)
+
+    sender = FlakySender()
+
+    class LiveCtx:
+        live = False
+        task_id = None
+
+        def __init__(self, inner):
+            self.inner = inner
+            self.settings = inner.settings
+            self.store = inner.store
+
+        def sender(self):
+            return sender
+
+        def note(self, message):
+            pass
+
+        def bind(self, labels):
+            return self.inner.bind(labels)
+
+        @property
+        def ai(self):
+            return self.inner.ai
+
+    config = CommentConfig(targets=["@g1"], messages=parse_sources(
+        ["@g1|Ann|hello"]), posts=1, per_post_min=1, per_post_max=1,
+        retry_max=2, likes_min=0, likes_max=0)
+    assert run(config, LiveCtx(ctx)) == 0
+    assert sender.calls == 2
+    output = capsys.readouterr().out
+    assert "retry 1/2" in output
+    assert "retries=1" in output
