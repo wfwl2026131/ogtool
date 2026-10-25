@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("receipts", "knobs", "sweep", "docs")
+CHECKS = ("receipts", "knobs", "sweep", "docs", "live")
 
 #: Where the two project notes live. They are outside this checkout, so a
 #: missing directory is reported as "skipped", never as a failure.
@@ -146,6 +146,32 @@ def check_docs(paths: tuple[Path, ...] | None = None,
             f"test(s)"), problems
 
 
+def check_live(base: Path | None = None,
+               timeout: float = 900.0) -> tuple[str, list[str]]:
+    """The real-machine cases, when this machine has a login to run them with.
+
+    Kept in the same command as the offline checks because "the install is
+    healthy" includes "the session still works". Without a config.yaml there is
+    nothing to check, and that is a skip rather than a failure - a checkout
+    without credentials is a normal checkout.
+    """
+    here = base or root()
+    config = here / "config.yaml"
+    if not config.exists():
+        return "live: no config.yaml, skipped", []
+    run_smoke = subprocess.run(  # noqa: S603 - our own script, fixed arguments
+        [sys.executable, str(here / "scripts/live_smoke.py")],
+        cwd=here, capture_output=True, text=True, timeout=timeout,
+        check=False, env={**_env(), "PYTHONPATH": str(here)})
+    output = (run_smoke.stdout or "") + (run_smoke.stderr or "")
+    lines = [line for line in output.splitlines() if line.strip()]
+    summary = lines[-1] if lines else "no output"
+    if run_smoke.returncode == 0:
+        return summary, []
+    return summary, [f"live_smoke exited {run_smoke.returncode}\n"
+                     f"{output[-800:]}"]
+
+
 def run(settings: Any, only: list[str] | None = None,
         timeout: float = 900.0) -> int:
     """Run the checks and print one line each; nonzero when anything failed."""
@@ -158,6 +184,8 @@ def run(settings: Any, only: list[str] | None = None,
             line, found = check_knobs()
         elif name == "docs":
             line, found = check_docs()
+        elif name == "live":
+            line, found = check_live()
         else:
             line, found = check_sweep(timeout=timeout)
         print(line)
@@ -169,4 +197,5 @@ def run(settings: Any, only: list[str] | None = None,
 
 
 __all__ = ["CHECKS", "CURRENT", "DOC_PATHS", "check_docs", "check_knobs",
+           "check_live",
            "check_receipts", "check_sweep", "collected_tests", "root", "run"]

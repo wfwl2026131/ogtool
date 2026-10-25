@@ -108,3 +108,16 @@ def test_the_real_checkout_has_no_stale_test_count():
     if "0 note(s) checked" in line:
         pytest.skip("notes are not on this machine")
     assert problems == []
+
+
+def test_live_is_skipped_without_a_config(tmp_path):
+    line, problems = selftest.check_live(base=tmp_path)
+    assert problems == []
+    assert "skipped" in line
+
+
+def test_live_reports_a_missing_script(tmp_path):
+    (tmp_path / "config.yaml").write_text("logs: l\n", encoding="utf-8")
+    line, problems = selftest.check_live(base=tmp_path)
+    assert problems
+    assert "live_smoke" in " ".join(problems) or "Exit" in line
