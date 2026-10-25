@@ -73,6 +73,14 @@ FLAGS = (
          "a folder of images, used one per account"),
     Flag("--username-probability", "username_probability", int,
          "how often to set a username, in percent"),
+    Flag("--username-mode", "username_mode", str,
+         "manual / file / random (random is the page's own generator)"),
+    Flag("--username-words", "username_words_file", str,
+         "word list for random mode (default tdata/username_words_en.txt)"),
+    Flag("--username-nickname-percent", "username_nickname_percent", int,
+         "share of random handles built from the nickname (page default 30)"),
+    Flag("--username-suffix-retries", "username_suffix_retries", int,
+         "suffix retries when a handle is occupied"),
     Flag("--interval-ms", "interval_ms", int,
          "the page's intervalMs: gap between two edits, in milliseconds"),
     Flag("--operation-interval", "operation_interval", float,
@@ -117,6 +125,60 @@ def avatar_files(folder: str) -> list[str]:
     ]
 
 
+#: The page's own hint for random usernames: "Random mode uses
+#: nickname-derived usernames 30% of the time; otherwise it picks from word
+#: dictionary (tdata/username_words_en.txt or qrc/deep/username_words.txt). It
+#: retries with natural suffix when occupied."
+NICKNAME_PERCENT = 30
+SUFFIX_RETRIES = 3
+#: Where the reference keeps the word list, in the order it tries them.
+WORD_FILES = ("tdata/username_words_en.txt",
+              "qrc/deep/username_words.txt")
+
+
+def username_from_nickname(first: str, last: str, rng: random.Random) -> str:
+    """A handle built out of the display name, the way the page does it."""
+    body = "".join(char for char in f"{first}{last}".lower()
+                   if char.isalnum())
+    if not body:
+        body = "user"
+    body = body[:24]
+    if rng.randrange(100) < 50:
+        body = f"{body}{rng.randrange(10, 99)}"
+    return body
+
+
+def load_words(paths: tuple[str, ...] = WORD_FILES) -> list[str]:
+    """The dictionary the page falls back to, in order, first one that exists."""
+    from pathlib import Path as _Path
+
+    for name in paths:
+        candidate = _Path(name).expanduser()
+        if not candidate.is_file():
+            continue
+        try:
+            words = [line.strip() for line in
+                     candidate.read_text(encoding="utf-8",
+                                         errors="replace").splitlines()]
+        except OSError:
+            continue
+        words = [word for word in words if word and " " not in word]
+        if words:
+            return words
+    return []
+
+
+def with_suffix(base: str, attempt: int, rng: random.Random) -> str:
+    """A natural-sounding retry handle: ``base2``, ``base_x``, ``base77``."""
+    if attempt <= 0:
+        return base
+    if attempt == 1:
+        return f"{base}{rng.randrange(10, 100)}"
+    if attempt == 2:
+        return f"{base}_{rng.randrange(10, 100)}"
+    return f"{base}{rng.randrange(1000, 10000)}"
+
+
 @dataclass(slots=True)
 class RenameSource:
     """One list of the page: what it holds, where it came from, how to use it."""
@@ -125,6 +187,8 @@ class RenameSource:
     entries: list[str] = field(default_factory=list)
     file: str = ""
     probability: int = 100
+    #: ``usernameMode``: manual / file / random. Random is the page's generator.
+    mode_random: bool = False
 
     def usable(self) -> bool:
         return bool(self.entries)
@@ -157,8 +221,14 @@ def _source(data: dict, prefix: str, *, probability: int = 100,
     plain ``file`` / ``entries`` keys: an old task file keeps working.
     """
     mode = text(data, f"{prefix}_mode").lower()
-    if mode and mode not in MODES:
-        raise ConfigError(f"{SECTION}: {prefix}_mode must be manual or file")
+    # ``usernameMode=random`` is a real mode on the page, but only for the
+    # username list: it generates handles instead of reading them.
+    allowed = MODES + (("random",) if prefix == "username" else ())
+    if mode and mode not in allowed:
+        raise ConfigError(
+            f"{SECTION}: {prefix}_mode must be "
+            + ("manual, file or random" if prefix == "username"
+               else "manual or file"))
     file_name = text(data, f"{prefix}_file")
     if not file_name and prefix == "nickname":
         file_name = alias_file
@@ -218,6 +288,12 @@ class RenameConfig:
     seed: int = 0
     pause_at: int = 0
     stop_at: int = 0
+    #: ``usernameMode`` (the page's own key) plus the dictionary it falls back
+    #: to and how many suffix retries an occupied handle gets.
+    username_mode: str = ""
+    username_words_file: str = ""
+    username_nickname_percent: int = NICKNAME_PERCENT
+    username_suffix_retries: int = SUFFIX_RETRIES
     task_name: str = "batch-rename"
 
     def gap(self) -> float:
@@ -254,6 +330,13 @@ class RenameConfig:
             file=nickname.file or alias_file,
             about=_source(data, "about"),
             usernames=_source(data, "username", probability=probability),
+            username_mode=str(data.get("username_mode") or ""),
+            username_words_file=text(data, "username_words_file"),
+            username_nickname_percent=min(100, num(
+                data, "username_nickname_percent", NICKNAME_PERCENT,
+                kind=int, minimum=0)),
+            username_suffix_retries=num(data, "username_suffix_retries",
+                                        SUFFIX_RETRIES, kind=int, minimum=0),
             avatars=RenameSource(
                 mode=FILE,
                 entries=avatar_files(avatar_folder),
@@ -272,8 +355,59 @@ class RenameConfig:
         )
 
 
+def username_candidate(config: RenameConfig, index: int, nickname: str,
+                       rng: random.Random) -> str:
+    """One handle for the *index*-th account.
+
+    With ``usernameMode=random`` the page takes the display name 30% of the
+    time and a dictionary word otherwise; when the dictionary is not on disk it
+    says so and stays on the nickname path rather than inventing a handle.
+    """
+    if rng.randrange(100) < config.username_nickname_percent:
+        return username_from_nickname(nickname, "", rng)
+    words = load_words((config.username_words_file,)
+                       if config.username_words_file else WORD_FILES)
+    if not words:
+        print(f"warning: username word list not found "
+              f"({' / '.join(WORD_FILES)}), using the nickname")
+        return username_from_nickname(nickname, "", rng)
+    word = rng.choice(words).lower()
+    return with_suffix(word, rng.randrange(0, 2), rng)
+
+
+def _set_username(config: RenameConfig, state: RenameState, sender: object,
+                  account: str, wanted: str, rng: random.Random) -> None:
+    """Set the handle, retrying with a natural suffix when it is taken.
+
+    "It retries with natural suffix when occupied" is the page's own wording;
+    only occupancy gets a retry, every other failure is reported and counted.
+    """
+    base = wanted or "user"
+    for attempt in range(max(1, config.username_suffix_retries + 1)):
+        value = with_suffix(base, attempt, rng)
+        result = sender.update_username(account, value)  # type: ignore[attr-defined]
+        if result.ok:
+            state.bump("用户名")
+            print(f"账号 {account} 用户名已更新: @{value}"
+                  + (f"（第 {attempt + 1} 次）" if attempt else ""))
+            return
+        occupied = any(token in str(result.code).upper()
+                       for token in ("OCCUPIED", "USERNAME_INVALID",
+                                     "USERNAMES_UNAVAILABLE"))
+        if not occupied:
+            state.failed += 1
+            print(f"账号 {account} 用户名更新失败: {result.code}")
+            return
+        if attempt < config.username_suffix_retries:
+            print(f"账号 {account} 用户名 @{value} 已被占用，换后缀重试")
+    state.failed += 1
+    print(f"账号 {account} 用户名连续 {config.username_suffix_retries + 1} 次"
+          f"都不可用")
+
+
 def _edit_extras(config: RenameConfig, state: RenameState, sender: object,
-                 account: str, index: int, rng: random.Random) -> None:
+                 account: str, index: int, rng: random.Random,
+                 first: str = "", last: str = "") -> None:
     """The three lists besides the nickname, applied to the same account."""
     if config.about.usable():
         value = config.about.at(index)
@@ -299,19 +433,15 @@ def _edit_extras(config: RenameConfig, state: RenameState, sender: object,
                 state.failed += 1
                 print(f"账号 {account} 头像更新失败: {result.code}")
 
-    if config.usernames.usable():
+    if config.usernames.usable() or config.username_mode == "random":
         if config.usernames.misses(rng):
             state.skipped += 1
             print(f"{PROBABILITY_MISS}（账号 {account}）")
         else:
-            value = config.usernames.at(index).lstrip("@")
-            result = sender.update_username(account, value)  # type: ignore[attr-defined]
-            if result.ok:
-                state.bump("用户名")
-                print(f"账号 {account} 用户名已更新: @{value}")
-            else:
-                state.failed += 1
-                print(f"账号 {account} 用户名更新失败: {result.code}")
+            wanted = (username_candidate(config, index, f"{first}{last}", rng)
+                      if config.username_mode == "random"
+                      else config.usernames.at(index).lstrip("@"))
+            _set_username(config, state, sender, account, wanted, rng)
 
 
 def run(config: RenameConfig, ctx: RunContext) -> int:
@@ -375,7 +505,8 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
                 record(ctx, task, account, f"{first} {last}".strip(), False,
                        result.code)
 
-        _edit_extras(config, state, sender, account, index - 1, rng)
+        _edit_extras(config, state, sender, account, index - 1, rng,
+                     first, last)
         print(f"[{index:03d}/{state.total:03d}] {state.line()}")
 
         if state.pause_at and index == state.pause_at:
