@@ -72,6 +72,15 @@ KNOWN_CODES = RETRYABLE | {
 #: A backend returned a coroutine instead of a value: the call never ran.
 CLIENT_NOT_AWAITED = "CLIENT_NOT_AWAITED"
 
+#: Pages that put a message into somebody's chat. A daily sending budget must be
+#: counted against these only: ``results.status`` says "sent" for every page that
+#: succeeded, and exports or heartbeats are not messages.
+SENDING_FEATURES: tuple[str, ...] = (
+    "mass_send", "mass_send_v2", "auto_reply", "ai_chat", "ai_clone",
+    "ai_comment", "ai_script", "copy_chat", "batch_invite", "batch_invite_v2",
+    "batch_join", "batch_rename", "forwarder", "add_contact",
+)
+
 __all__ = [
     "BOT_RESULTS_EMPTY",
     "CLIENT_NOT_AWAITED",

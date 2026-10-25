@@ -684,15 +684,28 @@ class Store:
             "SELECT * FROM ai_calls WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
 
-    def count_sent_today(self, account: str,
-                         now: datetime | None = None) -> int:
+    def count_sent_today(self, account: str, now: datetime | None = None,
+                         features: Iterable[str] | None = None) -> int:
+        """Successful rows today, optionally limited to the pages that send.
+
+        ``status = 'sent'`` is this schema's word for "did the thing", so every
+        page uses it: an export row, a heartbeat and a real message all count.
+        A daily *sending* budget that asked this question without naming the
+        sending pages was therefore spent by pages that send nothing - here 98
+        rows of exports and heartbeats, which is why a single message was
+        refused for the rest of the day.
+        """
         start, end = local_day_bounds(now)
-        row = self._conn.execute(
-            """SELECT COUNT(*) AS n FROM results
-               WHERE account = ? AND status = 'sent'
-                 AND created_at >= ? AND created_at < ?""",
-            (account, start, end),
-        ).fetchone()
+        sql = """SELECT COUNT(*) AS n FROM results
+                 WHERE account = ? AND status = 'sent'
+                   AND created_at >= ? AND created_at < ?"""
+        params: list[object] = [account, start, end]
+        wanted = list(features or ())
+        if wanted:
+            sql += " AND task_id IN (SELECT id FROM tasks WHERE feature IN " \
+                   f"({','.join('?' * len(wanted))}))"
+            params.extend(wanted)
+        row = self._conn.execute(sql, params).fetchone()
         return int(row["n"])
 
     def add_log(self, task_id: int | None, message: str, level: str = "info") -> None:

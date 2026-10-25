@@ -123,3 +123,23 @@ def test_two_processes_can_write_at_once(tmp_path):
     finally:
         first.close()
         second.close()
+
+
+def test_a_heartbeat_does_not_spend_the_sending_budget(tmp_path):
+    """'sent' is this schema's word for success, not for a message.
+
+    The daily sending budget used to count every successful row, so exports and
+    online heartbeats ate it: 98 rows here, which is why the first real message
+    of the day was refused as 'budget exhausted'.
+    """
+    store = Store(tmp_path / "og.sqlite")
+    exporting = store.create_task("export", "export_accounts", {"a": 1}, 1)
+    store.add_result(exporting.id, "acc", "row", "sent")
+    online = store.create_task("online", "keep_online", {"a": 1}, 1)
+    store.add_result(online.id, "acc", "beat", "sent")
+    sending = store.create_task("blast", "mass_send", {"a": 1}, 1)
+    store.add_result(sending.id, "acc", "@chat", "sent")
+
+    assert store.count_sent_today("acc") == 3
+    assert store.count_sent_today("acc", features=("mass_send",)) == 1
+    assert store.count_sent_today("acc", features=("export_accounts",)) == 1

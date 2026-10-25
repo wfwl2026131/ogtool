@@ -37,7 +37,7 @@ from ..content import ContentSpec
 from ..content import build as build_content
 from ..limiter import Budget, Limits, PeerFloodBackoff, format_duration
 from ..runtime import RunContext
-from ..senders import PEER_FLOOD, Content
+from ..senders import PEER_FLOOD, SENDING_FEATURES, Content
 from ..store import Account
 from ..targets import Target, collect
 from . import register
@@ -205,7 +205,11 @@ def _budgets(raw_accounts: list[Account], limits: Limits,
              ctx: RunContext) -> dict[str, Budget]:
     budgets: dict[str, Budget] = {}
     for account in raw_accounts:
-        used = ctx.store.count_sent_today(account.label)
+        # Only pages that send messages may spend this budget: counting every
+        # successful row (exports, heartbeats) meant the day's allowance was
+        # already gone before the first message.
+        used = ctx.store.count_sent_today(account.label,
+                                          features=SENDING_FEATURES)
         budgets[account.label] = Budget(limits.daily_limit, used)
     return budgets
 

@@ -18,7 +18,7 @@ from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..limiter import Budget, format_duration
 from ..runtime import RunContext
-from ..senders import Content, SendResult
+from ..senders import SENDING_FEATURES, Content, SendResult
 from ..store import Account
 from ..targets import collect, parse_many
 from . import register
@@ -411,8 +411,9 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
             f"there is no contact to message")
     flat, duplicates = dedupe_contacts(book, config.allow_duplicates)
     already = ctx.store.sent_pairs(FEATURE) if config.resume else set()
-    budgets = {label: Budget(config.daily_limit,
-                             ctx.store.count_sent_today(label))
+    budgets = {label: Budget(
+        config.daily_limit,
+        ctx.store.count_sent_today(label, features=SENDING_FEATURES))
                for label in labels}
     plan = schedule(flat, config, already=already, budgets=budgets)
     plan.duplicates = duplicates
