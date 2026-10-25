@@ -25,6 +25,8 @@ only the transport is replaced.
 from __future__ import annotations
 
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -39,7 +41,7 @@ from ..senders import PEER_FLOOD, Content
 from ..store import Account
 from ..targets import Target, collect
 from . import register
-from ._common import pause
+from ._common import lanes_by, pause
 
 FEATURE = "mass_send"
 
@@ -411,29 +413,51 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
         return 0
 
     sender = ctx.sender()
-    backoff = PeerFloodBackoff()
+    plan_lines = render(planned, contents, start)
+    pairs = list(zip(plan_lines, planned, strict=True))
     sent = failed = 0
-    attempts: dict[tuple[str, str], int] = {}
-    elapsed = 0.0
-    for line, item in zip(render(planned, contents, start), planned, strict=True):
-        pause(ctx, item.offset - elapsed)
-        elapsed = item.offset
-        result = sender.send(item.account, item.target, contents[item.account])
-        if result.ok:
-            sent += 1
-            ctx.store.add_result(task.id, item.account, item.target.ref, "sent",
-                                 detail=str(result.message_id))
-            print(f"sent {line}")
-        else:
-            failed += 1
-            ctx.store.add_result(task.id, item.account, item.target.ref, "failed",
-                                 result.code, result.detail)
-            print(f"failed {result.code} {line} {result.detail}")
+    # ``threads`` is not decoration: one lane per account is what makes the
+    # interval a promise to the server.  A single thread keeps the old
+    # straight-line loop, so the printed order is unchanged at threads=1.
+    lanes = lanes_by(lambda pair: pair[1].account, pairs,
+                     config.limits.threads)
+    counters = {"sent": 0, "failed": 0}
+    lock = threading.Lock()
+
+    def send_lane(lane: list[tuple[str, object]]) -> None:
+        backoff = PeerFloodBackoff()
+        attempts: dict[tuple[str, str], int] = {}
+        elapsed = 0.0
+        for line, item in lane:
+            pause(ctx, item.offset - elapsed)
+            elapsed = item.offset
+            result = sender.send(item.account, item.target,
+                                 contents[item.account])
+            with lock:
+                if result.ok:
+                    counters["sent"] += 1
+                    ctx.store.add_result(task.id, item.account,
+                                         item.target.ref, "sent",
+                                         detail=str(result.message_id))
+                    print(f"sent {line}")
+                    continue
+                counters["failed"] += 1
+                ctx.store.add_result(task.id, item.account, item.target.ref,
+                                     "failed", result.code, result.detail)
+                print(f"failed {result.code} {line} {result.detail}")
             if result.code == PEER_FLOOD:
                 key = (item.account, item.target.ref)
                 attempts[key] = attempts.get(key, 0) + 1
                 wait = backoff.wait_for(attempts[key] - 1)
                 ctx.note(f"PEER_FLOOD backoff {wait:.0f}s for {item.account}")
+
+    if len(lanes) <= 1:
+        send_lane(lanes[0] if lanes else [])
+    else:
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            for future in [pool.submit(send_lane, lane) for lane in lanes]:
+                future.result()
+    sent, failed = counters["sent"], counters["failed"]
     ctx.store.finish_task(task.id, sent=sent, failed=failed)
     print(f"DONE: sent={sent} failed={failed}")
     return 0 if not failed else 1
