@@ -956,6 +956,19 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
         ok_count = sum(1 for _, ok, _ in rows if ok)
         print(f"total: {len(rows)} ok: {ok_count}")
+        # The probe is the first thing anyone runs, so it has to leave proof: one
+        # row per account, carrying the same ok/fail the screen showed. Before
+        # this a live probe left only "the command exited 0".
+        ctx = RunContext(settings=settings, store=store,
+                         log=task_logger(settings.log_dir, "accounts-test"),
+                         live=bool(args.live))
+        task = open_task(ctx, "test", "accounts", {"live": bool(args.live)},
+                         planned=len(rows))
+        for label, ok, detail in rows:
+            record(ctx, task, label, label, ok, "" if ok else "PROBE_FAILED",
+                   detail)
+        close_task(ctx, task, derive=True)
+        ctx.close()
         return 0 if ok_count == len(rows) else 1
     finally:
         store.close()
