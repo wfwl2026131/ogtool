@@ -9,7 +9,7 @@ import pytest
 from ogtool.ai import AIError
 from ogtool.config import ConfigError
 from ogtool.features.ai_clone import CloneConfig, parse_mapping, plan, run
-from ogtool.sources import parse_entry
+from ogtool.sources import SourceMessage, parse_entry
 
 
 def config_for(**overrides) -> CloneConfig:
@@ -157,3 +157,55 @@ def test_a_capture_failure_is_reported_not_swallowed(ctx, live, capsys):
     output = capsys.readouterr().out
     assert "capture failed: CHANNEL_PRIVATE" in output
     assert "ERROR: no source history" in output
+
+
+def _msgs(pairs):
+    return [SourceMessage(peer=peer, sender="chan", text=f"post {index}",
+                          message_id=index)
+            for index, (peer, _) in enumerate(pairs, start=1)]
+
+
+def test_clone_mode_multi_to_one_sends_every_source_to_the_first_target():
+    """``cloneMode=multi-to-one``: a fan-in, not a rotation."""
+    from ogtool.features.ai_clone import CloneConfig, plan
+
+    config = CloneConfig(sources=["@s1", "@s2"],
+                         targets=["@t1", "@t2"],
+                         clone_mode="multi_to_one",
+                         messages=_msgs([("@s1", 1), ("@s2", 2)]))
+    items, _ = plan(config, ["acc1"])
+    assert {item.target for item in items} == {"@t1"}
+
+
+def test_clone_mode_one_to_one_follows_the_source_order():
+    from ogtool.features.ai_clone import CloneConfig, plan
+
+    config = CloneConfig(sources=["@s1", "@s2"],
+                         targets=["@t1", "@t2"],
+                         clone_mode="one_to_one",
+                         messages=_msgs([("@s2", 1), ("@s1", 2)]))
+    items, _ = plan(config, ["acc1"])
+    assert [(item.source.peer, item.target) for item in items] == [
+        ("@s2", "@t2"), ("@s1", "@t1")]
+
+
+def test_an_unknown_clone_mode_is_a_config_error():
+    import pytest
+
+    from ogtool.config import ConfigError
+    from ogtool.features.ai_clone import CloneConfig
+
+    class Settings:
+        pass
+
+    with pytest.raises(ConfigError):
+        CloneConfig.from_dict({"ai_clone": {
+            "sources": ["@s1"], "targets": ["@t1"], "clone_mode": "rotate",
+        }}, Settings())
+
+
+def test_multi_to_one_is_spelled_with_a_dash_in_the_dump():
+    from ogtool.features.ai_clone import clone_mode_of
+
+    assert clone_mode_of({"clone_mode": "multi-to-one"}) == "multi_to_one"
+    assert clone_mode_of({"clone_mode": "one_to_one"}) == "one_to_one"

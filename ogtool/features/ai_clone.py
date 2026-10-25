@@ -90,6 +90,10 @@ class CloneConfig:
     keywords: list[str] = field(default_factory=list)
     replacements: list[tuple[str, str]] = field(default_factory=list)
     messages: list[SourceMessage] = field(default_factory=list)
+    #: ``cloneMode``: ``pairwise`` (one target each), ``one_to_one`` (strict,
+    #: one target per source) or ``multi_to_one`` (every source into the first
+    #: target).
+    clone_mode: str = ""
     #: ``passive``: follow the source instead of scanning it once.
     passive: bool = False
     #: ``onlyRootForwardedFromChannel``: only clone channel forwards.
@@ -124,6 +128,7 @@ class CloneConfig:
             keywords=_split(data.get("filter_keywords")),
             replacements=parse_replacements(_lines(data.get("replacements"))),
             messages=from_config(data),
+            clone_mode=clone_mode_of(data),
             passive=bool(data.get("passive", False)),
             only_root_forwarded=bool(
                 data.get("only_root_forwarded_from_channel", False)),
@@ -173,6 +178,22 @@ def mapping_of(data: dict) -> dict[str, str]:
     return mapping
 
 
+def clone_mode_of(data: dict) -> str:
+    """``cloneMode``: pairwise, one_to_one or multi_to_one.
+
+    The dump spells the two extremes ``pairwise`` and ``multi-to-one`` and the
+    strict middle one ``one_to_one``; a dash and an underscore are the same
+    word here.
+    """
+    raw = str(data.get("clone_mode") or "").strip().lower().replace("-", "_")
+    if not raw:
+        return ""
+    if raw not in ("pairwise", "one_to_one", "multi_to_one", "pair", "one2one"):
+        raise ConfigError(f"{SECTION}: clone_mode must be pairwise, one_to_one "
+                          f"or multi_to_one, is {raw}")
+    return {"pair": "pairwise", "one2one": "one_to_one"}.get(raw, raw)
+
+
 def parse_mapping(value: object) -> dict[str, str]:
     """``source=target`` lines -> the per source override of the target list."""
     pairs: dict[str, str] = {}
@@ -219,7 +240,7 @@ def plan(config: CloneConfig, labels: list[str],
     for index, message in enumerate(kept[: config.max_items]):
         target = config.mapping.get(message.peer)
         if not target:
-            target = config.targets[index % len(config.targets)]
+            target = _fallback_target(config, message.peer, index)
         account = labels[index % len(labels)] if labels else "-"
         delay = generator.uniform(config.post_interval_min,
                                   config.post_interval_max)
@@ -227,6 +248,17 @@ def plan(config: CloneConfig, labels: list[str],
                           delay=delay, text=message.text))
     collected.kept = kept
     return items, collected
+
+
+def _fallback_target(config: CloneConfig, source: str, index: int) -> str:
+    """Where an unmapped post goes, per ``cloneMode``."""
+    if config.clone_mode == "multi_to_one":
+        return config.targets[0]
+    if config.clone_mode == "one_to_one":
+        position = (config.sources.index(source)
+                    if source in config.sources else index)
+        return config.targets[position % len(config.targets)]
+    return config.targets[index % len(config.targets)]
 
 
 def _prompt(ctx: RunContext, config: CloneConfig, item: Item) -> str:
