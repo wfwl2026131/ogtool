@@ -50,6 +50,42 @@ def features() -> list[str]:
     return names()
 
 
+LOG_DIR: list[Path] = []
+
+
+def scratch_config() -> Path:
+    """A config whose logs, db and sessions live in this sweep's own directory.
+
+    Without it every run would write its receipt into the project's ``logs/``,
+    where the previous run's receipts are still sitting - and "a receipt exists"
+    would be true before the feature even started.
+    """
+    scratch = Path(tempfile.mkdtemp(prefix="ogsweep-cfg-"))
+    LOG_DIR.append(scratch / "logs")
+    path = scratch / "config.yaml"
+    path.write_text(
+        "api_id: 1\napi_hash: sweep\n"
+        f"data_dir: {scratch / 'data'}\n"
+        f"session_dir: {scratch / 'sessions'}\n"
+        f"db: {scratch / 'og.sqlite'}\n"
+        f"logs: {scratch / 'logs'}\n",
+        encoding="utf-8")
+    return path
+
+
+def check_receipts() -> tuple[int, list[str]]:
+    """Every feature this sweep ran must have left one valid receipt."""
+    sys.path.insert(0, str(ROOT))
+    from ogtool import receipts as receipts_module
+
+    directory = LOG_DIR[0] / "receipts"
+    bodies, problems = receipts_module.read_all(directory)
+    for body in bodies:
+        for problem in receipts_module.validate(body):
+            problems.append(f"{body.get('feature', '?')}: {problem}")
+    return len(bodies), problems
+
+
 def fixtures() -> dict[str, list[str]]:
     """The fixture table with ``{tmp}`` filled in by real files."""
     scratch = Path(tempfile.mkdtemp(prefix="ogsweep-"))
@@ -63,10 +99,11 @@ def main(argv: list[str]) -> int:
     wanted = argv[1:] or features()
     table = fixtures()
     problems: list[str] = []
+    config = scratch_config()
     for name in wanted:
         run = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
-            [sys.executable, "-m", "ogtool", name, "--dry-run",
-             *table.get(name, [])],
+            [sys.executable, "-m", "ogtool", "--config", str(config),
+             name, "--dry-run", *table.get(name, [])],
             cwd=ROOT, capture_output=True, text=True, timeout=120)
         output = run.stdout + run.stderr
         if run.returncode != 0:
@@ -74,7 +111,11 @@ def main(argv: list[str]) -> int:
         elif "Traceback" in output:
             problems.append(f"{name}: traceback\n{output[-600:]}")
         print(f"{name:16s} {'ok' if run.returncode == 0 else 'FAIL'}")
-    print(f"runs: {len(wanted)}  problems: {len(problems)}")
+    count, receipt_problems = check_receipts()
+    problems.extend(receipt_problems)
+    if count != len(wanted):
+        problems.append(f"receipts: {count} for {len(wanted)} run(s)")
+    print(f"runs: {len(wanted)}  receipts: {count}  problems: {len(problems)}")
     for problem in problems:
         print("-" * 60)
         print(problem)

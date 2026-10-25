@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import __version__, receipts
 from .accounts import AccountError
 from .config import ConfigError, Settings, load_task, merge
 from .features import get, load_defaults, module, names
@@ -486,18 +486,35 @@ def run(argv: list[str] | None = None) -> int:
             ctx.close()
             store.close()
 
+    # Every run must leave evidence: a page that closes its task through
+    # close_task writes a receipt itself, so all we need here is to know whether
+    # the directory grew. Comparing the set catches the pages that write their
+    # task by hand (keep_online, auto_reply, mass_send) as well.
+    before = receipts.snapshot(settings)
+    code = 0
     try:
-        return get(args.command)(raw, ctx)
+        code = get(args.command)(raw, ctx)
+        return code
     except ConfigError as error:
         print(f"ERROR: {error}")
+        code = 2
         return 2
     except (AccountError, TargetError) as error:
         print(f"ERROR: {error}")
+        code = 2
         return 2
     except KeyboardInterrupt:  # pragma: no cover - interactive
         print("interrupted")
+        code = 130
         return 130
     finally:
+        # Five pages (keep_online, auto_reply, mass_send, proxy, settings) never
+        # open a task, so close_task cannot speak for them. Without this a run
+        # would leave no evidence behind at all - and a sweep that only sees 20
+        # receipts cannot claim all 25 ran.
+        if receipts.snapshot(settings) == before:
+            receipts.write_run(ctx.settings, args.command, exit_code=code,
+                               live=ctx.live)
         ctx.close()
         store.close()
 

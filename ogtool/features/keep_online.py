@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from ..limiter import format_duration
 from ..runtime import RunContext
 from . import register
+from ._common import close_task
 
 FEATURE = "keep_online"
 
@@ -85,7 +86,7 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
 
     if not ctx.live:
         print("dry-run: no session was opened")
-        ctx.store.finish_task(task.id, status="dry-run")
+        close_task(ctx, task, ok=0, failed=0, status="dry-run")
         return 0
 
     sender = ctx.sender()
@@ -107,7 +108,7 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
     except KeyboardInterrupt:  # pragma: no cover - interactive
         ctx.note("interrupted by the operator", "warn")
     finally:
-        ctx.store.finish_task(task.id, sent=online, failed=failed)
+        close_task(ctx, task, ok=online, failed=failed)
     print(f"DONE: online={online} failed={failed}")
     return 0 if not failed else 1
 

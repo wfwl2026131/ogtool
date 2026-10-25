@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from .. import receipts
 from ..config import ConfigError, Settings
 from ..report import dedupe, read_lines
 from ..runtime import RunContext
@@ -122,6 +123,9 @@ def close_task(ctx: RunContext, task: TaskRef, *, ok: int, failed: int,
                status: str = "") -> None:
     final = status or ("dry-run" if not ctx.live else "done")
     ctx.store.finish_task(task.id, sent=ok, failed=failed, status=final)
+    # One receipt per run, written where every page already passes: the 25-item
+    # sweep can only vouch for a feature if the run left something to read.
+    receipts.write(ctx.settings, ctx.store, task, ok=ok, failed=failed)
 
 
 def record(ctx: RunContext, task: TaskRef, account: str, subject: str,
