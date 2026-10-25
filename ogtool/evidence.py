@@ -96,6 +96,17 @@ def _has_no_rows(body: dict[str, Any]) -> bool:
 
 
 def _only_local_failures(body: dict[str, Any]) -> bool:
+    """Did this run fail for reasons that never reached Telegram?
+
+    Task receipts keep no rows (only counts), so the codes dict is what answers
+    this: without it a live run that only ever hit SESSION_BUSY counted as
+    real-machine evidence, because the row-wise check below never saw a row.
+    """
+    codes = body.get("codes")
+    if isinstance(codes, dict) and codes:
+        results = body.get("results") or {}
+        if int(results.get("total") or 0) <= int(results.get("failed") or 0):
+            return set(codes) <= LOCAL_CODES
     rows = body.get("rows") or []
     if not rows:
         return False

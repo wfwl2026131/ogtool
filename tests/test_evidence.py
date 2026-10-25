@@ -218,3 +218,16 @@ def test_a_fallback_receipt_never_reaches_the_live_table(tmp_path):
         {"mode": "live", "task_id": 0, "finished_at": "2026-01-01T00:00:00"}))
     rows = [evidence.Evidence("settings", 1, 1, 0, "2026-01-01T00:00:00")]
     assert "settings-run.json" not in evidence.live_markdown(rows, tmp_path)
+
+
+def test_a_locked_session_is_excluded_by_the_codes_not_by_rows(tmp_path):
+    """Task receipts carry no rows at all, so the codes dict is the only witness."""
+    body = {"mode": "live", "task_id": 9,
+            "results": {"planned": 0, "sent": 0, "failed": 2, "total": 2},
+            "codes": {"SESSION_BUSY": 2}}
+    (tmp_path / "mass_send-1.json").write_text(json.dumps(body))
+    assert evidence.count_receipts(tmp_path, "mass_send")[0] == 0
+
+    body["codes"] = {"SESSION_BUSY": 1, "CHANNEL_PRIVATE": 1}
+    (tmp_path / "mass_send-2.json").write_text(json.dumps(body))
+    assert evidence.count_receipts(tmp_path, "mass_send")[0] == 1

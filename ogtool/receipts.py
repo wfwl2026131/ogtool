@@ -94,6 +94,11 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
     results: dict[str, int] = {"planned": 0, "sent": 0, "failed": 0}
     accounts: list[str] = []
     unattributed = 0
+    # Which error codes the failures carried, without copying the rows: the
+    # evidence grade needs to know whether *every* failure was local (a locked
+    # session, a missing file) and the rows themselves made the receipts too big
+    # to keep. Kept as counts, in the same shape as ``results``.
+    codes: dict[str, int] = {}
     for result in store.results_for(task.id):
         state = str(result["status"] or "")
         if state in results:
@@ -101,6 +106,9 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
         # Read from the rows rather than the config: a page may bind accounts it
         # never used, and the results table is the only thing that knows which
         # ones actually did something.
+        code = str(result["error_code"] or "")
+        if state == "failed" and code:
+            codes[code] = codes.get(code, 0) + 1
         label = str(result["account"] or "")
         if label in ("", "-"):
             # A page without a bound account records "-" in that column. It is a
@@ -131,6 +139,7 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
         # them all - it can only say how much of the plan went unexplained.
         "unaccounted": planned - int(ok) - int(failed),
         "results": results,
+        "codes": codes,
         "accounts": accounts,
         "unattributed": unattributed,
         # What the run was told to do. ``knobs_dropped`` counts the values too
