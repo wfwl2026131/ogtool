@@ -503,3 +503,19 @@ def test_prune_command_refuses_keep_zero(tmp_path, monkeypatch, capsys):
     settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path)
     assert cli_module._runs(Args(), settings) == 2
     assert "at least 1" in capsys.readouterr().out
+
+
+def test_a_fallback_receipt_is_backed_by_a_row(settings):
+    """A page that never opened a task still has to explain its verdict."""
+    receipts.write_run(settings, "settings", exit_code=1, live=True)
+    path = receipts.receipt_dir(settings) / "settings-run.json"
+    body = json.loads(path.read_text())
+    assert receipts.validate(body) == []
+    assert body["failed"] == 1 and body["ok"] == 0
+    assert body["rows"][0]["status"] == "failed"
+
+    receipts.write_run(settings, "settings", exit_code=0, live=True)
+    body = json.loads(path.read_text())
+    assert receipts.validate(body) == []
+    assert body["ok"] == 1 and body["failed"] == 0
+    assert body["rows"][0]["status"] == "sent"

@@ -174,6 +174,13 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
     from datetime import UTC, datetime
 
     stamp = datetime.now(UTC).replace(microsecond=0).isoformat()
+    # A failed run is one failed row, not a bare number: 'failed: 1' with an
+    # empty table is the shape the schema refuses, and rightly so - the run
+    # itself is the thing that failed.
+    outcome = "sent" if exit_code == 0 else "failed"
+    rows = [{"account": "", "subject": f"run exit {exit_code}",
+             "status": outcome, "code": "" if exit_code == 0 else "RUN_FAILED",
+             "detail": "", "at": stamp}]
     body = {
         "version": VERSION,
         "feature": feature,
@@ -181,10 +188,13 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "task_id": 0,
         "mode": "live" if live else "dry-run",
         "planned": 0,
-        "ok": 0,
+        "ok": 1 if exit_code == 0 else 0,
         "failed": 0 if exit_code == 0 else 1,
         "unaccounted": 0,
-        "results": {"planned": 0, "sent": 0, "failed": 0, "total": 0},
+        "results": {"planned": 0, "sent": 1 if exit_code == 0 else 0,
+                    "failed": 0 if exit_code == 0 else 1,
+                    "total": 1},
+        "rows": rows,
         "accounts": [],
         "unattributed": 0,
         "knobs": {"live": live},
