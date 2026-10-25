@@ -149,11 +149,23 @@ def plan(config: AiChatConfig, labels: list[str],
     """Every message the run would send, in order, with its news decision."""
     generator = rng or random.Random()
     lines: list[Line] = []
+    topics = config.topics or [DEFAULT_TOPIC]
+    rotation = 0
     for target in config.targets:
+        topic = topics[0]
+        used: set[str] = set()
         for _ in range(config.count):
             index = len(lines)
-            topic = (config.topics[index % len(config.topics)]
-                     if config.topics else DEFAULT_TOPIC)
+            # ``topicStickiness``: "how long one topic stays the subject, in
+            # percent". Sticking repeats the previous topic instead of advancing
+            # the rotation; ``topicMinCount`` keeps a batch from sticking before
+            # it has covered that many different topics at all.
+            sticky = (index and len(used) >= config.topic_min_count
+                      and generator.random() * 100 < config.topic_stickiness)
+            if not sticky:
+                topic = topics[rotation % len(topics)]
+                rotation += 1
+            used.add(topic)
             news = ""
             # The channel is where live runs read news from; the items are the
             # pool, so a dry-run with --news alone can still show insertion.

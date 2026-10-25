@@ -88,3 +88,26 @@ def test_the_fallback_line_is_the_topic_not_the_prompt(ctx, capsys):
     output = capsys.readouterr().out
     assert "text=weekend plans rain" in output
     assert "[template] \u4f60\u5728" not in output
+
+
+def test_stickiness_zero_is_the_plain_rotation():
+    config = config_for(targets=["@g1"], count=4, topics=["one", "two"],
+                        topic_stickiness=0)
+    lines = plan(config, ["acc1"], random.Random(3))
+    assert [line.topic for line in lines] == ["one", "two", "one", "two"]
+
+
+def test_full_stickiness_never_advances_after_the_first_topic():
+    """100% stickiness means one topic stays the subject for the whole batch."""
+    config = config_for(targets=["@g1"], count=4, topics=["one", "two"],
+                        topic_stickiness=100)
+    lines = plan(config, ["acc1"], random.Random(3))
+    assert {line.topic for line in lines} == {"one"}
+
+
+def test_topic_min_count_stops_sticking_too_early():
+    """``topicMinCount`` guarantees that many distinct topics before sticking."""
+    config = config_for(targets=["@g1"], count=4, topics=["one", "two", "three"],
+                        topic_stickiness=100, topic_min_count=3)
+    lines = plan(config, ["acc1"], random.Random(3))
+    assert [line.topic for line in lines] == ["one", "two", "three", "three"]
