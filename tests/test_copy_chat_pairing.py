@@ -94,3 +94,27 @@ def test_every_mode_keeps_the_message_ids_of_its_sources():
     messages = _messages()
     picked = sources_for_pairing(config, 0, messages, 3)
     assert [m.message_id for m in picked] == [1, 2]
+
+
+def test_the_text_cap_wins_over_the_task_cap_for_text():
+    """``dailyTextLimitPerAccount`` is a *narrower* knob than ``dailyLimit``."""
+    from ogtool.features.copy_chat import effective_limit
+
+    config = CopyConfig(daily_limit=100, daily_text_limit_per_account=5)
+    assert effective_limit(config, is_text=True) == 5
+    # A media message is not text, so only the task cap applies to it.
+    assert effective_limit(config, is_text=False) == 100
+
+
+def test_a_single_cap_applies_to_both_kinds():
+    from ogtool.features.copy_chat import effective_limit
+
+    text_only = CopyConfig(daily_limit=0, daily_text_limit_per_account=7)
+    assert effective_limit(text_only, is_text=True) == 7
+    assert effective_limit(text_only, is_text=False) == 0
+
+
+def test_no_cap_means_no_cap():
+    from ogtool.features.copy_chat import effective_limit
+
+    assert effective_limit(CopyConfig(), is_text=True) == 0

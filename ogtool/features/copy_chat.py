@@ -572,6 +572,22 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
     return plans
 
 
+def effective_limit(config: CopyConfig, is_text: bool) -> int:
+    """The cap that applies to this message: ``daily_limit`` or the tighter one.
+
+    The page has two daily numbers, and they are not the same knob:
+    ``dailyLimit`` caps everything an account sends in a day, while
+    ``dailyTextLimitPerAccount`` ("a per-account cap under the task cap") only
+    counts text. A text message therefore obeys whichever is smaller, and media
+    obeys the task cap alone.
+    """
+    limits = [value for value in (
+        config.daily_limit,
+        config.daily_text_limit_per_account if is_text else 0,
+    ) if value > 0]
+    return min(limits) if limits else 0
+
+
 def pick(accounts: list[str], budget: dict[str, int], limit: int,
          offset: int) -> str | None:
     """The next account of this target that still has budget today."""
@@ -687,13 +703,13 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         target: Target = parse_many([plan.target], "custom")[0]
         for message in plan.collected.kept:
             for _ in range(config.multiplier):
-                account = pick(plan.accounts, budget, config.daily_limit,
-                               index)
+                limit = effective_limit(config, bool(message.text))
+                account = pick(plan.accounts, budget, limit, index)
                 if account is None:
                     skipped += 1
                     index += 1
                     print(f"skipped: no account under the daily limit "
-                          f"({config.daily_limit}) for {target.display()}")
+                          f"({limit}) for {target.display()}")
                     continue
                 index += 1
                 delay = rng.uniform(config.interval_min, config.interval_max)
