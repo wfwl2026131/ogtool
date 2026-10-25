@@ -81,6 +81,20 @@ def count_tests(root: Path, feature: str) -> int:
 LOCAL_CODES = {"SESSION_BUSY", "SESSION_NOT_FOUND", "API_CREDENTIALS", "NO_ACCOUNT"}
 
 
+def _has_no_rows(body: dict[str, Any]) -> bool:
+    """A live run that recorded nothing proves it connected, not that it worked.
+
+    watch_chat and auto_reply sat at planned 0 for weeks: the session opened, no
+    message arrived, nothing was recorded - and the empty receipt was counted as
+    live evidence because only "all rows are local failures" was excluded. A
+    receipt with no rows at all cannot support the same claim as one with rows.
+    """
+    results = body.get("results")
+    if isinstance(results, dict) and int(results.get("total") or 0) > 0:
+        return False
+    return not body.get("rows")
+
+
 def _only_local_failures(body: dict[str, Any]) -> bool:
     rows = body.get("rows") or []
     if not rows:
@@ -111,7 +125,9 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
             # one synthetic row about the run, not a row per chat or account.
             # Counting it as live evidence would let 'settings' claim real-machine
             # proof for reading a config file.
-            if int(body.get("task_id") or 0) > 0 and not _only_local_failures(body):
+            if (int(body.get("task_id") or 0) > 0
+                    and not _has_no_rows(body)
+                    and not _only_local_failures(body)):
                 live += 1
             stamp = str(body.get("finished_at") or "")
             if stamp > newest:

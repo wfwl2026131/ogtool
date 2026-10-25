@@ -34,15 +34,26 @@ def test_an_unrelated_module_does_not_count(tmp_path):
 
 
 def test_receipts_are_counted_by_mode(tmp_path):
+    row = [{"account": "a", "subject": "@chat", "status": "sent", "code": ""}]
     (tmp_path / "watch_chat-1.json").write_text(
-        json.dumps({"mode": "live", "task_id": 1}))
+        json.dumps({"mode": "live", "task_id": 1,
+                    "results": {"total": 1}, "rows": row}))
     (tmp_path / "watch_chat-2.json").write_text(json.dumps({"mode": "dry-run"}))
     (tmp_path / "watch_chat-3.json").write_text(
-        json.dumps({"mode": "live", "task_id": 3}))
+        json.dumps({"mode": "live", "task_id": 3,
+                    "results": {"total": 1}, "rows": row}))
     (tmp_path / "watch_chat-4.json").write_text("not json")
     live, dry, newest = evidence.count_receipts(tmp_path, "watch_chat")
     assert (live, dry) == (2, 1)
     assert newest == ""  # no finished_at in these bodies
+
+
+def test_a_live_run_that_recorded_nothing_is_not_proof(tmp_path):
+    """watch_chat sat at planned 0 for days and still graded live."""
+    (tmp_path / "watch_chat-1.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 1, "results": {"total": 0}, "rows": []}))
+    live, dry, _ = evidence.count_receipts(tmp_path, "watch_chat")
+    assert (live, dry) == (0, 0)
 
 
 def test_levels_fall_back_in_order():
@@ -162,7 +173,8 @@ def test_a_fallback_receipt_is_not_live_proof(tmp_path):
     (tmp_path / "settings-run.json").write_text(json.dumps(
         {"mode": "live", "task_id": 0, "finished_at": "2026-01-01T00:00:00"}))
     (tmp_path / "watch_chat-1.json").write_text(json.dumps(
-        {"mode": "live", "task_id": 1605,
+        {"mode": "live", "task_id": 1605, "results": {"total": 1},
+         "rows": [{"status": "sent", "code": "", "subject": "x"}],
          "finished_at": "2026-01-01T00:00:00"}))
     assert evidence.count_receipts(tmp_path, "settings")[0] == 0
     assert evidence.count_receipts(tmp_path, "watch_chat")[0] == 1
