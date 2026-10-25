@@ -220,3 +220,24 @@ def test_a_failed_join_is_not_muted(ctx, live):
                         mute_channels=True)
     assert run(config, ctx) == 1
     assert sender.muted == []
+
+
+def test_leave_interval_paces_leaves_not_joins():
+    """``leaveInterval`` is the leave page's own pace."""
+    from ogtool.features.batch_join import gap
+    from ogtool.runner import Job
+
+    config = JoinConfig(request_interval=2.0, leave_interval=30.0)
+    job = Job(account="a", subject="@g1")
+    assert gap(config, job, None, leaving=False) == 2.0
+    assert gap(config, job, None, leaving=True) == 30.0
+
+
+def test_the_account_interval_still_wins_when_it_is_longer():
+    from ogtool.features.batch_join import gap
+    from ogtool.runner import Job
+
+    config = JoinConfig(account_interval=60.0, leave_interval=30.0)
+    first = Job(account="a", subject="@g1")
+    same = Job(account="a", subject="@g2")
+    assert gap(config, same, first, leaving=True) == 60.0

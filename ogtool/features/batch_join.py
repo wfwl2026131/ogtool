@@ -242,14 +242,18 @@ def assign(accounts: list[str], targets: list[Target],
     return pairs
 
 
-def gap(config: JoinConfig, job: Job, previous: Job | None = None) -> float:
-    """Seconds before one join.
+def gap(config: JoinConfig, job: Job, previous: Job | None = None,
+        leaving: bool = False) -> float:
+    """Seconds before one join - or one leave, which has its own number.
 
-    The pool wide request interval always applies; two joins in a row by the
-    same account also have to clear that account's own interval, which is the
-    longer of the two.
+    The pool wide request interval always applies; two operations in a row by
+    the same account also have to clear that account's own interval, which is
+    the longer of the two. ``leaveInterval`` is the leave page's own pace, the
+    way ``accountInterval`` is the join page's.
     """
     wait = config.request_interval
+    if leaving and config.leave_interval:
+        wait = max(wait, config.leave_interval)
     if previous is not None and previous.account == job.account:
         wait = max(wait, config.account_interval)
     return wait
@@ -349,7 +353,7 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
     outcome = execute(jobs, ctx, call, total=len(jobs),
                       success_cap=config.success_cap, exec_cap=config.exec_cap,
                       flood_cap=config.flood_cap, retry_cap=1, label="group",
-                      interval=partial(gap, config),
+                      interval=partial(gap, config, leaving=leaving),
                       lanes=config.join_concurrency or config.threads)
 
     muted = 0
