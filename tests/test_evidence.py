@@ -34,9 +34,11 @@ def test_an_unrelated_module_does_not_count(tmp_path):
 
 
 def test_receipts_are_counted_by_mode(tmp_path):
-    (tmp_path / "watch_chat-1.json").write_text(json.dumps({"mode": "live"}))
+    (tmp_path / "watch_chat-1.json").write_text(
+        json.dumps({"mode": "live", "task_id": 1}))
     (tmp_path / "watch_chat-2.json").write_text(json.dumps({"mode": "dry-run"}))
-    (tmp_path / "watch_chat-3.json").write_text(json.dumps({"mode": "live"}))
+    (tmp_path / "watch_chat-3.json").write_text(
+        json.dumps({"mode": "live", "task_id": 3}))
     (tmp_path / "watch_chat-4.json").write_text("not json")
     live, dry, newest = evidence.count_receipts(tmp_path, "watch_chat")
     assert (live, dry) == (2, 1)
@@ -153,3 +155,14 @@ def test_the_table_shows_an_age_and_the_markdown_an_instant():
     assert "最近真机" in markdown
     assert "2026-01-01 00:00" in markdown
     assert evidence.stamp_short("") == "-"
+
+
+def test_a_fallback_receipt_is_not_live_proof(tmp_path):
+    """'settings' editing a config file is not real-machine evidence."""
+    (tmp_path / "settings-run.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 0, "finished_at": "2026-01-01T00:00:00"}))
+    (tmp_path / "watch_chat-1.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 1605,
+         "finished_at": "2026-01-01T00:00:00"}))
+    assert evidence.count_receipts(tmp_path, "settings")[0] == 0
+    assert evidence.count_receipts(tmp_path, "watch_chat")[0] == 1

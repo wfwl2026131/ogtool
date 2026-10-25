@@ -87,7 +87,12 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
         except (OSError, ValueError):
             continue
         if body.get("mode") == "live":
-            live += 1
+            # A fallback receipt (task_id 0) only says the command ran: it has
+            # one synthetic row about the run, not a row per chat or account.
+            # Counting it as live evidence would let 'settings' claim real-machine
+            # proof for reading a config file.
+            if int(body.get("task_id") or 0) > 0:
+                live += 1
             stamp = str(body.get("finished_at") or "")
             if stamp > newest:
                 newest = stamp
