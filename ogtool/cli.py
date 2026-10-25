@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from . import __version__, receipts
+from . import __version__, receipts, selftest
 from .accounts import AccountError
 from .config import ConfigError, Settings, load_task, merge
 from .features import get, load_defaults, module, names
@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="command", required=True)
     _accounts_parser(subs)
     _runs_parser(subs)
+    _selftest_parser(subs)
 
     _botlinks_parser(subs)
     _todo_parser(subs)
@@ -119,6 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
     _auto_reply_parser(subs.choices["auto_reply"])
     _keep_online_parser(subs.choices["keep_online"])
     return parser
+
+
+def _selftest_parser(subs: argparse._SubParsersAction) -> None:
+    check = subs.add_parser("selftest", help="receipts + knob audit + 25 dry runs")
+    check.add_argument("--only", default="",
+                       help=f"comma separated subset of {', '.join(selftest.CHECKS)}")
+    check.add_argument("--timeout", type=float, default=900.0,
+                       help="seconds before the sweep is given up on")
+
+
+def _selftest(args: argparse.Namespace, settings: Settings) -> int:
+    wanted = [part.strip() for part in args.only.split(",") if part.strip()]
+    unknown = [name for name in wanted if name not in selftest.CHECKS]
+    if unknown:
+        print(f"ERROR: unknown check {', '.join(unknown)}; "
+              f"pick from {', '.join(selftest.CHECKS)}")
+        return 2
+    return selftest.run(settings, only=wanted, timeout=args.timeout)
 
 
 def _runs_parser(subs: argparse._SubParsersAction) -> None:
@@ -494,6 +513,8 @@ def run(argv: list[str] | None = None) -> int:
         return _accounts(args, settings)
     if args.command == "runs":
         return _runs(args, settings)
+    if args.command == "selftest":
+        return _selftest(args, settings)
     if args.command == "todo":
         return _todo(args, settings)
     base = settings.raw

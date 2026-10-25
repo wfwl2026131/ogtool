@@ -172,7 +172,6 @@ def main(argv: list[str] | None = None) -> int:
     if stale or undecided:
         return 1
     return 0
-    return 0
 
 
 if __name__ == "__main__":
