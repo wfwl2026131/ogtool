@@ -301,6 +301,15 @@ def run(settings: Any, only: list[str] | None = None,
     """Run the checks and print one line each; nonzero when anything failed."""
     wanted = [name for name in CHECKS if not only or name in only]
     problems: list[str] = []
+    # The live check writes receipts, and the docs check validates a table built
+    # from them. Running docs first means a finished run can leave the note stale
+    # by its own side effect - say so instead of letting the next run's docs check
+    # be the one that reports it.
+    before = None
+    if "docs" in wanted and "live" in wanted:
+        from . import receipts as receipts_module
+
+        before = receipts_module.snapshot(settings)
     for name in wanted:
         if name == "receipts":
             line, found = check_receipts(settings)
@@ -320,6 +329,12 @@ def run(settings: Any, only: list[str] | None = None,
             line, found = check_sweep(timeout=timeout)
         print(line)
         problems.extend(found)
+    if before is not None:
+        from . import receipts as receipts_module
+
+        if receipts_module.snapshot(settings) != before:
+            print("note: the live check added receipts; the generated blocks in "
+                  "the note are now stale (run scripts/sync_evidence.py)")
     print(f"selftest: {len(wanted)} check(s), {len(problems)} problem(s)")
     for problem in problems:
         print(f"  {problem}")

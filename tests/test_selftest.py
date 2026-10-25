@@ -167,3 +167,12 @@ def test_the_gate_check_also_proves_the_flag_runs_the_case(tmp_path):
                             ["--allow-write", "--only", "gate-canary"])
     assert allowed.returncode == 0, allowed.stdout + allowed.stderr
     assert "gate-canary" in allowed.stdout
+
+
+def test_the_docs_check_runs_before_the_live_one():
+    """docs runs before live, so the receipts live writes make the table stale."""
+    from ogtool import selftest as module
+
+    # docs validates a table built from receipts, and the live check writes
+    # receipts: the order is why a finished run warns that the note went stale.
+    assert module.CHECKS.index("docs") < module.CHECKS.index("live")
