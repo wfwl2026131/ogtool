@@ -519,3 +519,29 @@ def test_a_fallback_receipt_is_backed_by_a_row(settings):
     assert receipts.validate(body) == []
     assert body["ok"] == 1 and body["failed"] == 0
     assert body["rows"][0]["status"] == "sent"
+
+
+def test_every_page_leaves_evidence():
+    """A page either opens a task or is a declared local-configuration page.
+
+    The registry is the list of the 25 pages; a new one that forgets both would
+    vanish from the receipts without failing anything, which is exactly the bug
+    this test exists to prevent.
+    """
+    from pathlib import Path as _Path
+
+    from ogtool.features import _MODULE_NAMES, _MODULES, FALLBACK_PAGES, load_defaults
+
+    load_defaults()
+    silent = []
+    for name in _MODULE_NAMES:
+        module = _MODULES[name]
+        text = _Path(module.__file__).read_text(encoding="utf-8")
+        if "open_task(" in text:
+            continue
+        if name in FALLBACK_PAGES:
+            continue
+        silent.append(name)
+    assert silent == [], (
+        f"these pages write no receipt and are not declared: {silent}; "
+        f"declare them in features.FALLBACK_PAGES with a reason")

@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from ..limiter import format_duration
 from ..runtime import RunContext
 from . import register
-from ._common import close_task, record
+from ._common import close_task, open_task, record
 
 FEATURE = "keep_online"
 
@@ -75,14 +75,10 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
     print(f"PLAN: {len(schedule)} heartbeats, {len(accounts)} accounts, "
           f"ETA {format_duration(schedule[-1][1] if schedule else 0.0)}")
 
-    task = ctx.store.create_task(
-        config.task_name, FEATURE,
-        config={"accounts": names, "interval": config.interval,
-                "loops": config.loops},
-        mode="live" if ctx.live else "dry-run",
-        planned=len(schedule),
-    )
-    ctx.task_id = task.id
+    task = open_task(ctx, config.task_name, FEATURE,
+                     {"accounts": names, "interval": config.interval,
+                      "loops": config.loops},
+                     planned=len(schedule))
 
     if not ctx.live:
         print("dry-run: no session was opened")
