@@ -17,7 +17,17 @@ from ..report import read_lines
 from ..runtime import RunContext
 from ..store import Proxy
 from . import register
-from ._common import accounts_of, header, name_of, num, section, text
+from ._common import (
+    accounts_of,
+    close_task,
+    header,
+    name_of,
+    num,
+    open_task,
+    record,
+    section,
+    text,
+)
 
 FEATURE = "proxy"
 SECTION = "proxy"
@@ -131,8 +141,17 @@ def run(config: ProxyConfig, ctx: RunContext) -> int:
         print(f"added #{proxy.id} {proxy.display()}")
 
     rows = ctx.store.list_proxies()
-    if config.test:
-        _test(rows, config.timeout_ms, ctx)
+    task = None
+    if config.test and rows:
+        # Testing is the page's only action that talks to the outside world, so
+        # it is the only part that leaves a receipt: one row per proxy, because
+        # 'ok: 3' with no rows is exactly the shape this project refuses.
+        task = open_task(ctx, config.task_name, FEATURE,
+                         {"add": config.add, "delete": config.delete,
+                          "timeout": config.timeout_ms,
+                          "test": config.test},
+                         planned=len(rows))
+        _test(rows, config.timeout_ms, ctx, task)
         rows = ctx.store.list_proxies()
 
     if config.bind:
@@ -146,10 +165,13 @@ def run(config: ProxyConfig, ctx: RunContext) -> int:
     timeouts = [row for row in rows if row.status == "timeout"]
     print(f"超时：{len(timeouts)}")
     print(f"PLAN: {added} added, {len(rows)} proxies, {len(timeouts)} timeout")
+    if task is not None:
+        close_task(ctx, task, derive=True)
     return 0
 
 
-def _test(rows: list[Proxy], timeout_ms: int, ctx: RunContext) -> None:
+def _test(rows: list[Proxy], timeout_ms: int, ctx: RunContext,
+          task: object | None = None) -> None:
     """Latency probe: a real TCP connect when live, a fixed spread in a dry run."""
     rng = random.Random(len(rows))
     for proxy in rows:
@@ -161,6 +183,13 @@ def _test(rows: list[Proxy], timeout_ms: int, ctx: RunContext) -> None:
             latency = rng.randint(20, timeout_ms + timeout_ms // 2)
             status = "timeout" if latency > timeout_ms else "ok"
         ctx.store.set_proxy_latency(proxy.id, latency, status)
+        if task is not None:
+            # "-" in the account column: a proxy probe belongs to no account,
+            # and putting the proxy URL there would make the receipt claim an
+            # account named after a URL.
+            record(ctx, task, "-", f"#{proxy.id} {proxy.display()}",
+                   status == "ok", "" if status == "ok" else "TIMEOUT",
+                   f"{latency} ms")
         print(f"测速 #{proxy.id} {proxy.display()} -> {latency} ms ({status})")
 
 

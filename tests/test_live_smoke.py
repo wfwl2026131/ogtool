@@ -113,3 +113,22 @@ def test_extra_cases_cannot_smuggle_a_write(smoke, tmp_path, monkeypatch):
     monkeypatch.setattr(smoke, "extra_path", lambda: path)
     # The refusal happens before any config is read or any case is run.
     assert smoke.main(["live_smoke"]) == 2
+
+
+def test_the_proxy_case_opens_its_own_listener(smoke):
+    """A proxy probe needs a target; a stranger's host is not one."""
+    module = smoke
+    case = next(item for item in module.CASES if item.name == "proxy")
+    assert case.local_port is True
+    assert "{port}" in " ".join(case.args)
+    assert case.receipt_for == "proxy"
+
+
+def test_a_local_listener_is_open_and_has_a_port(smoke):
+    module = smoke
+    server, port = module.local_listener()
+    try:
+        assert port > 0
+        assert server.fileno() >= 0
+    finally:
+        server.close()

@@ -16,7 +16,6 @@ Feature = Callable[[dict, RunContext], int]
 #: is what a test holds them to - a page may not quietly stop leaving evidence.
 FALLBACK_PAGES = {
     "settings": "reads and explains the configuration; it sends nothing",
-    "proxy": "edits the proxy table; it talks to proxies, not to chats",
 }
 
 _REGISTRY: dict[str, Feature] = {}

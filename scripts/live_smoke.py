@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import signal
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -47,6 +48,11 @@ class Case:
     receipt_for: str = ""
     #: Text the output must contain for the case to count as good.
     expect: str = ""
+    #: Open a listener on this machine and pass it in as ``{port}``. A proxy
+    #: probe needs somewhere to connect, and the only honest target is a socket
+    #: this machine owns - pointing it at a stranger would be someone else's
+    #: bandwidth and someone else's log.
+    local_port: bool = False
 
 
 CASES: tuple[Case, ...] = (
@@ -72,6 +78,10 @@ CASES: tuple[Case, ...] = (
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
          LISTEN_SECONDS, "auto_reply", "DONE:"),
+    # The speed test is the proxy page's only real action: a TCP connect and a
+    # latency. A local listener gives it a genuine ok without touching anyone.
+    Case("proxy", ("proxy", "--live", "--add", "socks5://127.0.0.1:{port}",
+                   "--test"), None, "proxy", "ok", True),
 )
 
 #: Cases that would write to somebody's chat. None today: the list above is
@@ -157,10 +167,49 @@ def newest_receipt(directory: Path, feature: str) -> dict | None:
     return json.loads(files[-1].read_text(encoding="utf-8"))
 
 
+def forget_proxy_rows(config: Path, port: int) -> list[str]:
+    """Remove the fixture proxy this case added.
+
+    The live run must not leave state behind: a row pointing at a port that
+    closed with this process would make the next listing a lie. Cleanup is by
+    URL, not by id, because the id depends on whatever else the table holds.
+    """
+    sys.path.insert(0, str(ROOT))
+    from ogtool.config import Settings
+    from ogtool.store import Store
+
+    settings = Settings.load(config)
+    store = Store(settings.db_path)
+    removed = 0
+    try:
+        for row in store.list_proxies():
+            if f"127.0.0.1:{port}" in row.display():
+                store.delete_proxy(row.id)
+                removed += 1
+    finally:
+        store.close()
+    if not removed:
+        return ["proxy: the fixture row was not in the table afterwards"]
+    return []
+
+
+def local_listener() -> tuple[socket.socket, int]:
+    """A TCP listener on this machine, closed by the caller."""
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    return server, int(server.getsockname()[1])
+
+
 def run_case(case: Case, config: Path, account: str, who: str) -> list[str]:
     """One case; returns the problems it produced (empty means good)."""
+    server = None
+    port = 0
+    if case.local_port:
+        server, port = local_listener()
     argv = [sys.executable, "-m", "ogtool", "--config", str(config), *case.args]
-    argv = [item.format(account=account, self=who) for item in argv]
+    argv = [item.format(account=account, self=who, port=port) for item in argv]
     started = subprocess.Popen(  # noqa: S603 - our own CLI
         argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True)
@@ -188,6 +237,9 @@ def run_case(case: Case, config: Path, account: str, who: str) -> list[str]:
     if case.expect and case.expect not in output:
         problems.append(f"{case.name}: output lacks {case.expect!r}\n"
                         f"{output[-400:]}")
+    if server is not None:
+        server.close()
+        problems.extend(forget_proxy_rows(config, port))
     if case.receipt_for:
         body = newest_receipt(receipts_dir(config), case.receipt_for)
         if body is None:

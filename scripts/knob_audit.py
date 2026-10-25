@@ -54,7 +54,6 @@ KNOWN = {
     "mass_send.target_kind":
         "set by the CLI override layer, not by the task file",
     "mass_send.dry_run": "set by the CLI (not ctx.live), not by the task file",
-    "proxy.task_name": "consumed through name_of(raw, data) - false positive",
     "settings.raw": "the base class's own raw dict, read by subclasses",
 }
 

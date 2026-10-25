@@ -87,3 +87,31 @@ def test_a_failed_bind_is_not_reported_as_bound(ctx, live, capsys):
     output = capsys.readouterr().out
     assert "bind acc1 -> #1 UNKNOWN" in output
     assert "bind acc1 -> #1 socks5://1.2.3.4:1080" not in output
+
+
+def test_testing_proxies_leaves_one_row_per_proxy(tmp_path):
+    """The speed test is the page's real action, so it must be backable by rows."""
+    import json
+
+    from ogtool.config import Settings
+    from ogtool.features import proxy as page
+    from ogtool.runtime import RunContext
+    from ogtool.store import Store
+
+    settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path / "logs")
+    store = Store(tmp_path / "og.sqlite")
+    ctx = RunContext(settings, store, __import__("logging").getLogger("t"))
+    ctx.store.add_proxy(page.parse_proxy("socks5://127.0.0.1:1"))
+    ctx.store.add_proxy(page.parse_proxy("socks5://127.0.0.1:2"))
+    config = page.ProxyConfig(test=True, timeout_ms=50)
+    page.run(config, ctx)
+
+    receipts = sorted((tmp_path / "logs" / "receipts").glob("proxy-*.json"))
+    assert receipts, "no receipt was written"
+    body = json.loads(receipts[-1].read_text())
+    # A receipt stores counts, not row bodies: the counts are what must match.
+    assert body["planned"] == 2
+    assert body["results"]["total"] == 2
+    assert body["results"]["failed"] == 2
+    assert body["failed"] == 2
+    assert body["unattributed"] == 2  # "-": probes belong to no account
