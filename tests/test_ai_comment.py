@@ -178,3 +178,23 @@ def test_one_account_never_reacts_twice_to_the_same_post(ctx, live, fake_ai,
     accounts = [account for account, _mid, _e in sender.reacted]
     assert accounts == ["acc1", "acc2"], "one reaction per account, no repeats"
     assert len(accounts) == len(set(accounts))
+
+
+def test_one_lane_per_post_in_plan_order():
+    """``commentConcurrentPosts`` counts *posts*, so a post is the work unit."""
+    from ogtool.features.ai_comment import CommentSpec, _post_lanes
+
+    specs = [
+        CommentSpec(account="a1", target="@t", post_id=10, tone="neutral",
+                    likes=0, emoji=False, delay=0),
+        CommentSpec(account="a2", target="@t", post_id=10, tone="neutral",
+                    likes=0, emoji=False, delay=0),
+        CommentSpec(account="a1", target="@t", post_id=11, tone="neutral",
+                    likes=0, emoji=False, delay=0),
+        CommentSpec(account="a1", target="@u", post_id=10, tone="neutral",
+                    likes=0, emoji=False, delay=0),
+    ]
+    lanes = _post_lanes(specs)
+    # Same post id on a different target is a different post.
+    assert [[spec.account for spec in lane] for lane in lanes] == [
+        ["a1", "a2"], ["a1"], ["a1"]]

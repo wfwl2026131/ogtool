@@ -10,6 +10,8 @@ windows), and a missing key only changes the wording, not the distribution.
 from __future__ import annotations
 
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 
 from ..config import ConfigError, Settings
@@ -191,6 +193,14 @@ class CommentSpec:
     delay: float
 
 
+def _post_lanes(specs: list[CommentSpec]) -> list[list[CommentSpec]]:
+    """One lane per post, in plan order: a post is the page's unit of work."""
+    grouped: dict[tuple[str, int], list[CommentSpec]] = {}
+    for spec in specs:
+        grouped.setdefault((spec.target, spec.post_id), []).append(spec)
+    return list(grouped.values())
+
+
 @dataclass(slots=True)
 class PlanStats:
     specs: list[CommentSpec] = field(default_factory=list)
@@ -340,8 +350,12 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
     ai_fallback = 0
     emoji_used = 0
     reactions = 0
+    counters = {"ok": 0, "failed": 0, "waited": 0.0, "ai_fallback": 0,
+                "emoji": 0, "reactions": 0}
+    lock = threading.Lock()
+    progress = {"index": 0}
 
-    for index, spec in enumerate(stats.specs, start=1):
+    def comment_one(spec: CommentSpec) -> None:
         target: Target = parse_many([spec.target], "custom")[0]
         post = posts[spec.target].get(spec.post_id) or SourceMessage(
             peer=spec.target, sender="", text="")
@@ -349,17 +363,21 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                                 fallback=post.text)
         record_ai(ctx, task, spec.account, "comment", generated)
         if not generated.ok:
-            ai_fallback += 1
+            with lock:
+                counters["ai_fallback"] += 1
         pause(ctx, spec.delay)
         body = _clip(generated.response, config.max_chars)
         if spec.emoji:
-            emoji_used += 1
+            with lock:
+                counters["emoji"] += 1
             body = f"{body} {random.choice(BODY_EMOJI)}".strip()
         outcome = sender.send(spec.account, target,
                               Content(text=body, reply_to=spec.post_id))
-        waited += spec.delay
+        with lock:
+            counters["waited"] += spec.delay
+            progress["index"] += 1
+            index = progress["index"]
         if outcome.ok:
-            ok += 1
             reacted = 0
             for like in range(max(0, spec.likes)):
                 if like >= len(labels):
@@ -373,12 +391,15 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                           f"-> {one.code}")
                     continue
                 reacted += 1
-            reactions += reacted
+            with lock:
+                counters["ok"] += 1
+                counters["reactions"] += reacted
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
                    True, detail=f"likes={spec.likes} reactions={reacted}")
             state = f"ok reactions={reacted}/{spec.likes}"
         else:
-            failed += 1
+            with lock:
+                counters["failed"] += 1
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
                    False, outcome.code)
             state = outcome.code
@@ -387,6 +408,30 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
               f"tone={spec.tone} likes={spec.likes} "
               f"emoji={'yes' if spec.emoji else 'no'} "
               f"delay={spec.delay:.0f}s text={body[:40]} -> {state}")
+
+    # ``commentConcurrentPosts``: how many *posts* are worked at the same time.
+    # Comments on one post stay sequential - they are replies to the same
+    # thread, and the page treats a post as its unit of work.
+    lanes = _post_lanes(stats.specs)
+    workers = max(1, min(config.concurrent_posts, len(lanes)))
+
+    def run_lane(lane: list[CommentSpec]) -> None:
+        for spec in lane:
+            comment_one(spec)
+
+    if workers <= 1:
+        for lane in lanes:
+            run_lane(lane)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for future in [pool.submit(run_lane, lane) for lane in lanes]:
+                future.result()
+    ok = counters["ok"]
+    failed = counters["failed"]
+    waited = counters["waited"]
+    ai_fallback = counters["ai_fallback"]
+    emoji_used = counters["emoji"]
+    reactions = counters["reactions"]
 
     print(f"Processed: {ok + failed} / {stats.total}")
     print(f"ok: {ok}")

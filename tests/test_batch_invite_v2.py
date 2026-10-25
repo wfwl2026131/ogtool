@@ -74,3 +74,32 @@ def test_a_dry_run_invites_without_waiting(ctx, slept):
                             invite_interval_max=9.0)
     assert run(config, ctx) == 0
     assert slept == []
+
+
+def test_a_target_is_rested_after_its_own_flood_ceiling(ctx, scripted, capsys):
+    """``peerFloodTargetMaxRetries`` is a per-TARGET ceiling (dump 1744470).
+
+    The per-invitee cap already existed; this one is about the group: when a
+    target keeps answering PEER_FLOOD, the rest of its contacts are skipped
+    instead of being spent on a target that is plainly closed for now.
+    """
+    scripted(["PEER_FLOOD", "PEER_FLOOD", "PEER_FLOOD"])
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2", "@c3"],
+                            peer_flood_target_max_retries=1,
+                            invitee_flood_cap=0)
+    run(config, ctx)
+    output = capsys.readouterr().out
+    assert "target rested: @g1" in output
+    assert "skipped @c2 in @g1" in output
+    assert "skipped @c3 in @g1" in output
+
+
+def test_a_zero_target_ceiling_never_rests_a_target(ctx, scripted, capsys):
+    scripted(["PEER_FLOOD", "ok"])
+    config = InviteV2Config(targets=["@g1"], contacts=["@c1", "@c2"],
+                            peer_flood_target_max_retries=0,
+                            invitee_flood_cap=0)
+    run(config, ctx)
+    output = capsys.readouterr().out
+    assert "target rested" not in output
+    assert "-> ok" in output

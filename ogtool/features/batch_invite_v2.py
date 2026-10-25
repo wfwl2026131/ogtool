@@ -265,11 +265,22 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
     timeouts: list[str] = []
     rng = random.Random(len(lane))
     abandoned: set[str] = set()
+    # ``peerFloodTargetMaxRetries``: a *target's* own retry ceiling, separate
+    # from the per-invitee cap. Once a group has answered PEER_FLOOD that many
+    # times it is rested, not hammered for every remaining contact in it.
+    target_floods: dict[str, int] = {}
+    exhausted: set[str] = set()
     previous_target = ""
     for index, (handler, group, contact) in enumerate(lane, start=1):
         if config.success_cap and ok >= config.success_cap:
             print(f"stopped: success_cap ({config.success_cap})")
             break
+        if group in exhausted:
+            record(ctx, task, handler, f"{group}<-{contact}", False, "TARGET_REST")
+            print(f"[{index:03d}/{total:03d}] skipped {contact} in {group} "
+                  f"(target rested after "
+                  f"{target_floods.get(group, 0)} PEER_FLOOD)")
+            continue
         if not config.continue_members_across_targets and contact in abandoned:
             print(f"[{index:03d}/{total:03d}] skipped {contact} "
                   f"(already failed on another target)")
@@ -313,8 +324,16 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
               f"target={group} contact={contact} -> {result.code}")
         if not config.continue_members_across_targets:
             abandoned.add(contact)
-        if result.code == "PEER_FLOOD" and contact not in flood:
-            flood.append(contact)
+        if result.code == "PEER_FLOOD":
+            target_floods[group] = target_floods.get(group, 0) + 1
+            cap = config.peer_flood_target_max_retries
+            if cap and target_floods[group] >= cap:
+                exhausted.add(group)
+                print(f"target rested: {group} answered PEER_FLOOD "
+                      f"{target_floods[group]} time(s) "
+                      f"(peer_flood_target_max_retries={cap})")
+            if contact not in flood:
+                flood.append(contact)
         if result.code == "TIMEOUT" and contact not in timeouts:
             timeouts.append(contact)
     return ok, failed, flood, timeouts
