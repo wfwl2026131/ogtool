@@ -10,7 +10,7 @@ plan printable, and a failed call never stops the task.
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
@@ -243,6 +243,9 @@ def with_emoji(text: str, per_mille: int,
     return f"{text} {(rng or random).choice(BODY_EMOJI)}".strip()
 
 
+NEWS_WINDOW_MINUTES = 360
+NEWS_LIMIT = 30
+
 REPLY_WINDOW_MINUTES = 120
 REPLY_LIMIT = 20
 
@@ -312,9 +315,30 @@ def reply_round(config: AiChatConfig, ctx: RunContext, sender: object,
     return answered, failed
 
 
+def read_news(sender: object, account: str, channel: str,
+              limit: int = NEWS_LIMIT) -> list[str]:
+    """``newsChannel``: the channel the news items are read from, live only."""
+    target = parse_many([channel], "channel")[0]
+    result = sender.history(account, target,  # type: ignore[attr-defined]
+                            minutes=NEWS_WINDOW_MINUTES, limit=limit)
+    if not result.ok:
+        print(f"news channel {channel} -> {result.code} (no news read)")
+        return []
+    messages = parse_sources(result.items)
+    return [message.text.strip() for message in messages
+            if message.text.strip()]
+
+
 def run(config: AiChatConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
+    if ctx.live and config.news_channel and not config.news and labels:
+        # The page reads its news live; a dry run keeps to the supplied pool so
+        # the plan stays reproducible.
+        config = replace(config, news=read_news(ctx.sender(), labels[0],
+                                                config.news_channel))
+        print(f"news: {len(config.news)} item(s) read from "
+              f"{config.news_channel}")
     lines = plan(config, labels)
 
     header(

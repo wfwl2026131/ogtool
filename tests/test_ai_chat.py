@@ -259,3 +259,43 @@ def test_a_low_per_mille_leaves_most_lines_alone():
     lines = [with_emoji("hello", 1, rng) for _ in range(2000)]
     decorated = sum(1 for line in lines if line != "hello")
     assert 0 < decorated < 20
+
+
+def test_the_news_channel_fills_the_pool_in_a_live_run(ctx, live, capsys):
+    """``newsChannel``: the page reads its items from the channel, live only."""
+    from ogtool.features.ai_chat import AiChatConfig, run
+    from ogtool.senders import SendResult
+
+    class NewsSender:
+        def __init__(self):
+            self.sent = 0
+
+        def history(self, account, target, minutes=0, limit=0):
+            result = SendResult(ok=True)
+            result.items = ["@news|chan|market is up 5% today"]
+            return result
+
+        def send(self, account, target, content):
+            self.sent += 1
+            return SendResult(ok=True)
+
+        def close(self):
+            pass
+
+    live(NewsSender())
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hello"],
+                          interval_min=0, interval_max=0,
+                          news_channel="@news", insert_probability=100)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "news: 1 item(s) read from @news" in output
+
+
+def test_a_dry_run_does_not_read_the_news_channel(ctx, capsys):
+    from ogtool.features.ai_chat import AiChatConfig, run
+
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hello"],
+                          interval_min=0, interval_max=0,
+                          news_channel="@news", insert_probability=100)
+    assert run(config, ctx) == 0
+    assert "read from @news" not in capsys.readouterr().out
