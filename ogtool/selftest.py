@@ -32,6 +32,14 @@ DOC_PATHS: tuple[Path, ...] = (
     Path.home() / ".dsh/bot/workspace/proj-tdesktop/coder/功能对齐-25项-对照表.md",
 )
 
+#: Notes that must carry the generated blocks. The mechanism inventory is prose
+#: and does not; the parity table does, and losing the markers there would
+#: otherwise be invisible - the check simply skipped a note with no block, which
+#: is how I deleted the evidence table once without a single check going red.
+BLOCK_NOTES: tuple[Path, ...] = (
+    Path.home() / ".dsh/bot/workspace/proj-tdesktop/coder/功能对齐-25项-对照表.md",
+)
+
 #: The number a note declares as current: ``<!-- current: pytest → 890 passed -->``
 CURRENT = re.compile(r"<!--\s*current:\s*pytest\s*(?:→|->)\s*(\d+)\s*passed\s*-->")
 
@@ -115,6 +123,8 @@ def _env() -> dict[str, str]:
 
 EVIDENCE_START = "<!-- evidence:start -->"
 EVIDENCE_END = "<!-- evidence:end -->"
+LIVE_START = "<!-- live:start -->"
+LIVE_END = "<!-- live:end -->"
 
 
 def evidence_block(base: Path | None = None,
@@ -126,6 +136,17 @@ def evidence_block(base: Path | None = None,
     where = directory or here / "data" / "logs" / "receipts"
     rows = evidence.collect(here, where)
     return f"{EVIDENCE_START}\n{evidence.as_markdown(rows)}\n{EVIDENCE_END}"
+
+
+def live_block(base: Path | None = None,
+               directory: Path | None = None) -> str:
+    """What the real-machine block in a note should contain right now."""
+    from . import evidence
+
+    here = base or root()
+    where = directory or here / "data" / "logs" / "receipts"
+    rows = evidence.collect(here, where)
+    return f"{LIVE_START}\n{evidence.live_markdown(rows, where)}\n{LIVE_END}"
 
 
 def check_docs(paths: tuple[Path, ...] | None = None,
@@ -159,13 +180,23 @@ def check_docs(paths: tuple[Path, ...] | None = None,
             problems.append(f"{path.name}: claims {claimed} passed, "
                             f"pytest collects {expected}")
         text = path.read_text(encoding="utf-8")
-        start = text.find(EVIDENCE_START)
-        end = text.find(EVIDENCE_END)
-        if start < 0 or end < start:
-            continue  # a note may simply not carry the table
-        if block is not None and text[start:end + len(EVIDENCE_END)] != block:
-            problems.append(f"{path.name}: the evidence block is stale "
-                            "(run scripts/sync_evidence.py)")
+        for start_mark, end_mark, expected_block, label in (
+                (EVIDENCE_START, EVIDENCE_END, block, "evidence"),
+                (LIVE_START, LIVE_END, live_block(), "live")):
+            if path in BLOCK_NOTES and start_mark not in text:
+                problems.append(f"{path.name}: the {label} markers are gone "
+                                "(restore them; run scripts/sync_evidence.py)")
+                continue
+            start = text.find(start_mark)
+            end = text.find(end_mark)
+            if start < 0 or end < start:
+                continue  # a note may simply not carry the table
+            if expected_block is None:
+                continue
+            actual = text[start:end + len(end_mark)]
+            if actual != expected_block:
+                problems.append(f"{path.name}: the {label} block is stale "
+                                "(run scripts/sync_evidence.py)")
     return (f"docs: {seen} note(s) checked against {expected} collected "
             f"test(s)"), problems
 

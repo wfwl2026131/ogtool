@@ -226,6 +226,53 @@ def as_dict(rows: list[Evidence]) -> dict[str, Any]:
     }
 
 
+def newest_live(directory: Path, feature: str) -> dict[str, Any] | None:
+    """The newest live receipt of one feature, or None."""
+    best: dict[str, Any] | None = None
+    best_key = ""
+    if not directory.exists():
+        return None
+    for path in directory.glob(f"{feature}-*.json"):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if body.get("mode") != "live" or int(body.get("task_id") or 0) <= 0:
+            continue
+        key = str(body.get("finished_at") or "")
+        if best is None or key >= best_key:
+            best, best_key = body, key
+            best["_file"] = path.name
+    return best
+
+
+def live_markdown(rows: list[Evidence], directory: Path) -> str:
+    """One row per page that has real-machine evidence, with the receipt named.
+
+    The prose in the note used to say 'live 3' months after it stopped being
+    true; this section is generated from the receipts themselves, so the claim
+    and its evidence are written by the same code.
+    """
+    lines = ["| 项 | 最新真机回执 | 计数 | 时间 |", "|---|---|---|---|"]
+    found = 0
+    for row in rows:
+        if row.level != "live":
+            continue
+        body = newest_live(directory, row.feature)
+        if body is None:  # pragma: no cover - live level implies a receipt
+            continue
+        found += 1
+        lines.append(
+            f"| `{row.feature}` | `{body['_file']}` | "
+            f"planned {body.get('planned', 0)} / ok {body.get('ok', 0)} / "
+            f"failed {body.get('failed', 0)} | "
+            f"{stamp_short(str(body.get('finished_at') or ''))} |")
+    lines.append("")
+    lines.append(f"共 {found} 项有真机回执；其余 {len(rows) - found} 项只有干跑"
+                 f"或单测证据。")
+    return "\n".join(lines)
+
+
 def as_markdown(rows: list[Evidence]) -> str:
     """A paste-ready table, so the note never carries a number nobody derived."""
     lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 最近真机 |",

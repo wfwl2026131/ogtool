@@ -184,3 +184,25 @@ def test_a_session_lock_is_not_live_proof(tmp_path):
                      "subject": "x"}]
     (tmp_path / "mass_send-3.json").write_text(json.dumps(body))
     assert evidence.count_receipts(tmp_path, "mass_send")[0] == 2
+
+
+def test_the_live_block_names_the_receipt(tmp_path):
+    """The note must point at the receipt, not just claim a number."""
+    (tmp_path / "watch_chat-1.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 7, "planned": 1, "ok": 1, "failed": 0,
+         "finished_at": "2026-01-01T00:00:00"}))
+    rows = [evidence.Evidence("watch_chat", 3, 1, 0,
+                              "2026-01-01T00:00:00"),
+            evidence.Evidence("auto_reply", 3, 0, 1)]
+    text = evidence.live_markdown(rows, tmp_path)
+    assert "watch_chat-1.json" in text
+    assert "planned 1 / ok 1 / failed 0" in text
+    assert "auto_reply" not in text          # dry-run only: not in this table
+    assert "共 1 项有真机回执" in text
+
+
+def test_a_fallback_receipt_never_reaches_the_live_table(tmp_path):
+    (tmp_path / "settings-run.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 0, "finished_at": "2026-01-01T00:00:00"}))
+    rows = [evidence.Evidence("settings", 1, 1, 0, "2026-01-01T00:00:00")]
+    assert "settings-run.json" not in evidence.live_markdown(rows, tmp_path)

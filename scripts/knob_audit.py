@@ -132,6 +132,24 @@ def audit(path: pathlib.Path) -> list[str]:
     return dead
 
 
+#: A decision has to say something. "not used" is not a reason, and a blank one
+#: is how the list turns back into a shrug.
+MIN_REASON = 24
+
+
+def problems_in_known(known: dict[str, str]) -> list[str]:
+    """What is wrong with the decision table itself."""
+    found: list[str] = []
+    for key, reason in known.items():
+        if key.count(".") != 1 or not all(key.split(".")):
+            found.append(f"KNOWN key {key!r} is not 'feature.field'")
+        text = (reason or "").strip()
+        if len(text) < MIN_REASON:
+            found.append(f"KNOWN {key}: the reason is {len(text)} characters; "
+                         f"say what was decided and why (>= {MIN_REASON})")
+    return found
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--path", default="ogtool/features")
@@ -141,6 +159,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="list the decided knobs and their reasons")
     args = parser.parse_args(argv)
     root = pathlib.Path(args.path)
+    table = problems_in_known(KNOWN)
+    if table:
+        for line in table:
+            print(f"KNOWN: {line}")
+        return 1
     total = 0
     undecided = 0
     seen: set[str] = set()

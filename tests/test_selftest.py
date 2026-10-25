@@ -121,3 +121,17 @@ def test_live_reports_a_missing_script(tmp_path):
     line, problems = selftest.check_live(base=tmp_path)
     assert problems
     assert "live_smoke" in " ".join(problems) or "Exit" in line
+
+
+def test_a_stale_live_block_is_reported(tmp_path):
+    """The generated real-machine table is checked exactly like the evidence one."""
+    from ogtool import selftest
+
+    note = tmp_path / "note.md"
+    note.write_text(
+        "<!-- current: pytest → 1 passed -->\n"
+        f"{selftest.LIVE_START}\nold table\n{selftest.LIVE_END}\n",
+        encoding="utf-8")
+    _line, problems = selftest.check_docs(
+        (note,), expected=1, block="")
+    assert any("live block is stale" in item for item in problems), problems

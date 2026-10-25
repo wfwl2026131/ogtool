@@ -79,3 +79,27 @@ def test_every_dead_knob_in_the_repo_has_a_decision():
     module = load()
     results = module.main([])
     assert results == 0
+
+
+def test_a_blank_reason_is_a_problem():
+    """'not used' is not a decision; the table has to say what was decided."""
+    module = load()
+    found = module.problems_in_known({"a.b": ""})
+    assert found and "reason" in found[0]
+
+
+def test_a_short_reason_is_a_problem():
+    module = load()
+    found = module.problems_in_known({"a.b": "unused"})
+    assert found and "characters" in found[0]
+
+
+def test_a_malformed_key_is_a_problem():
+    module = load()
+    found = module.problems_in_known({"a": "x" * 40})
+    assert found and "feature.field" in found[0]
+
+
+def test_the_real_table_passes_its_own_check():
+    module = load()
+    assert module.problems_in_known(module.KNOWN) == []
