@@ -19,11 +19,20 @@ from ogtool.features import settings as page
 @dataclass(slots=True)
 class _Ctx:
     settings: object
+    store: object
+    live: bool = False
+    task_id: object = None
+    waited: float = 0.0
+
+    def note(self, *_args, **_kwargs) -> None:
+        """The page never warns, but every context has the method."""
 
 
-def _ctx(runtime: GlobalConfig) -> _Ctx:
+def _ctx(runtime: GlobalConfig, tmp_path) -> _Ctx:
+    from ogtool.store import Store
+
     holder = type("Holder", (), {"runtime": runtime, "path": "config.yaml"})()
-    return _Ctx(settings=holder)
+    return _Ctx(settings=holder, store=Store(tmp_path / "og.sqlite"))
 
 
 def test_the_defaults_break_no_rule():
@@ -59,8 +68,8 @@ def test_the_overload_line_says_off_at_zero():
     assert page.overload_line(replace(GlobalConfig(), tp_overload=7)) == "7"
 
 
-def test_the_page_passes_and_returns_zero(capsys):
-    assert page.run(page.SettingsPageConfig(), _ctx(GlobalConfig())) == 0
+def test_the_page_passes_and_returns_zero(capsys, tmp_path):
+    assert page.run(page.SettingsPageConfig(), _ctx(GlobalConfig(), tmp_path)) == 0
     output = capsys.readouterr().out
     assert "account_batch" in output
     assert "restart due at: off" in output
@@ -69,25 +78,67 @@ def test_the_page_passes_and_returns_zero(capsys):
         assert label in output
 
 
-def test_the_page_fails_on_a_knob_it_reports(capsys):
+def test_the_page_fails_on_a_knob_it_reports(capsys, tmp_path):
     bad = replace(GlobalConfig(), threads_max=0)
-    assert page.run(page.SettingsPageConfig(), _ctx(bad)) == 1
+    assert page.run(page.SettingsPageConfig(), _ctx(bad, tmp_path)) == 1
     assert "PROBLEM" in capsys.readouterr().out
 
 
-def test_the_json_stays_one_key_per_knob(capsys):
+def test_the_json_stays_one_key_per_knob(capsys, tmp_path):
     assert page.run(page.SettingsPageConfig(as_json=True),
-                    _ctx(GlobalConfig())) == 0
+                    _ctx(GlobalConfig(), tmp_path)) == 0
     payload = json.loads(capsys.readouterr().out)
     assert list(payload) == [key for key, _label, _rule in page.KNOBS]
     assert len(payload) == 6
 
 
-def test_the_json_reports_problems_on_stderr(capsys):
+def test_the_json_reports_problems_on_stderr(capsys, tmp_path):
     bad = replace(GlobalConfig(), account_batch=0)
-    code = page.run(page.SettingsPageConfig(as_json=True), _ctx(bad))
+    code = page.run(page.SettingsPageConfig(as_json=True), _ctx(bad, tmp_path))
     captured = capsys.readouterr()
     assert code == 1
     assert "PROBLEM" in captured.err
     assert "PROBLEM" not in captured.out
     assert json.loads(captured.out)["account_batch"] == 0
+
+
+def test_the_audit_leaves_a_row_of_its_own(capsys, tmp_path):
+    """A clean audit is still work: one planned row says what was checked."""
+    from ogtool.config import Settings
+    from ogtool.runtime import RunContext
+    from ogtool.store import Store
+
+    settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path / "logs")
+    ctx = RunContext(settings, Store(tmp_path / "og.sqlite"),
+                     __import__("logging").getLogger("t"))
+    assert page.run(page.SettingsPageConfig(), ctx) == 0
+
+    import json
+
+    receipt = json.loads(
+        (sorted((tmp_path / "logs" / "receipts").glob("settings-*.json"))[-1])
+        .read_text())
+    assert receipt["planned"] == 1
+    assert receipt["ok"] == 1 and receipt["failed"] == 0
+    assert receipt["results"]["planned"] == 1
+
+
+def test_a_problem_is_one_failed_row(capsys, tmp_path):
+    from ogtool.config import Settings
+    from ogtool.runtime import RunContext
+    from ogtool.store import Store
+
+    settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path / "logs")
+    ctx = RunContext(settings, Store(tmp_path / "og.sqlite"),
+                     __import__("logging").getLogger("t"))
+    bad = replace(GlobalConfig(), threads_max=0)
+    ctx.settings.runtime = bad
+    assert page.run(page.SettingsPageConfig(), ctx) == 1
+
+    import json
+
+    receipt = json.loads(
+        (sorted((tmp_path / "logs" / "receipts").glob("settings-*.json"))[-1])
+        .read_text())
+    assert receipt["failed"] == 1
+    assert receipt["results"]["failed"] == 1

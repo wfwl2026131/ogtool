@@ -14,9 +14,7 @@ Feature = Callable[[dict, RunContext], int]
 #: no task to close. They write a fallback receipt through
 #: ``receipts.write_run`` (one row: this run, and how it ended), and this list
 #: is what a test holds them to - a page may not quietly stop leaving evidence.
-FALLBACK_PAGES = {
-    "settings": "reads and explains the configuration; it sends nothing",
-}
+FALLBACK_PAGES: dict[str, str] = {}
 
 _REGISTRY: dict[str, Feature] = {}
 _MODULES: dict[str, ModuleType] = {}

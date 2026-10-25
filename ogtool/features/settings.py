@@ -23,6 +23,7 @@ from ..config import ConfigError
 from ..flags import Flag
 from ..runtime import RunContext
 from . import register
+from ._common import close_task, open_task, record
 
 FEATURE = "settings"
 
@@ -121,13 +122,15 @@ class SettingsPageConfig:
 
     as_json: bool = False
     global_file: str = ""
+    task_name: str = "settings"
     raw: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, raw: dict) -> SettingsPageConfig:
         page = raw.get("settings") or {}
         return cls(as_json=bool(page.get("json")),
-                   global_file=str(page.get("global_file") or ""), raw=raw)
+                   global_file=str(page.get("global_file") or ""),
+                   task_name=str(page.get("task_name") or "settings"), raw=raw)
 
 
 def knobs(runtime: Any) -> list[tuple[str, str, Any]]:
@@ -185,6 +188,7 @@ def run(config: SettingsPageConfig, ctx: RunContext) -> int:
     rows = knobs(runtime)
     data_dir = getattr(ctx.settings, "data_dir", None)
     found = problems(runtime, data_dir)
+    task = _open_audit(ctx, config, rows, found)
 
     if config.as_json:
         # The flat object is the shape the page has always emitted, one key per
@@ -216,7 +220,34 @@ def run(config: SettingsPageConfig, ctx: RunContext) -> int:
           f"{'off' if runtime.tp_overload <= 0 else runtime.tp_overload}")
     for line in found:
         print(f"  PROBLEM: {line}")
+    _close_audit(ctx, task, rows, found)
     return 1 if found else 0
+
+
+def _open_audit(ctx: RunContext, config: SettingsPageConfig, rows: list,
+                found: list[str]):
+    """This page has no queue, but a run of it is still a run.
+
+    Reading the configuration is the whole job, so the receipt records that job:
+    one planned row for the audit itself, then one failed row per problem found.
+    Without it the page could only ever leave the CLI's fallback receipt, which
+    says "the command exited" and nothing about what it checked.
+    """
+    if config.as_json:
+        return None  # a machine-readable dump is a pipe, not a task
+    return open_task(ctx, config.task_name, FEATURE,
+                     {"knobs": len(rows), "global": config.global_file},
+                     planned=1)
+
+
+def _close_audit(ctx: RunContext, task, rows: list, found: list[str]) -> None:
+    if task is None:
+        return
+    record(ctx, task, "-", f"audit {len(rows)} knob(s)", True, "",
+           f"{len(found)} problem(s)")
+    for line in found:
+        record(ctx, task, "-", line, False, "CONFIG_PROBLEM", "")
+    close_task(ctx, task, derive=True)
 
 
 @register(FEATURE, "settings")
