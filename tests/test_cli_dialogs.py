@@ -48,3 +48,23 @@ def test_the_probe_records_one_row_per_account(tmp_path, monkeypatch):
     assert receipt["ok"] == 1 and receipt["failed"] == 1
     assert receipt["results"]["total"] == 2
     assert receipt["accounts"] == ["t1", "a"]
+
+
+def test_a_probe_row_names_the_failure_kind(tmp_path, monkeypatch):
+    """The error code comes from the detail, so a receipt says why, not just no."""
+    import json
+
+    from ogtool import cli
+
+    config = tmp_path / "config.yaml"
+    config.write_text("logs: logs\n", encoding="utf-8")
+    rows = [("a", False, "LOGIN_FAILED empty get_me")]
+    monkeypatch.setattr(cli, "_Pool",
+                        lambda *_a, **_k: type("P", (), {
+                            "test": lambda self, *a, **k: rows})())
+    assert cli.run(["--config", str(config), "accounts", "test"]) == 1
+    receipt = json.loads(
+        sorted((tmp_path / "logs" / "receipts").glob("accounts-*.json"))[-1]
+        .read_text())
+    assert receipt["failed"] == 1
+    assert receipt["results"]["failed"] == 1

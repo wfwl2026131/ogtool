@@ -828,6 +828,29 @@ def _read_secret(path: str | None) -> str:
     return _Path(path).expanduser().read_text(encoding="utf-8").strip()
 
 
+
+def _account_rows_task(settings: Settings, store: Store, action: str,
+                       rows: list[tuple[str, bool, str]],
+                       live: bool) -> None:
+    """Record one row per account for an accounts action, then close.
+
+    These actions (test / logout / password / spambot) are all the same shape: a
+    list of ``(label, ok, detail)`` printed to the screen and, until now, nothing
+    on disk but the CLI's fallback receipt. One row each is what makes the counts
+    checkable.
+    """
+    ctx = RunContext(settings=settings, store=store,
+                     log=task_logger(settings.log_dir, f"accounts-{action}"),
+                     live=live)
+    task = open_task(ctx, action, "accounts", {"live": live},
+                     planned=len(rows))
+    for label, ok, detail in rows:
+        record(ctx, task, label, label, ok,
+               "" if ok else str(detail).split(":")[0].split(" ")[0],
+               detail)
+    close_task(ctx, task, derive=True)
+    ctx.close()
+
 def _accounts(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(settings.db_path)
     pool = _Pool(settings, store)
@@ -876,6 +899,8 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
                 print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
             done = sum(1 for _, ok, _ in rows if ok)
             print(f"Batch logout finished. Success: {done}/{len(rows)}")
+            _account_rows_task(settings, store, "logout", rows,
+                               live=bool(args.live))
             return 0 if done == len(rows) else 1
         if args.action == "password":
 
@@ -893,6 +918,8 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             done = sum(1 for _, ok, _ in rows if ok)
             print(f"Password change task finished. "
                   f"Success: {done}/{len(rows)}")
+            _account_rows_task(settings, store, "password", rows,
+                               live=bool(args.live))
             return 0 if done == len(rows) else 1
         if args.action == "dialogs":
             # Listing is the only read here, and the list itself is the result:
@@ -938,6 +965,11 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
                       f"kind={kind or '-'} {detail}")
             known = sum(1 for _, kind, _, _ in rows if kind)
             print(f"total: {len(rows)} classified: {known}")
+            _account_rows_task(
+                settings, store, "spambot",
+                [(label, ok, f"kind={kind or '-'} {detail}")
+                 for label, kind, ok, detail in rows],
+                live=bool(args.live))
             return 0 if all(ok for _, _, ok, _ in rows) else 1
         if args.action == "list":
             rows = pool.list()
@@ -956,19 +988,7 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
         ok_count = sum(1 for _, ok, _ in rows if ok)
         print(f"total: {len(rows)} ok: {ok_count}")
-        # The probe is the first thing anyone runs, so it has to leave proof: one
-        # row per account, carrying the same ok/fail the screen showed. Before
-        # this a live probe left only "the command exited 0".
-        ctx = RunContext(settings=settings, store=store,
-                         log=task_logger(settings.log_dir, "accounts-test"),
-                         live=bool(args.live))
-        task = open_task(ctx, "test", "accounts", {"live": bool(args.live)},
-                         planned=len(rows))
-        for label, ok, detail in rows:
-            record(ctx, task, label, label, ok, "" if ok else "PROBE_FAILED",
-                   detail)
-        close_task(ctx, task, derive=True)
-        ctx.close()
+        _account_rows_task(settings, store, "test", rows, live=bool(args.live))
         return 0 if ok_count == len(rows) else 1
     finally:
         store.close()
