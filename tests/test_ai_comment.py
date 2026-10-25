@@ -366,3 +366,70 @@ def test_forward_flags_come_from_the_forward_header():
     assert _forward_flags(ForwardedFromChannel()) == ("forwarded",
                                                       "forwarded_channel")
     assert _forward_flags(Typed()) == ()
+
+
+def test_sticker_share_is_drawn_in_the_plan():
+    """``stickerSendPercent``: 'probability of sending a sticker instead of text'."""
+    from ogtool.features.ai_comment import CommentConfig, plan
+
+    config = CommentConfig(targets=["@c1"], per_post_min=50, per_post_max=50,
+                           posts=1, sticker_send_percent=100, seed=7)
+    stats = plan(config, ["acc1"])
+    assert stats.total == 50
+    assert stats.stickers == 50
+
+    config = CommentConfig(targets=["@c1"], per_post_min=50, per_post_max=50,
+                           posts=1, sticker_send_percent=0, seed=7)
+    assert plan(config, ["acc1"]).stickers == 0
+
+
+def test_a_sticker_with_no_set_enabled_goes_out_as_text(ctx, capsys):
+    from ogtool.features.ai_comment import CommentConfig, run
+
+    config = CommentConfig(targets=["@c1"], per_post_min=1, per_post_max=1,
+                           posts=1, sticker_send_percent=100,
+                           comment_interval_min=0, comment_interval_max=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "sticker skipped: no sticker set is enabled" in output
+    assert "stickers: 0" in output
+
+
+def test_a_sticker_is_sent_from_the_enabled_set(ctx, live, capsys):
+    """A live sticker comment is a sticker, not text: no AI call, no caption."""
+    from ogtool.features.ai_comment import CommentConfig, run
+    from ogtool.senders import SendResult
+
+    class StickerSender:
+        def __init__(self):
+            self.stickers = 0
+            self.texts = 0
+
+        def send_sticker(self, account, target, sets, reply_to=0):
+            self.stickers += 1
+            return SendResult(ok=True, detail=f"set={sets[0]}")
+
+        def send(self, account, target, content):
+            self.texts += 1
+            return SendResult(ok=True)
+
+        def react(self, account, target, message_id, emoji=""):
+            return SendResult(ok=True)
+
+        def history(self, account, target, minutes=0, limit=0):
+            return SendResult(ok=False, code="SKIPPED")
+
+        def close(self):
+            pass
+
+    sender = StickerSender()
+    live(sender)
+    config = CommentConfig(targets=["@c1"], per_post_min=2, per_post_max=2,
+                           posts=1, sticker_send_percent=100,
+                           sticker_sets=["cats"], require_like=False,
+                           comment_interval_min=0, comment_interval_max=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert sender.stickers == 2
+    assert sender.texts == 0
+    assert "stickers: 2" in output

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import random
 import re
 import threading
 from dataclasses import dataclass, field
@@ -474,6 +475,15 @@ class DryRunSender:
               emoji: str = "\U0001F44D") -> SendResult:
         self.calls.append(("react", f"{account}:{target.ref}#{message_id}"))
         return SendResult(ok=True)
+
+    def send_sticker(self, account: str, target: Target, sets: list[str],
+                     reply_to: int = 0) -> SendResult:
+        """A sticker comment from the enabled sets; a dry run sends nothing."""
+        self.calls.append(("sticker", f"{account}:{target.ref}"))
+        if not sets:
+            return SendResult(ok=False, code="STICKER_SET_MISSING",
+                              detail="no sticker set is enabled")
+        return SendResult(ok=True, detail=f"set={random.choice(sets)}")
 
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         self.sent.append((account, target, content))

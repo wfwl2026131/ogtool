@@ -19,7 +19,7 @@ from ..flags import Flag
 from ..limiter import format_duration
 from ..prompts import compose
 from ..runtime import RunContext
-from ..senders import Content
+from ..senders import Content, SendResult
 from ..sources import SourceMessage, from_config, synthetic
 from ..targets import Target, parse_many
 from . import register
@@ -108,8 +108,11 @@ class CommentConfig:
     concurrent_posts: int = 1
     #: ``commentRetryMax``: retries for one post before it is given up on.
     retry_max: int = 0
-    #: ``stickerSendPercent`` / ``emojiSendPerMille``: sticker vs emoji share.
+    #: ``stickerSendPercent``: "Probability of sending a sticker instead of a
+    #: text comment" - needs a set to take it from, so the two travel together.
     sticker_send_percent: int = 0
+    #: ``stickerSets``: the short names the page enables as usable pools.
+    sticker_sets: list[str] = field(default_factory=list)
     seed: int | None = None
     task_name: str = "ai-comment"
 
@@ -155,6 +158,9 @@ class CommentConfig:
             concurrent_posts=num(data, "comment_concurrent_posts", 1,
                                  kind=int, minimum=1),
             retry_max=num(data, "comment_retry_max", 0, kind=int, minimum=0),
+            sticker_sets=[item for item in blocks(data, "sticker_sets") if item]
+                         or [item for item in blocks(data, "sticker_short_names")
+                             if item],
             sticker_send_percent=min(100, num(data, "sticker_send_percent", 0,
                                               kind=int, minimum=0)),
             extra_prompts=blocks(data, "extra_prompts"),
@@ -191,6 +197,8 @@ class CommentSpec:
     likes: int
     emoji: bool
     delay: float
+    #: ``stickerSendPercent`` drew this one: the comment is a sticker, not text.
+    sticker: bool = False
 
 
 def _post_lanes(specs: list[CommentSpec]) -> list[list[CommentSpec]]:
@@ -212,6 +220,10 @@ class PlanStats:
     @property
     def positive(self) -> int:
         return sum(1 for spec in self.specs if spec.tone == POSITIVE)
+
+    @property
+    def stickers(self) -> int:
+        return sum(1 for spec in self.specs if spec.sticker)
 
     @property
     def emoji(self) -> int:
@@ -271,6 +283,8 @@ def plan(config: CommentConfig, labels: list[str],
         for post in posts:
             count = generator.randint(low, high)
             for _ in range(count):
+                sticker = (generator.random() * 100
+                           < config.sticker_send_percent)
                 tone = (POSITIVE if generator.random() * 100
                         < config.positive_ratio else NEUTRAL)
                 emoji = generator.random() * 100 < config.emoji_probability
@@ -281,7 +295,7 @@ def plan(config: CommentConfig, labels: list[str],
                 stats.specs.append(CommentSpec(
                     account=account, target=target,
                     post_id=post.message_id, tone=tone, likes=likes,
-                    emoji=emoji, delay=delay,
+                    emoji=emoji, delay=delay, sticker=sticker,
                 ))
     return stats
 
@@ -366,6 +380,9 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                   if config.require_comment else
                   ("like" if config.require_like else "none")),
         only_root_forwarded=("yes" if config.only_root_forwarded else "no"),
+        stickers=(f"{config.sticker_send_percent}%"
+                  + (f" of {len(config.sticker_sets)} set(s)"
+                     if config.sticker_sets else " (no set enabled)")),
         queue=stats.total,
     )
 
@@ -382,14 +399,49 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
     emoji_used = 0
     reactions = 0
     counters = {"ok": 0, "failed": 0, "waited": 0.0, "ai_fallback": 0,
-                "emoji": 0, "reactions": 0}
+                "emoji": 0, "reactions": 0, "stickers": 0}
     lock = threading.Lock()
     progress = {"index": 0}
+
+    def send_sticker(spec: CommentSpec, target: Target) -> SendResult | None:
+        """``stickerSendPercent``: the sticker path, or ``None`` when it falls back.
+
+        A sticker needs a set to come from. With the share drawn but no set
+        enabled, or with every set unresolvable, the comment goes out as text
+        and says why - a silently text-only "sticker run" would look identical
+        in the summary to a working one.
+        """
+        if not spec.sticker:
+            return None
+        if not config.sticker_sets:
+            print(f"sticker skipped: no sticker set is enabled "
+                  f"({config.sticker_send_percent}% asked for one)")
+            return None
+        outcome = sender.send_sticker(spec.account, target,
+                                      config.sticker_sets,
+                                      reply_to=spec.post_id)
+        if outcome.ok:
+            return outcome
+        print(f"sticker skipped: {outcome.code} ({outcome.detail})")
+        return None
 
     def comment_one(spec: CommentSpec) -> None:
         target: Target = parse_many([spec.target], "custom")[0]
         post = posts[spec.target].get(spec.post_id) or SourceMessage(
             peer=spec.target, sender="", text="")
+        pause(ctx, spec.delay)
+        sticker = send_sticker(spec, target)
+        if sticker is not None:
+            with lock:
+                counters["waited"] += spec.delay
+                counters["stickers"] += 1
+                counters["ok"] += 1
+                progress["index"] += 1
+            record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
+                   True, detail=f"sticker {sticker.detail}")
+            print(f"[{progress['index']:03d}] sticker {spec.account} "
+                  f"post={spec.post_id} {sticker.detail}")
+            return
         generated = ai.generate(_prompt(ctx, config, spec, post),
                                 fallback=post.text)
         record_ai(ctx, task, spec.account, "comment", generated)
@@ -488,6 +540,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
     print(f"positive: {stats.positive} ({stats.ratio(stats.positive):.0f}%)")
     print(f"emoji: {emoji_used} ({stats.ratio(emoji_used):.0f}%)")
     print(f"reactions: {reactions}")
+    print(f"stickers: {counters['stickers']}")
     print(f"ai calls: {len(ai.calls)} (fallback {ai_fallback})")
     print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {stats.total} comments, {max(1, len(labels))} accounts, "
