@@ -62,8 +62,9 @@ def test_no_numbers_is_a_config_error():
 
 def test_flood_and_timeout_are_invalid_not_crashes(ctx, scripted, capsys):
     scripted([PEER_FLOOD, TIMEOUT, "FLOOD_WAIT_30"])
+    # flood_cap=0 keeps this test about the buckets: the retry path has its own.
     config = PhoneConfig(numbers=["+15550000001", "+15550000002",
-                                  "+15550000003"])
+                                  "+15550000003"], flood_cap=0)
     run(config, ctx)
     out = capsys.readouterr().out
     assert f"{INVALID}：3" in out
@@ -76,3 +77,25 @@ def test_a_bare_number_is_still_a_phone_on_this_page():
     assert phone_target("15550000001").ref == "+15550000001"
     assert phone_target("+15550000001").ref == "+15550000001"
     assert phone_target("15550000001").phone_fallback == ""
+
+
+def test_flood_cap_retries_a_number_after_a_rest(ctx, scripted, capsys):
+    """``floodCap``: 'PEER_FLOOD retries per number'."""
+    scripted([PEER_FLOOD, "ok"])
+    config = PhoneConfig(numbers=["+15550000001"], flood_cap=1,
+                         single_interval_ms=0, global_interval_ms=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "PEER_FLOOD backoff" in output
+    assert f"{VALID}：1" in output
+
+
+def test_threads_split_the_numbers_over_accounts(ctx, scripted, capsys):
+    scripted(["ok", "ok", "ok", "ok"])
+    config = PhoneConfig(numbers=[f"+1555000000{i}" for i in range(4)],
+                         threads=2, single_interval_ms=0,
+                         global_interval_ms=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "threads: 2 lanes, one account each" in output
+    assert f"{VALID}：4" in output

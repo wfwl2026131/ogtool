@@ -121,3 +121,26 @@ def test_one_account_is_never_worked_by_two_lanes(ctx, live):
     assert run(config, ctx) == 0
     assert {account for account, _, _ in sender.calls} == {"acc1"}
     assert len(sender.calls) == 3
+
+
+def test_flood_cap_retries_the_contact_after_a_rest(ctx, scripted, capsys,
+                                                    slept):
+    """``floodCap`` is 'PEER_FLOOD retries per contact', not a give-up count."""
+    scripted(["PEER_FLOOD", "ok"])
+    config = ContactConfig(contacts=["@c1"], flood_cap=1,
+                           operation_interval_min_ms=0,
+                           operation_interval_max_ms=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "PEER_FLOOD backoff" in output
+    assert "成功: 1" in output
+
+
+def test_a_contact_that_stays_flooded_is_counted_after_the_cap(ctx, scripted,
+                                                              capsys):
+    scripted(["PEER_FLOOD", "PEER_FLOOD", "PEER_FLOOD"])
+    config = ContactConfig(contacts=["@c1"], flood_cap=1,
+                           operation_interval_min_ms=0,
+                           operation_interval_max_ms=0)
+    assert run(config, ctx) == 1
+    assert "失败: 1" in capsys.readouterr().out

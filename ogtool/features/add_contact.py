@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import format_duration
+from ..limiter import PeerFloodBackoff, format_duration
 from ..runtime import RunContext
 from ..targets import parse_many
 from . import register
@@ -241,6 +241,7 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
 
     positions = {job: index for index, job in enumerate(jobs, start=1)}
     total = len(jobs)
+    backoff = PeerFloodBackoff()
 
     def add_lane(lane: list[tuple[str, str, int]]) -> tuple[int, int, float]:
         ok_count = failed_count = 0
@@ -253,6 +254,17 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
                 pause(ctx, delay)
             target = parse_many([contact], "custom")[0]
             result = sender.add_contact(account, target)
+            attempts = 0
+            # ``floodCap``: "PEER_FLOOD retries per contact" - the contact is
+            # worth another try after a rest, and the page counts the tries.
+            while result.code == "PEER_FLOOD" and attempts < config.flood_cap:
+                attempts += 1
+                delay = backoff.wait_for(attempts - 1)
+                print(f"  PEER_FLOOD backoff {delay:.0f}s "
+                      f"(attempt {attempts}/{config.flood_cap})")
+                waited += delay
+                pause(ctx, delay)
+                result = sender.add_contact(account, target)
             if result.ok:
                 ok_count += 1
                 record(ctx, task, account, contact, True)

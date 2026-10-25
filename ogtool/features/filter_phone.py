@@ -17,11 +17,12 @@ somewhere else than the page says is worse than one that fails.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import format_duration
+from ..limiter import PeerFloodBackoff, format_duration
 from ..progress import Stats
 from ..report import export, read_lines, write_lines
 from ..runtime import RunContext
@@ -33,6 +34,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     name_of,
     num,
     open_task,
@@ -231,24 +233,68 @@ def run(config: PhoneConfig, ctx: RunContext) -> int:
     current = "-"
 
     waited = 0.0
-    for index, number in enumerate(config.numbers, start=1):
-        current = number
-        account = labels[(index - 1) % len(labels)]
+    backoff = PeerFloodBackoff()
+
+    def check_number(index: int, number: str, account: str,
+                     previous: bool) -> str:
+        """One resolve, with the page's ``floodCap`` retries around it."""
+        nonlocal waited
         target = phone_target(number)
-        if index > 1:
+        if previous:
             gap = max(config.global_interval_ms, config.single_interval_ms)
             waited += gap / 1000.0
             pause(ctx, gap / 1000.0)
         result = sender.resolve(account, target)
+        attempts = 0
+        while result.code == "PEER_FLOOD" and attempts < config.flood_cap:
+            attempts += 1
+            delay = backoff.wait_for(attempts - 1)
+            print(f"  PEER_FLOOD backoff {delay:.0f}s "
+                  f"(attempt {attempts}/{config.flood_cap})")
+            waited += delay
+            pause(ctx, delay)
+            result = sender.resolve(account, target)
         bucket = classify(result.code, result.ok)
         if config.deep_scan and len(labels) > 1:
             bucket = _deep_bucket(config, sender, labels, target, bucket,
                                   number)
-        buckets[bucket].append(number)
         stats.record(result.ok, result.code)
         record(ctx, task, account, number, result.ok, result.code, bucket)
         print(f"[{index:03d}/{stats.total:03d}] {number} -> {bucket}"
               f"{'' if result.ok else ' (' + result.code + ')'}")
+        return bucket
+
+    def check_lane(lane: list[tuple[int, str]], position: int) -> list[str]:
+        account = labels[position % len(labels)]
+        marked: list[str] = []
+        for offset, (index, number) in enumerate(lane):
+            current = number
+            marked.append(check_number(index, number, account, offset > 0))
+        del current
+        return marked
+
+    work = list(enumerate(config.numbers, start=1))
+    lanes = lanes_by(lambda pair: labels[(pair[0] - 1) % len(labels)], work,
+                     config.threads)
+    marked: dict[int, str] = {}
+    if len(lanes) > 1:
+        print(f"threads: {len(lanes)} lanes, one account each")
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            futures = [
+                pool.submit(check_lane, lane, position)
+                for position, lane in enumerate(lanes)
+            ]
+            for lane, future in zip(lanes, futures, strict=False):
+                for (index, _), bucket in zip(lane, future.result(),
+                                              strict=False):
+                    marked[index] = bucket
+    else:
+        for (index, _), bucket in zip(work, check_lane(work, 0),
+                                      strict=False):
+            marked[index] = bucket
+    for index, number in enumerate(config.numbers, start=1):
+        buckets[marked.get(index, INVALID)].append(number)
+    current = config.numbers[-1] if config.numbers else "-"
 
     for name in BUCKETS:
         print(f"{name}：{len(buckets[name])}")
