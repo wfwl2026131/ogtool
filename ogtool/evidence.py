@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,10 @@ class Evidence:
     tests: int
     live: int
     dry: int
+    #: When the newest live receipt finished, ISO 8601, or "" for never. A count
+    #: says a page was proven once; the date says whether that proof is old
+    #: enough to be worth re-running.
+    last_live: str = ""
 
     @property
     def level(self) -> str:
@@ -70,11 +75,12 @@ def count_tests(root: Path, feature: str) -> int:
     return total
 
 
-def count_receipts(directory: Path, feature: str) -> tuple[int, int]:
-    """(live, dry) receipt counts for one feature."""
+def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
+    """(live, dry, newest live finish) for one feature."""
     live = dry = 0
+    newest = ""
     if not directory.exists():
-        return 0, 0
+        return 0, 0, newest
     for path in directory.glob(f"{feature}-*.json"):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -82,9 +88,47 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int]:
             continue
         if body.get("mode") == "live":
             live += 1
+            stamp = str(body.get("finished_at") or "")
+            if stamp > newest:
+                newest = stamp
         elif body.get("mode") == "dry-run":
             dry += 1
-    return live, dry
+    return live, dry, newest
+
+
+def stamp_short(stamp: str) -> str:
+    """A stamp as ``YYYY-MM-DD HH:MM``, for tables that must not drift.
+
+    The age ("3h") is right for a person reading the screen and wrong for a file
+    compared tomorrow: the block in the note is checked against the tree, so it
+    carries the instant, not the distance to now.
+    """
+    if not stamp:
+        return "-"
+    try:
+        when = datetime.fromisoformat(stamp)
+    except ValueError:
+        return "?"
+    return when.strftime("%Y-%m-%d %H:%M")
+
+
+def age(stamp: str, now: datetime | None = None) -> str:
+    """A stamp as a short age ("3h", "2d"), or "" when there is no stamp."""
+    if not stamp:
+        return ""
+    try:
+        when = datetime.fromisoformat(stamp)
+    except ValueError:
+        return "?"
+    moment = now or datetime.now(UTC)
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    seconds = max(0.0, (moment - when).total_seconds())
+    for limit, unit in ((60, "s"), (3600, "m"), (86400, "h")):
+        if seconds < limit:
+            return f"{int(seconds)}{unit}" if unit == "s" else (
+                f"{int(seconds // 60)}m" if unit == "m" else f"{int(seconds // 3600)}h")
+    return f"{int(seconds // 86400)}d"
 
 
 def receipts_dir(settings: Any) -> Path:
@@ -118,22 +162,24 @@ def collect(root: Path, directory: Path,
     swept = sweep_features(root / "logs" / "sweep.json")
     rows: list[Evidence] = []
     for feature in features:
-        live, dry = count_receipts(directory, feature)
+        live, dry, newest = count_receipts(directory, feature)
         if dry == 0 and swept.get(feature):
             # The sweep's receipts are written into throwaway directories, so
             # its summary file is the only place that remembers they happened.
             dry = 1
-        rows.append(Evidence(feature, count_tests(root, feature), live, dry))
+        rows.append(Evidence(feature, count_tests(root, feature), live, dry,
+                             newest))
     return rows
 
 
 def render(rows: list[Evidence]) -> str:
     """The table, plus the one summary line the checks parse."""
     width = max((len(row.feature) for row in rows), default=7)
-    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry"]
+    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  last"]
     for row in rows:
         lines.append(f"{row.feature:{width}s}  {row.level:5s}  "
-                     f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}")
+                     f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}  "
+                     f"{age(row.last_live) or '-':>5s}")
     counts = {level: sum(1 for row in rows if row.level == level)
               for level in LEVELS}
     lines.append(f"evidence: {len(rows)} feature(s), "
@@ -146,7 +192,8 @@ def as_dict(rows: list[Evidence]) -> dict[str, Any]:
     return {
         "features": [
             {"feature": row.feature, "level": row.level, "tests": row.tests,
-             "live": row.live, "dry": row.dry}
+             "live": row.live, "dry": row.dry, "last_live": row.last_live,
+             "age": age(row.last_live)}
             for row in rows
         ],
         "counts": {level: sum(1 for row in rows if row.level == level)
@@ -156,10 +203,12 @@ def as_dict(rows: list[Evidence]) -> dict[str, Any]:
 
 def as_markdown(rows: list[Evidence]) -> str:
     """A paste-ready table, so the note never carries a number nobody derived."""
-    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 |", "|---|---|---|---|---|"]
+    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 最近真机 |",
+             "|---|---|---|---|---|---|"]
     for row in rows:
         lines.append(f"| `{row.feature}` | {row.level} | {row.tests} | "
-                     f"{row.live} | {row.dry} |")
+                     f"{row.live} | {row.dry} | "
+                     f"{stamp_short(row.last_live)} |")
     counts = as_dict(rows)["counts"]
     lines.append("")
     lines.append(f"共 {len(rows)} 项：" + "，".join(

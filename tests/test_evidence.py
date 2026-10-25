@@ -38,7 +38,9 @@ def test_receipts_are_counted_by_mode(tmp_path):
     (tmp_path / "watch_chat-2.json").write_text(json.dumps({"mode": "dry-run"}))
     (tmp_path / "watch_chat-3.json").write_text(json.dumps({"mode": "live"}))
     (tmp_path / "watch_chat-4.json").write_text("not json")
-    assert evidence.count_receipts(tmp_path, "watch_chat") == (2, 1)
+    live, dry, newest = evidence.count_receipts(tmp_path, "watch_chat")
+    assert (live, dry) == (2, 1)
+    assert newest == ""  # no finished_at in these bodies
 
 
 def test_levels_fall_back_in_order():
@@ -94,7 +96,8 @@ def test_json_output_is_the_same_rows():
     rows = [evidence.Evidence("a", 2, 1, 0), evidence.Evidence("b", 0, 0, 1)]
     body = evidence.as_dict(rows)
     assert body["features"][0] == {"feature": "a", "level": "live",
-                                   "tests": 2, "live": 1, "dry": 0}
+                                   "tests": 2, "live": 1, "dry": 0,
+                                   "last_live": "", "age": ""}
     assert body["counts"]["live"] == 1
     assert body["counts"]["dry"] == 1
 
@@ -116,3 +119,37 @@ def test_the_two_formats_agree(settings, monkeypatch, capsys):
     as_md = capsys.readouterr().out
     assert '"feature": "a"' in as_json
     assert "| `a` | unit |" in as_md
+
+
+def test_age_reads_like_a_person_wrote_it():
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime(2026, 1, 2, 12, 0, tzinfo=UTC)
+    assert evidence.age("", now) == ""
+    assert evidence.age("not a stamp", now) == "?"
+    assert evidence.age(
+        (now - timedelta(seconds=30)).isoformat(), now) == "30s"
+    assert evidence.age((now - timedelta(minutes=5)).isoformat(), now) == "5m"
+    assert evidence.age((now - timedelta(hours=3)).isoformat(), now) == "3h"
+    assert evidence.age((now - timedelta(days=2)).isoformat(), now) == "2d"
+
+
+def test_the_newest_live_receipt_is_remembered(tmp_path):
+    (tmp_path / "watch_chat-1.json").write_text(json.dumps(
+        {"mode": "live", "finished_at": "2026-01-01T00:00:00+00:00"}))
+    (tmp_path / "watch_chat-2.json").write_text(json.dumps(
+        {"mode": "live", "finished_at": "2026-01-03T00:00:00+00:00"}))
+    (tmp_path / "watch_chat-3.json").write_text(json.dumps(
+        {"mode": "dry-run", "finished_at": "2026-01-09T00:00:00+00:00"}))
+    _live, _dry, newest = evidence.count_receipts(tmp_path, "watch_chat")
+    assert newest == "2026-01-03T00:00:00+00:00"
+
+
+def test_the_table_shows_an_age_and_the_markdown_an_instant():
+    """A file compared tomorrow must not depend on when it was written."""
+    row = evidence.Evidence("a", 1, 2, 0, "2026-01-01T00:00:00+00:00")
+    assert "last" in evidence.render([row]).splitlines()[0]
+    markdown = evidence.as_markdown([row])
+    assert "最近真机" in markdown
+    assert "2026-01-01 00:00" in markdown
+    assert evidence.stamp_short("") == "-"
