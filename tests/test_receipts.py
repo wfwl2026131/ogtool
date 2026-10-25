@@ -545,3 +545,47 @@ def test_every_page_leaves_evidence():
     assert silent == [], (
         f"these pages write no receipt and are not declared: {silent}; "
         f"declare them in features.FALLBACK_PAGES with a reason")
+
+
+def _valid_body(**over):
+    body = {
+        "version": receipts.VERSION, "feature": "f", "task": "t", "task_id": 1,
+        "mode": "live", "planned": 1, "ok": 1, "failed": 0,
+        "unaccounted": 0, "results": {"planned": 0, "sent": 1, "failed": 0,
+                                     "total": 1},
+        "accounts": ["a"], "unattributed": 0, "knobs": {}, "knobs_dropped": 0,
+        "waited": 0.0, "verdict": "done", "created_at": "a", "finished_at": "b",
+    }
+    return body | over
+
+
+def test_more_rows_than_planned_is_a_schema_error():
+    """The dialog listing wrote 6 rows against planned 0 before it filled it in."""
+    body = _valid_body(planned=0, unaccounted=-1)
+    problems = receipts.validate(body)
+    assert any("more rows than planned" in item for item in problems), problems
+
+
+def test_unaccounted_must_follow_from_the_counts():
+    body = _valid_body(planned=3, unaccounted=5)
+    problems = receipts.validate(body)
+    assert any("unaccounted is 5" in item for item in problems), problems
+
+
+def test_a_consistent_receipt_has_no_problems():
+    assert receipts.validate(_valid_body()) == []
+
+
+def test_the_pull_stage_plans_for_its_own_rows(settings):
+    """mix_market wrote one 'own contacts' row against planned 0.
+
+    The row is real - stage 4 reads the address book even when it is empty - so the
+    plan has to include it, otherwise the receipt reports a row nobody planned.
+    """
+    from ogtool.features import mix_market as page
+
+    config = page.MixConfig.from_dict({"mix_market": {"targets": ["@sweep"]}},
+                                      settings)
+    config.stop_after = 4
+    planned = len(config.contacts) + len(["-"])
+    assert planned == 1

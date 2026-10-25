@@ -187,7 +187,9 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "task": feature,
         "task_id": 0,
         "mode": "live" if live else "dry-run",
-        "planned": 0,
+        # The run itself is the one thing that was planned and then accounted
+        # for. With 0 here the arithmetic said -1: one row against an empty plan.
+        "planned": 1,
         "ok": 1 if exit_code == 0 else 0,
         "failed": 0 if exit_code == 0 else 1,
         "unaccounted": 0,
@@ -293,6 +295,23 @@ def validate(body: Any) -> list[str]:
             problems.append(f"{key} is not an integer: {value!r}")
         elif value < 0:
             problems.append(f"{key} is negative: {value}")
+    # A page that reports more work than it planned is claiming rows it never
+    # announced; a page whose unaccounted does not follow from its own counts is
+    # not summarising anything. Both were real: the dialog listing wrote six rows
+    # against planned 0 before it learned to fill the plan in.
+    planned, ok, failed = (body.get("planned"), body.get("ok"),
+                           body.get("failed"))
+    unaccounted = body.get("unaccounted")
+    if all(isinstance(value, int) and not isinstance(value, bool)
+           for value in (planned, ok, failed, unaccounted)):
+        if unaccounted != planned - ok - failed:
+            problems.append(
+                f"unaccounted is {unaccounted} but planned - ok - failed is "
+                f"{planned - ok - failed}")
+        if unaccounted < 0:
+            problems.append(
+                f"more rows than planned: planned {planned}, "
+                f"ok {ok}, failed {failed}")
     knobs = body.get("knobs")
     if not isinstance(knobs, dict):
         problems.append(f"knobs is not an object: {knobs!r}")

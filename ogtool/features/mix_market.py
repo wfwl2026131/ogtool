@@ -388,10 +388,17 @@ def run(config: MixConfig, ctx: RunContext) -> int:
                     f"{config.create_rest_max:.0f} min",
     )
 
+    # Stage 4 writes one "own contacts" row per account even when the address
+    # book has nothing in it, so that row belongs in the plan: without it the
+    # receipt reported one row against a plan of zero, which the schema now
+    # refuses ("more rows than planned").
+    plan_rows = len(config.contacts)
+    if config.stop_after >= 4:
+        plan_rows += len(labels or ["-"])
     task = open_task(ctx, config.task_name, FEATURE,
                      {"stages": config.stop_after,
                       "contacts": len(config.contacts)},
-                     len(config.contacts))
+                     plan_rows)
     results: list[StageResult] = []
     waited = 0.0
 
