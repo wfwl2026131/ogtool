@@ -14,6 +14,7 @@ new target group resumes from the members the previous one did not reach; with
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
@@ -27,6 +28,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     lines,
     name_of,
     num,
@@ -197,6 +199,81 @@ def gap(config: InviteConfig) -> float:
     return max(config.request_interval, config.invite_interval)
 
 
+def _invite_lane(sender: object, ctx: RunContext, task: int,
+                 lane: list[tuple[str, str, str]], total: int,
+                 config: InviteConfig,
+                 backoff: PeerFloodBackoff) -> tuple[int, int, list[str],
+                                                   list[str], float]:
+    """One handler's share of the queue: the page's ``threads`` lanes.
+
+    Every job of one handler lives in exactly one lane, so ``handlerFloodCap``
+    and the pacing stay promises the server can check.
+    """
+    ok = failed = 0
+    missing: list[str] = []
+    flood: list[str] = []
+    waited = 0.0
+    handler_floods: dict[str, int] = {}
+    rested: set[str] = set()
+    previous: str | None = None
+    for index, (handler, group, member) in enumerate(lane, start=1):
+        if handler in rested:
+            record(ctx, task, handler, f"{group}<-{member}", False,
+                   "HANDLER_REST")
+            print(f"skipped {member} in {group} for {handler} "
+                  f"(handler rested after {handler_floods.get(handler, 0)} "
+                  f"PEER_FLOOD)")
+            continue
+        if previous is not None:
+            # ``addContactWait`` is the pause a handler takes after the page
+            # added a missing member to its contacts.
+            delay = gap(config)
+            if previous != group and config.add_contact_wait:
+                delay = max(delay, config.add_contact_wait)
+            waited += delay
+            pause(ctx, delay)
+        previous = group
+        target = parse_many([group], "group")[0]
+        invitee = parse_many([member], "custom")[0]
+        floods = 0
+        while True:
+            result = sender.invite(handler, target, invitee)  # type: ignore[attr-defined]
+            if result.code != "PEER_FLOOD" or floods >= config.member_flood_cap:
+                break
+            floods += 1
+            wait = backoff.wait_for(floods - 1)
+            print(f"  PEER_FLOOD backoff {wait:.0f}s "
+                  f"(attempt {floods}/{config.member_flood_cap}) {member}")
+            if ctx.live:
+                time.sleep(wait)
+        if result.ok:
+            ok += 1
+            record(ctx, task, handler, f"{group}<-{member}", True)
+            print(f"[{index:03d}/{total:03d}] handler={handler} "
+                  f"group={group} member={member} -> ok")
+            continue
+        failed += 1
+        record(ctx, task, handler, f"{group}<-{member}", False, result.code,
+               result.detail)
+        print(f"[{index:03d}/{total:03d}] handler={handler} "
+              f"group={group} member={member} -> {result.code}")
+        if (result.code in ("USER_PRIVACY_RESTRICTED",
+                            "USER_NOT_MUTUAL_CONTACT", "USER_ID_INVALID")
+                and member not in missing):
+            missing.append(member)
+        if result.code == "PEER_FLOOD":
+            if member not in flood:
+                flood.append(member)
+            handler_floods[handler] = handler_floods.get(handler, 0) + 1
+            if config.handler_flood_cap \
+                    and handler_floods[handler] >= config.handler_flood_cap:
+                rested.add(handler)
+                print(f"handler rested: {handler} answered PEER_FLOOD "
+                      f"{handler_floods[handler]} time(s) "
+                      f"(handler_flood_cap={config.handler_flood_cap})")
+    return ok, failed, missing, flood, waited
+
+
 def run(config: InviteConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
@@ -230,45 +307,36 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
                       "strategy": config.strategy}, len(jobs))
     sender = ctx.sender()
 
+    backoff = PeerFloodBackoff()
     ok = failed = 0
     missing: list[str] = []
     flood: list[str] = []
-    backoff = PeerFloodBackoff()
     waited = 0.0
-    for index, (handler, group, member) in enumerate(jobs, start=1):
-        if index > 1:
-            delay = gap(config)
-            waited += delay
-            pause(ctx, delay)
-        target = parse_many([group], "group")[0]
-        invitee = parse_many([member], "custom")[0]
-        floods = 0
-        while True:
-            result = sender.invite(handler, target, invitee)
-            if result.code != "PEER_FLOOD" or floods >= config.member_flood_cap:
-                break
-            floods += 1
-            wait = backoff.wait_for(floods - 1)
-            print(f"  PEER_FLOOD backoff {wait:.0f}s "
-                  f"(attempt {floods}/{config.member_flood_cap}) {member}")
-            if ctx.live:
-                time.sleep(wait)
-        if result.ok:
-            ok += 1
-            record(ctx, task, handler, f"{group}<-{member}", True)
-            print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
-                  f"group={group} member={member} -> ok")
-        else:
-            failed += 1
-            record(ctx, task, handler, f"{group}<-{member}", False, result.code, result.detail)
-            print(f"[{index:03d}/{len(jobs):03d}] handler={handler} "
-                  f"group={group} member={member} -> {result.code}")
-            if (result.code in ("USER_PRIVACY_RESTRICTED",
-                                "USER_NOT_MUTUAL_CONTACT", "USER_ID_INVALID")
-                    and member not in missing):
-                missing.append(member)
-            if result.code == "PEER_FLOOD" and member not in flood:
-                flood.append(member)
+    lanes = lanes_by(lambda job: job[0], jobs, config.threads)
+    if len(lanes) > 1:
+        # ``threads``: one lane per handler account, never one handler in two
+        # lanes - that is what makes the pacing a promise and not a suggestion.
+        print(f"threads: {len(lanes)} lanes, one handler account each")
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            work = [pool.submit(_invite_lane, sender, ctx, task, lane, len(jobs),
+                                config, backoff)
+                    for lane in lanes]
+            for job in work:
+                done_ok, done_failed, done_missing, done_flood, done_waited = \
+                    job.result()
+                ok += done_ok
+                failed += done_failed
+                waited += done_waited
+                for item in done_missing:
+                    if item not in missing:
+                        missing.append(item)
+                for item in done_flood:
+                    if item not in flood:
+                        flood.append(item)
+    else:
+        ok, failed, missing, flood, waited = _invite_lane(
+            sender, ctx, task, lanes[0] if lanes else [], len(jobs), config,
+            backoff)
 
     print(f"成功: {ok}  执行数: {failed + ok}  失败: {failed}")
     if ctx.live and waited:

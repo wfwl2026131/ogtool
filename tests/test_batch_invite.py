@@ -95,3 +95,34 @@ def test_a_dry_run_invites_without_waiting(ctx, slept, capsys):
     assert run(config, ctx) == 0
     assert slept == []
     assert "waited: " not in capsys.readouterr().out
+
+
+def test_threads_split_the_queue_into_handler_lanes(ctx, scripted, capsys):
+    """``threads`` was printed as 'concurrency: 4' and never used."""
+    scripted(["ok", "ok", "ok", "ok"])
+    config = InviteConfig(groups=["@g1"], members=["@m1", "@m2", "@m3", "@m4"],
+                          threads=2, request_interval=0, invite_interval=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "threads: 2 lanes, one handler account each" in output
+    assert "成功: 4" in output
+
+
+def test_one_handler_never_appears_in_two_lanes():
+    from ogtool.features._common import lanes_by
+
+    jobs = [("h1", "@g1", "@m1"), ("h2", "@g1", "@m2"), ("h1", "@g1", "@m3")]
+    lanes = lanes_by(lambda job: job[0], jobs, 3)
+    seen = [handler for lane in lanes for handler, _, _ in lane]
+    assert sorted(seen) == ["h1", "h1", "h2"]
+    assert all(len({job[0] for job in lane}) == 1 for lane in lanes)
+
+
+def test_handler_flood_cap_rests_a_handler(ctx, scripted, capsys):
+    scripted(["PEER_FLOOD", "PEER_FLOOD", "PEER_FLOOD"])
+    config = InviteConfig(groups=["@g1"], members=["@m1", "@m2"],
+                          handler_flood_cap=1, member_flood_cap=0,
+                          threads=1, request_interval=0, invite_interval=0)
+    run(config, ctx)
+    output = capsys.readouterr().out
+    assert "handler rested: " in output
