@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from ..limiter import format_duration
 from ..runtime import RunContext
 from . import register
-from ._common import close_task
+from ._common import close_task, record
 
 FEATURE = "keep_online"
 
@@ -98,6 +98,11 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
             if wait > 0:
                 time.sleep(wait)
             result = sender.ping(account)
+            # One row per heartbeat: the receipt's counts have to be backed by
+            # rows, and the row is also the only place that names the account.
+            record(ctx, task, account, f"heartbeat {_round}",
+                   bool(result.ok), getattr(result, "code", ""),
+                   getattr(result, "detail", ""))
             if result.ok:
                 online += 1
                 print(f"online {account}")

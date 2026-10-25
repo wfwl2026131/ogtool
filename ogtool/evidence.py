@@ -141,6 +141,32 @@ def render(rows: list[Evidence]) -> str:
     return "\n".join(lines)
 
 
+def as_dict(rows: list[Evidence]) -> dict[str, Any]:
+    """The same table as data, for whatever writes it next."""
+    return {
+        "features": [
+            {"feature": row.feature, "level": row.level, "tests": row.tests,
+             "live": row.live, "dry": row.dry}
+            for row in rows
+        ],
+        "counts": {level: sum(1 for row in rows if row.level == level)
+                   for level in LEVELS},
+    }
+
+
+def as_markdown(rows: list[Evidence]) -> str:
+    """A paste-ready table, so the note never carries a number nobody derived."""
+    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 |", "|---|---|---|---|---|"]
+    for row in rows:
+        lines.append(f"| `{row.feature}` | {row.level} | {row.tests} | "
+                     f"{row.live} | {row.dry} |")
+    counts = as_dict(rows)["counts"]
+    lines.append("")
+    lines.append(f"共 {len(rows)} 项：" + "，".join(
+        f"{level} {counts[level]}" for level in LEVELS))
+    return "\n".join(lines)
+
+
 def problems(rows: list[Evidence]) -> list[str]:
     """Only the empty rows are failures; every other level is a fact."""
     return [f"{row.feature}: no tests and no receipts" for row in rows

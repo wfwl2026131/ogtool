@@ -113,8 +113,24 @@ def _env() -> dict[str, str]:
     return dict(os.environ)
 
 
+EVIDENCE_START = "<!-- evidence:start -->"
+EVIDENCE_END = "<!-- evidence:end -->"
+
+
+def evidence_block(base: Path | None = None,
+                   directory: Path | None = None) -> str:
+    """What the evidence block in a note should contain right now."""
+    from . import evidence
+
+    here = base or root()
+    where = directory or here / "data" / "logs" / "receipts"
+    rows = evidence.collect(here, where)
+    return f"{EVIDENCE_START}\n{evidence.as_markdown(rows)}\n{EVIDENCE_END}"
+
+
 def check_docs(paths: tuple[Path, ...] | None = None,
-               expected: int | None = None) -> tuple[str, list[str]]:
+               expected: int | None = None,
+               block: str | None = None) -> tuple[str, list[str]]:
     """The count a note claims must be the count pytest can still collect.
 
     These notes have carried a stale 'passed: N' more than once, and a number
@@ -142,6 +158,14 @@ def check_docs(paths: tuple[Path, ...] | None = None,
         if claimed != expected:
             problems.append(f"{path.name}: claims {claimed} passed, "
                             f"pytest collects {expected}")
+        text = path.read_text(encoding="utf-8")
+        start = text.find(EVIDENCE_START)
+        end = text.find(EVIDENCE_END)
+        if start < 0 or end < start:
+            continue  # a note may simply not carry the table
+        if block is not None and text[start:end + len(EVIDENCE_END)] != block:
+            problems.append(f"{path.name}: the evidence block is stale "
+                            "(run scripts/sync_evidence.py)")
     return (f"docs: {seen} note(s) checked against {expected} collected "
             f"test(s)"), problems
 
@@ -205,7 +229,11 @@ def run(settings: Any, only: list[str] | None = None,
         elif name == "knobs":
             line, found = check_knobs()
         elif name == "docs":
-            line, found = check_docs()
+            from . import evidence as evidence_module
+
+            line, found = check_docs(
+                block=evidence_block(root(),
+                                     evidence_module.receipts_dir(settings)))
         elif name == "evidence":
             line, found = check_evidence(settings)
         elif name == "live":

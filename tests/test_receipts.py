@@ -62,7 +62,8 @@ def test_results_are_measured_from_the_store(ctx, settings):
     assert rename_run(config, ctx) == 0
     body = json.loads(next(receipts.receipt_dir(settings)
                            .glob("batch_rename-*.json")).read_text())
-    assert body["results"] == {"planned": 2, "sent": 0, "failed": 0}
+    assert body["results"] == {"planned": 2, "sent": 0, "failed": 0,
+                              "total": 2}
 
 
 def test_validate_names_a_missing_key():
@@ -381,3 +382,49 @@ def test_export_accounts_records_a_real_mode_and_count(ctx, settings):
     body = bodies[0]
     assert body["mode"] in receipts.MODES
     assert body["planned"] == body["ok"] == 2  # the pool has two accounts
+
+
+def test_a_count_without_rows_is_a_schema_error():
+    """keep_online said ok=1 while the results table held nothing."""
+    body = {"version": receipts.VERSION, "feature": "keep_online",
+            "task": "t", "task_id": 1, "mode": "live", "planned": 1, "ok": 1,
+            "failed": 0, "unaccounted": 0,
+            "results": {"planned": 0, "sent": 0, "failed": 0, "total": 0},
+            "accounts": [], "unattributed": 0, "knobs": {}, "knobs_dropped": 0,
+            "waited": 0.0, "verdict": "done",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "finished_at": "2026-01-01T00:00:01+00:00"}
+    problems = receipts.validate(body)
+    assert any("ok is 1 but the rows say 0" in item for item in problems)
+
+
+def test_a_dry_run_receipt_is_schema_clean_with_no_accounts(ctx, settings):
+    from ogtool.features.keep_online import KeepOnlineConfig
+    from ogtool.features.keep_online import run as online_run
+
+    config = KeepOnlineConfig(account_labels=["acc1"], interval=0.0,
+                              loops=1, jitter=0.0)
+    online_run(config, ctx)
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("keep_online-*.json")).read_text())
+    assert receipts.validate(body) == []
+    assert body["ok"] == body["results"]["sent"] == 0
+    # A dry run beats nothing, so no account can be named in it. The live run's
+    # attribution is pinned by the real receipt and by scripts/live_smoke.py.
+    assert body["accounts"] == []
+
+
+def test_derive_takes_the_totals_from_the_rows(ctx, settings):
+    """mix_market counts stages while it records contacts; derive() ends that."""
+    from ogtool.features._common import close_task, open_task, record
+
+    task = open_task(ctx, "derive-demo", "mix_market", {}, 6)
+    for index in range(3):
+        record(ctx, task, "acc1", f"row {index}", True)
+    record(ctx, task, "acc1", "row 3", False, "DEAD_CHAT")
+    # The page would have said ok=5 / failed=0; the rows say 3 / 1.
+    close_task(ctx, task, ok=5, failed=0, derive=True)
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("mix_market-*.json")).read_text())
+    assert (body["ok"], body["failed"]) == (3, 1)
+    assert receipts.validate(body) == []

@@ -31,6 +31,7 @@ from ._common import (
     name_of,
     open_task,
     out_dir,
+    record,
     section,
     text,
 )
@@ -224,6 +225,10 @@ def run(config: ExportConfig, ctx: RunContext) -> int:
 
     print(f"PLAN: {len(rows)} accounts, {len(written)} files, export {base}")
     print(f"note: {NOT_IMPLEMENTED}")
+    # A row per exported account, for the same reason keep_online writes one:
+    # ok=len(rows) with an empty results table is a count with nothing behind it.
+    for row in rows:
+        record(ctx, task, str(row.get("label", "")), "export", True)
     close_task(ctx, task, ok=len(rows), failed=0)
     return 0
 

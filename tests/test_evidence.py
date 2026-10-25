@@ -88,3 +88,31 @@ def test_the_evidence_command_fails_on_an_empty_feature(settings, monkeypatch):
 
 def test_receipts_dir_follows_the_settings(settings):
     assert evidence.receipts_dir(settings) == Path(settings.log_dir) / "receipts"
+
+
+def test_json_output_is_the_same_rows():
+    rows = [evidence.Evidence("a", 2, 1, 0), evidence.Evidence("b", 0, 0, 1)]
+    body = evidence.as_dict(rows)
+    assert body["features"][0] == {"feature": "a", "level": "live",
+                                   "tests": 2, "live": 1, "dry": 0}
+    assert body["counts"]["live"] == 1
+    assert body["counts"]["dry"] == 1
+
+
+def test_markdown_names_every_row_and_the_totals():
+    rows = [evidence.Evidence("a", 2, 0, 1), evidence.Evidence("b", 3, 0, 0)]
+    text = evidence.as_markdown(rows)
+    assert text.startswith("| 项 | 证据等级 |")
+    assert "| `a` | dry | 2 | 0 | 1 |" in text
+    assert text.strip().endswith("共 2 项：live 0，dry 1，unit 1，none 0")
+
+
+def test_the_two_formats_agree(settings, monkeypatch, capsys):
+    rows = [evidence.Evidence("a", 1, 0, 0)]
+    monkeypatch.setattr(evidence, "collect", lambda *a, **k: rows)
+    assert cli._evidence(settings, as_json=True) == 0
+    as_json = capsys.readouterr().out
+    assert cli._evidence(settings, as_markdown=True) == 0
+    as_md = capsys.readouterr().out
+    assert '"feature": "a"' in as_json
+    assert "| `a` | unit |" in as_md

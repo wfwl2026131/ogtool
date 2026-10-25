@@ -109,6 +109,10 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
             unattributed += 1
         elif label not in accounts:
             accounts.append(label)
+    # How many rows this receipt is standing on. Without it the counts in
+    # ``results`` cannot be checked against ``ok`` and a page that kept its own
+    # counter (as keep_online did) could claim a heartbeat that no row records.
+    results["total"] = sum(results.values())
     knobs, dropped = knobs_of(row["config"] if row is not None else None)
     verdict = "dry-run" if mode == "dry-run" and not failed else (
         "failed" if failed else ("stopped" if status == "stopped" else "done"))
@@ -180,7 +184,7 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "ok": 0,
         "failed": 0 if exit_code == 0 else 1,
         "unaccounted": 0,
-        "results": {"planned": 0, "sent": 0, "failed": 0},
+        "results": {"planned": 0, "sent": 0, "failed": 0, "total": 0},
         "accounts": [],
         "unattributed": 0,
         "knobs": {"live": live},
@@ -258,6 +262,21 @@ def validate(body: Any) -> list[str]:
         problems.append(f"mode is not dry-run/live: {body.get('mode')!r}")
     if body.get("version") != VERSION:
         problems.append(f"version {body.get('version')!r} != {VERSION}")
+    results = body.get("results")
+    if isinstance(results, dict) and all(
+            isinstance(results.get(key), int)
+            for key in ("planned", "sent", "failed", "total")):
+        if results["total"] != (results["planned"] + results["sent"]
+                                + results["failed"]):
+            problems.append("results.total does not add up")
+        expected = results["sent"] + results["planned"]
+        if body.get("ok") != expected:
+            problems.append(f"ok is {body.get('ok')} but the rows say "
+                            f"{expected} (sent {results['sent']} + planned "
+                            f"{results['planned']})")
+        if body.get("failed") != results["failed"]:
+            problems.append(f"failed is {body.get('failed')} but the rows say "
+                            f"{results['failed']}")
     for key in ("task_id", "planned", "ok", "failed"):
         value = body.get(key)
         if not isinstance(value, int) or isinstance(value, bool):

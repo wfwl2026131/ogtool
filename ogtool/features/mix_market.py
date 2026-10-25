@@ -389,7 +389,9 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     )
 
     task = open_task(ctx, config.task_name, FEATURE,
-                     {"stages": config.stop_after}, len(config.contacts))
+                     {"stages": config.stop_after,
+                      "contacts": len(config.contacts)},
+                     len(config.contacts))
     results: list[StageResult] = []
     waited = 0.0
 
@@ -427,11 +429,15 @@ def run(config: MixConfig, ctx: RunContext) -> int:
             if ref in dead:
                 print(f"dead check: target={ref} hours={hours:.0f} -> dead "
                       f"(interval {config.dead_check_interval:.0f}s)")
-                record(ctx, task, labels[0] if labels else "-", ref, False,
-                       "DEAD_CHAT")
             else:
                 seen = "unknown" if hours is None else f"{hours:.0f}"
                 print(f"dead check: target={ref} hours={seen} -> alive")
+        if dead:
+            # A dead target is a fact about the plan, not a row of its own: the
+            # rows here are stages, and mixing the two units made the counts and
+            # the table disagree (which the schema now refuses).
+            ctx.note(f"{len(dead)} dead chat(s) were skipped: "
+                     f"{', '.join(sorted(dead))}", "warn")
     live_refs = [ref for ref in refs if ref not in dead]
 
     run_stage(3, stage_play, config, ctx, live_refs, labels)
@@ -441,6 +447,7 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     ok = sum(item.ok for item in results)
     failed = sum(item.failed for item in results)
     skipped = sum(item.skipped for item in results)
+
     print(f"Processed: {len(results)} / {config.stop_after}")
     print(f"ok: {ok}")
     print(f"failed: {failed}")
@@ -448,7 +455,9 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     print(f"dead chats: {len(dead)}")
     print(f"PLAN: {len(results)} stages, {len(config.contacts)} contacts, "
           f"ETA {format_duration(waited)}")
-    close_task(ctx, task, ok=ok, failed=failed)
+    # The rows are contacts, the counters above are stages: take the totals from
+    # the rows so the receipt cannot say two different things at once.
+    close_task(ctx, task, derive=True)
     return 0 if not failed else 1
 
 

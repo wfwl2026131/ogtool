@@ -124,14 +124,27 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _evidence_parser(subs: argparse._SubParsersAction) -> None:
-    subs.add_parser("evidence", help="how much proof each of the 25 features has")
+    table = subs.add_parser("evidence",
+                            help="how much proof each of the 25 features has")
+    table.add_argument("--json", action="store_true",
+                       help="the same rows as data")
+    table.add_argument("--markdown", action="store_true",
+                       help="a paste-ready markdown table")
 
 
-def _evidence(settings: Settings) -> int:
+def _evidence(settings: Settings, *, as_json: bool = False,
+              as_markdown: bool = False) -> int:
+    import json
+
     from . import evidence
 
     rows = evidence.collect(selftest.root(), evidence.receipts_dir(settings))
-    print(evidence.render(rows))
+    if as_json:
+        print(json.dumps(evidence.as_dict(rows), ensure_ascii=False, indent=1))
+    elif as_markdown:
+        print(evidence.as_markdown(rows))
+    else:
+        print(evidence.render(rows))
     found = evidence.problems(rows)
     for problem in found:
         print(f"  {problem}")
@@ -566,7 +579,8 @@ def run(argv: list[str] | None = None) -> int:
     if args.command == "selftest":
         return _selftest(args, settings)
     if args.command == "evidence":
-        return _evidence(settings)
+        return _evidence(settings, as_json=getattr(args, "json", False),
+                         as_markdown=getattr(args, "markdown", False))
     if args.command == "todo":
         return _todo(args, settings)
     base = settings.raw

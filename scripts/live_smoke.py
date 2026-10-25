@@ -58,6 +58,11 @@ CASES: tuple[Case, ...] = (
     Case("export", ("export_accounts", "--live"), None, "export_accounts", ""),
     Case("watch", ("watch_chat", "--live", "--accounts", "{account}",
                    "--targets", "{self}"), LISTEN_SECONDS, "watch_chat", "DONE:"),
+    # One heartbeat round: it changes nothing but the account's online flag, and
+    # a single round is enough to prove the page can reach Telegram and wait.
+    Case("online", ("keep_online", "--live", "--accounts", "{account}",
+                    "--loops", "1", "--interval", "1"), None, "keep_online",
+         "DONE:"),
     Case("listen", ("auto_reply", "--live", "--accounts", "{account}",
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
