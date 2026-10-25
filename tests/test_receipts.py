@@ -428,3 +428,78 @@ def test_derive_takes_the_totals_from_the_rows(ctx, settings):
                            .glob("mix_market-*.json")).read_text())
     assert (body["ok"], body["failed"]) == (3, 1)
     assert receipts.validate(body) == []
+
+
+def test_prune_keeps_the_newest_per_feature(tmp_path):
+    for feature in ("watch_chat", "export_accounts"):
+        for index in range(1, 5):
+            (tmp_path / f"{feature}-{index}.json").write_text(json.dumps(
+                {"feature": feature, "task_id": index,
+                 "finished_at": f"2026-01-0{index}T00:00:00+00:00"}),
+                encoding="utf-8")
+    doomed = receipts.prune(tmp_path, keep=2)
+    assert sorted(path.name for path in doomed) == [
+        "export_accounts-1.json", "export_accounts-2.json",
+        "watch_chat-1.json", "watch_chat-2.json"]
+
+
+def test_prune_can_take_one_feature(tmp_path):
+    (tmp_path / "a-1.json").write_text(json.dumps(
+        {"feature": "a", "task_id": 1}), encoding="utf-8")
+    (tmp_path / "a-2.json").write_text(json.dumps(
+        {"feature": "a", "task_id": 2, "finished_at": "2026-01-02T00:00:00"}),
+        encoding="utf-8")
+    assert [p.name for p in receipts.prune(tmp_path, 1, feature="a")] == ["a-1.json"]
+    assert receipts.prune(tmp_path, 1, feature="nope") == []
+
+
+def test_prune_refuses_to_delete_everything(tmp_path):
+    with pytest.raises(ValueError):
+        receipts.prune(tmp_path, keep=0)
+
+
+def test_prune_leaves_unreadable_files_alone(tmp_path):
+    (tmp_path / "broken-1.json").write_text("not json", encoding="utf-8")
+    assert receipts.prune(tmp_path, keep=1) == []
+
+
+def test_prune_command_deletes_only_with_yes(tmp_path, monkeypatch, capsys):
+    from ogtool import cli as cli_module
+    from ogtool.config import Settings
+
+    for index in (1, 2):
+        (tmp_path / f"a-{index}.json").write_text(json.dumps(
+            {"feature": "a", "task_id": index}), encoding="utf-8")
+
+    class Args:
+        action = "prune"
+        keep = 1
+        feature = ""
+        yes = False
+
+    monkeypatch.setattr(receipts, "receipt_dir", lambda _settings: tmp_path)
+    settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path)
+    assert cli_module._runs(Args(), settings) == 0
+    assert len(list(tmp_path.glob("*.json"))) == 2  # dry-run deleted nothing
+    assert "would delete 1" in capsys.readouterr().out
+
+    Args.yes = True
+    assert cli_module._runs(Args(), settings) == 0
+    assert [path.name for path in tmp_path.glob("*.json")] == ["a-2.json"]
+    assert "would remain" not in capsys.readouterr().out
+
+
+def test_prune_command_refuses_keep_zero(tmp_path, monkeypatch, capsys):
+    from ogtool import cli as cli_module
+    from ogtool.config import Settings
+
+    class Args:
+        action = "prune"
+        keep = 0
+        feature = ""
+        yes = True
+
+    monkeypatch.setattr(receipts, "receipt_dir", lambda _settings: tmp_path)
+    settings = Settings(tmp_path / "config.yaml", log_dir=tmp_path)
+    assert cli_module._runs(Args(), settings) == 2
+    assert "at least 1" in capsys.readouterr().out

@@ -321,6 +321,33 @@ def validate(body: Any) -> list[str]:
     return problems
 
 
+def prune(directory: Path, keep: int, feature: str = "") -> list[Path]:
+    """The receipt files beyond the newest ``keep`` per feature.
+
+    A live suite adds receipts every time it runs, and after a few dozen runs the
+    directory stops being readable. Kept per feature rather than globally so a
+    rarely used page does not lose its only evidence because another page ran a
+    hundred times.
+    """
+    if keep < 1:
+        raise ValueError("keep must be at least 1, or nothing would survive")
+    groups: dict[str, list[tuple[tuple[str, int], Path]]] = {}
+    for path in sorted(Path(directory).glob("*.json")):
+        try:
+            body = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue  # an unreadable file is not ours to delete
+        if feature and body.get("feature") != feature:
+            continue
+        groups.setdefault(str(body.get("feature", "")), []).append(
+            (order(body), path))
+    doomed: list[Path] = []
+    for entries in groups.values():
+        entries.sort(key=lambda item: item[0])
+        doomed.extend(path for _key, path in entries[:-keep])
+    return sorted(doomed)
+
+
 def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
     """Every receipt under ``directory``, plus what could not be parsed."""
     bodies: list[dict[str, Any]] = []
@@ -334,7 +361,7 @@ def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 __all__ = [
-    "MODES","REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
-           "COMPARED", "KNOB_TEXT", "diff", "knobs_of", "line", "order",
-           "receipt_dir",
-           "snapshot", "validate", "write", "write_run"]
+    "COMPARED", "KNOB_TEXT", "MODES", "REQUIRED", "VERDICTS", "VERSION",
+    "build", "diff", "knobs_of", "line", "order", "prune", "read_all",
+    "receipt_dir", "snapshot", "validate", "write", "write_run",
+]

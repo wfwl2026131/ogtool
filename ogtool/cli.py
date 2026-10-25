@@ -185,6 +185,13 @@ def _runs_parser(subs: argparse._SubParsersAction) -> None:
     diff.add_argument("--to-id", type=int, default=0, help="newer task id")
     check = run_subs.add_parser("check", help="validate every receipt")
     check.add_argument("--feature", default="")
+    prune = run_subs.add_parser("prune",
+                                help="drop receipts beyond the newest N per page")
+    prune.add_argument("--keep", type=int, default=20,
+                       help="how many to keep per feature (default 20)")
+    prune.add_argument("--feature", default="", help="one page only")
+    prune.add_argument("--yes", action="store_true",
+                       help="actually delete; without it only the plan is printed")
 
 
 def _runs(args: argparse.Namespace, settings: Settings) -> int:
@@ -201,6 +208,24 @@ def _runs(args: argparse.Namespace, settings: Settings) -> int:
         for problem in problems:
             print(f"  {problem}")
         return 0 if not problems else 1
+    if args.action == "prune":
+        if args.keep < 1:
+            print("ERROR: --keep must be at least 1")
+            return 2
+        doomed = receipts.prune(directory, args.keep, args.feature)
+        verb = "deleted" if args.yes else "would delete"
+        for path in doomed:
+            if args.yes:
+                path.unlink(missing_ok=True)
+            print(f"{verb} {path.name}")
+        remaining = sorted(directory.glob("*.json"))
+        print(f"prune: {verb} {len(doomed)} receipt(s), "
+              f"{len(remaining)} {('remain' if args.yes else 'would remain')} "
+              f"(keep {args.keep} per feature)")
+        if not args.yes:
+            print("dry-run: pass --yes to delete")
+        return 0
+
     if args.action == "diff":
         return _runs_diff(args, bodies)
     if args.action == "show":
