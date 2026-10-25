@@ -326,3 +326,49 @@ def test_a_per_account_range_below_one_second_is_a_config_error():
         JoinConfig.from_dict({"batch_join": {
             "targets": ["@g1"], "per_account_join_interval_min_ms": 500,
         }}, Settings())
+
+
+class CountingSender(JoinSender):
+    """A join sender whose accounts already sit in a known number of chats."""
+
+    def __init__(self, counts: dict[str, int]) -> None:
+        super().__init__([])
+        self.counts = counts
+        self.joins: list[tuple[str, str]] = []
+
+    def chat_count(self, account: str):
+        from ogtool.senders import SendResult
+
+        result = SendResult(ok=True)
+        result.count = self.counts.get(account, 0)
+        return result
+
+    def join(self, account: str, target: object):
+        from ogtool.senders import SendResult
+
+        self.joins.append((account, target.ref))
+        return SendResult(ok=True)
+
+
+def test_a_full_account_takes_no_more_chats(ctx, live, capsys):
+    """``maxJoinedChatsPerAccount`` asks the account how full it already is."""
+    sender = CountingSender({"acc1": 500, "acc2": 10})
+    live(sender)
+    config = JoinConfig(targets=parse_many(["@g1", "@g2"], "group"),
+                        max_joined_chats=400, request_interval=0,
+                        account_interval=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "account full: acc1 already in 500 chat(s)" in output
+    assert all(account != "acc1" for account, _ in sender.joins)
+    rows = ctx.store.results_for(ctx.task_id)
+    assert any(row["error_code"] == "ACCOUNT_FULL" for row in rows)
+
+
+def test_the_cap_is_not_asked_offline(ctx, capsys):
+    """A dry run has no dialogs to count, so it must not invent a number."""
+    config = JoinConfig(targets=parse_many(["@g1"], "group"),
+                        max_joined_chats=1, request_interval=0,
+                        account_interval=0)
+    assert run(config, ctx) == 0
+    assert "account full" not in capsys.readouterr().out

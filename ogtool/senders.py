@@ -494,6 +494,12 @@ class DryRunSender:
         return self._answer("mute", account,
                             f"target={target.display()} until={until or 'forever'}")
 
+    def chat_count(self, account: str) -> SendResult:
+        """How many chats the account is in; a dry run counts zero."""
+        result = self._answer("chat_count", account, "dialogs")
+        result.count = 0
+        return result
+
     def pull_contacts(self, account: str) -> SendResult:
         """The account's own contact list, the pull stage's only job."""
         return self._answer("pull_contacts", account, "own contacts")
@@ -841,6 +847,27 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("mute", account, action)
+
+    def chat_count(self, account: str) -> SendResult:
+        """The account's dialog count, for ``maxJoinedChatsPerAccount``.
+
+        ``GetDialogsRequest(limit=0)`` returns only ``count`` - the cheap way to
+        ask "how many chats is this account in" without paging the list.
+        """
+
+        def action() -> SendResult:
+            from telethon.tl.functions.messages import GetDialogsRequest
+            from telethon.tl.types import InputPeerEmpty
+
+            client = self._client(account)
+            result = client(GetDialogsRequest(
+                offset_date=None, offset_id=0, offset_peer=InputPeerEmpty(),
+                limit=0, hash=0))
+            answer = SendResult(ok=True)
+            answer.count = int(getattr(result, "count", 0) or 0)
+            return answer
+
+        return self._guard("chat_count", account, action)
 
     def pull_contacts(self, account: str) -> SendResult:
         """``contacts.GetContactsRequest``: the account's own address book.

@@ -389,6 +389,24 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
                      {"targets": [t.ref for t in config.targets]}, len(pairs))
     sender = ctx.sender()
 
+    if config.max_joined_chats and ctx.live and labels:
+        # ``maxJoinedChatsPerAccount``: a full account does not take more chats.
+        full = set()
+        for label in labels:
+            counted = sender.chat_count(label)
+            if not counted.ok:
+                print(f"chat count {label} -> {counted.code} (cap not applied)")
+                continue
+            if counted.count >= config.max_joined_chats:
+                full.add(label)
+                print(f"account full: {label} already in {counted.count} "
+                      f"chat(s) (max_joined_chats={config.max_joined_chats})")
+        kept = [pair for pair in pairs if pair[0] not in full]
+        for account, target in pairs:
+            if account in full:
+                record(ctx, task, account, target.ref, False, "ACCOUNT_FULL")
+                print(f"skipped {target.ref} for {account} (account full)")
+        pairs = kept
     def wants_mute(config: JoinConfig, target: Target) -> bool:
         """``muteChannels`` / ``mutePrivate``: which joins get silenced."""
         if target.kind == "channel":
