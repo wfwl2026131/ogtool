@@ -15,6 +15,7 @@ run, a counter that only grows). That is worth knowing before trusting any
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -112,6 +113,29 @@ def dry_run(name: str, table: dict[str, list[str]]) -> tuple[int, str, list[dict
     return run.returncode, run.stdout + run.stderr, bodies
 
 
+def record_path() -> Path:
+    """Where the sweep leaves its summary for ``ogtool evidence`` to read."""
+    return ROOT / "logs" / "sweep.json"
+
+
+def record(bodies: list[dict]) -> None:
+    """Keep the receipts of the first run per feature.
+
+    The sweep's own runs live in throwaway directories on purpose; without this
+    file the project has no way to say "these 25 pages ran" - and evidence would
+    have to call every feature untested.
+    """
+    path = record_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    import datetime
+
+    path.write_text(json.dumps({
+        "when": datetime.datetime.now(datetime.UTC)
+        .replace(microsecond=0).isoformat(),
+        "features": {body["feature"]: body for body in bodies},
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     wanted = argv[1:] or features()
     table = fixtures()
@@ -120,6 +144,7 @@ def main(argv: list[str]) -> int:
 
     problems: list[str] = []
     identical = 0
+    kept: list[dict] = []
     for name in wanted:
         first_code, first_out, first = dry_run(name, table)
         second_code, second_out, second = dry_run(name, table)
@@ -146,7 +171,10 @@ def main(argv: list[str]) -> int:
             print(f"{name:16s} DIFF")
         else:
             identical += 1
+            kept.append(first[0])
             print(f"{name:16s} {'ok' if first_code == 0 else 'FAIL'}")
+    if kept:
+        record(kept)
     print(f"runs: {len(wanted)}  receipts: {len(wanted)}  "
           f"problems: {len(problems)}  "
           f"twice: {identical}/{len(wanted)} identical")

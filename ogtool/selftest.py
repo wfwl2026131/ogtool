@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("receipts", "knobs", "sweep", "docs", "live")
+CHECKS = ("receipts", "knobs", "sweep", "docs", "evidence", "live")
 
 #: Where the two project notes live. They are outside this checkout, so a
 #: missing directory is reported as "skipped", never as a failure.
@@ -146,6 +146,28 @@ def check_docs(paths: tuple[Path, ...] | None = None,
             f"test(s)"), problems
 
 
+def check_evidence(settings: Any = None,
+                   base: Path | None = None) -> tuple[str, list[str]]:
+    """No feature may be both untested and unrun.
+
+    This is the check that keeps the 25-item claim honest: it does not demand that
+    every page has been run against Telegram, only that each one has *something*
+    behind it - a test module, a sweep run, or a live receipt.
+    """
+    from . import evidence
+
+    here = base or root()
+    directory = (evidence.receipts_dir(settings) if settings is not None
+                 else here / "data" / "logs" / "receipts")
+    rows = evidence.collect(here, directory)
+    problems = evidence.problems(rows)
+    counts = {level: sum(1 for row in rows if row.level == level)
+              for level in evidence.LEVELS}
+    return (f"evidence: {len(rows)} feature(s), "
+            + ", ".join(f"{level} {counts[level]}" for level in evidence.LEVELS)
+            ), problems
+
+
 def check_live(base: Path | None = None,
                timeout: float = 900.0) -> tuple[str, list[str]]:
     """The real-machine cases, when this machine has a login to run them with.
@@ -184,6 +206,8 @@ def run(settings: Any, only: list[str] | None = None,
             line, found = check_knobs()
         elif name == "docs":
             line, found = check_docs()
+        elif name == "evidence":
+            line, found = check_evidence(settings)
         elif name == "live":
             line, found = check_live()
         else:
@@ -197,5 +221,5 @@ def run(settings: Any, only: list[str] | None = None,
 
 
 __all__ = ["CHECKS", "CURRENT", "DOC_PATHS", "check_docs", "check_knobs",
-           "check_live",
+           "check_evidence", "check_live",
            "check_receipts", "check_sweep", "collected_tests", "root", "run"]

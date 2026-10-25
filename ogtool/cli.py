@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     _accounts_parser(subs)
     _runs_parser(subs)
     _selftest_parser(subs)
+    _evidence_parser(subs)
 
     _botlinks_parser(subs)
     _todo_parser(subs)
@@ -120,6 +121,21 @@ def build_parser() -> argparse.ArgumentParser:
     _auto_reply_parser(subs.choices["auto_reply"])
     _keep_online_parser(subs.choices["keep_online"])
     return parser
+
+
+def _evidence_parser(subs: argparse._SubParsersAction) -> None:
+    subs.add_parser("evidence", help="how much proof each of the 25 features has")
+
+
+def _evidence(settings: Settings) -> int:
+    from . import evidence
+
+    rows = evidence.collect(selftest.root(), evidence.receipts_dir(settings))
+    print(evidence.render(rows))
+    found = evidence.problems(rows)
+    for problem in found:
+        print(f"  {problem}")
+    return 0 if not found else 1
 
 
 def _selftest_parser(subs: argparse._SubParsersAction) -> None:
@@ -549,6 +565,8 @@ def run(argv: list[str] | None = None) -> int:
         return _runs(args, settings)
     if args.command == "selftest":
         return _selftest(args, settings)
+    if args.command == "evidence":
+        return _evidence(settings)
     if args.command == "todo":
         return _todo(args, settings)
     base = settings.raw
