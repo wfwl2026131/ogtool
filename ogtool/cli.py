@@ -106,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     _botlinks_parser(subs)
     _todo_parser(subs)
+    _pattern_parser(subs)
 
     for name in ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
@@ -191,6 +192,31 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     login.add_argument("--dry-run", action="store_true",
                        help="print the plan, connect to nothing")
     login.add_argument("--live", action="store_true", help="the default here")
+
+
+def _pattern_parser(subs: argparse._SubParsersAction) -> None:
+    pattern = subs.add_parser(
+        "pattern", help="collect a chat_pattern script from a real chat")
+    pattern_subs = pattern.add_subparsers(dest="action", required=True)
+    collect = pattern_subs.add_parser("collect")
+    collect.add_argument("--target", required=True,
+                         help="group/channel to learn the script from")
+    collect.add_argument("--account", default="",
+                         help="account that reads the history")
+    collect.add_argument("--hours", type=float, default=24.0,
+                         help="how far back to walk (default 24)")
+    collect.add_argument("--cap", type=int, default=10000,
+                         help="the collector's own message ceiling")
+    collect.add_argument("--out", default="",
+                         help="script path (default tdata/chat_pattern/<name>.txt)")
+    collect.add_argument("--delay-min", type=float, default=5.0)
+    collect.add_argument("--delay-max", type=float, default=15.0)
+    collect.add_argument("--slot", type=int, default=0,
+                         help="account slot written into every line")
+    collect.add_argument("--reply-level", type=int, default=0)
+    collect.add_argument("--dry-run", action="store_true", help="the default")
+    collect.add_argument("--live", action="store_true",
+                         help="really read the history (default: dry-run)")
 
 
 def _todo_parser(subs: argparse._SubParsersAction) -> None:
@@ -302,15 +328,19 @@ def _keep_online_parser(parser: argparse.ArgumentParser) -> None:
 def _overrides(args: argparse.Namespace) -> dict[str, Any]:
     """Turn the CLI flags into the same shape a task YAML has."""
     raw: dict[str, Any] = {}
-    if args.accounts is not None:
+    if getattr(args, "accounts", None) is not None:
         raw["accounts"] = args.accounts
-    if args.task_name:
+    if getattr(args, "task_name", ""):
         raw["task_name"] = args.task_name
 
     if args.command == "mass_send":
         return raw | _mass_send_overrides(args)
     if args.command == "auto_reply":
         return raw | _auto_reply_overrides(args)
+    if args.command == "pattern":
+        # Page-less: the collector takes its knobs from the parser, not from a
+        # task section, so there is nothing to merge.
+        return raw
     if args.command == "bot_links":
         from .botlinks import FLAGS, SECTION
 
@@ -427,11 +457,18 @@ def run(argv: list[str] | None = None) -> int:
 
     logger = task_logger(settings.log_dir, raw.get("task_name")
                          or args.command,
-                         level=10 if args.verbose else 20)
+                         level=10 if getattr(args, "verbose", False) else 20)
     store = Store(settings.db_path)
     ctx = RunContext(settings=settings, store=store, log=logger,
                      live=bool(args.live),
                      script=Script.parse(raw.get("simulate_responses")))
+    if args.command == "pattern":
+        try:
+            return _pattern(args, ctx)
+        finally:
+            ctx.close()
+            store.close()
+
     if args.command == "bot_links":
         from .botlinks import BotLinkConfig, BotLinkError
         from .botlinks import run as run_bot_links
@@ -463,6 +500,44 @@ def run(argv: list[str] | None = None) -> int:
     finally:
         ctx.close()
         store.close()
+
+
+def _pattern(args: argparse.Namespace, ctx: RunContext) -> int:
+    """``pattern collect``: learn a replayable script from a real chat."""
+    from .chat_pattern import PATTERN_DIR, PatternError
+    from .pattern import COLLECT_CAP, CollectConfig, collect, to_lines, write_script
+
+    cap = max(1, min(args.cap or COLLECT_CAP, COLLECT_CAP))
+    out = args.out or str(PATTERN_DIR / f"collected_{args.slot}.txt")
+    config = CollectConfig(target=args.target, out_path=out,
+                           account=args.account, hours=args.hours, cap=cap,
+                           delay_min=args.delay_min,
+                           delay_max=args.delay_max, slot=args.slot,
+                           reply_level=args.reply_level)
+    print(f"collecting from {config.target} for {config.hours:g} hour(s), "
+          f"cap {config.cap}")
+    if not ctx.live:
+        print(f"dry-run: would read up to {config.cap} message(s) and write "
+              f"{out}")
+        return 0
+    try:
+        result = collect(ctx.sender(), config, ctx)
+    except PatternError as error:
+        print(f"ERROR: {error}")
+        return 2
+    lines, dropped = to_lines(config, result.messages)
+    if not lines:
+        print(result.stopped)
+        print("nothing to write: the walk returned no usable message")
+        return 1
+    result.written = write_script(
+        Path(out), lines,
+        header=f"collected from {config.target} ({len(lines)} line(s))")
+    print(result.stopped)
+    if dropped:
+        print(f"skipped {dropped} message(s) the format cannot express")
+    print(f"script: {result.written} ({len(lines)} line(s))")
+    return 0
 
 
 def _todo(args: argparse.Namespace, settings: Settings) -> int:
