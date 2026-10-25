@@ -59,7 +59,6 @@ FLAGS = (
     Flag("--mode", "mode", str, "copy, rewrite or ai"),
     Flag("--mapping", "mapping", str, "source=target lines"),
     Flag("--max-items", "max_items", int, "how many posts one run carries"),
-    Flag("--poll-interval", "poll_interval", float, "seconds between polls"),
     Flag("--post-interval-min", "post_interval_min", float,
          "minimum seconds between two posts"),
     Flag("--post-interval-max", "post_interval_max", float,
@@ -82,7 +81,6 @@ class CloneConfig:
     mode: str = "copy"
     mapping: dict[str, str] = field(default_factory=dict)
     max_items: int = 10
-    poll_interval: float = 60.0
     post_interval_min: float = 10.0
     post_interval_max: float = 30.0
     author: str = ""
@@ -96,8 +94,6 @@ class CloneConfig:
     clone_mode: str = ""
     #: ``passive``: follow the source instead of scanning it once.
     passive: bool = False
-    #: ``onlyRootForwardedFromChannel``: only clone channel forwards.
-    only_root_forwarded: bool = False
     #: ``lastSourceMessageId``: continue after this message.
     last_source_message_id: int = 0
     #: ``totalCloned``: the counter the page shows; carried for the export.
@@ -120,7 +116,6 @@ class CloneConfig:
             mode=text(data, "mode", "copy"),
             mapping=mapping_of(data),
             max_items=num(data, "max_items", 10, kind=int, minimum=1),
-            poll_interval=num(data, "poll_interval", 60.0),
             post_interval_min=num(data, "post_interval_min", 10.0),
             post_interval_max=num(data, "post_interval_max", 30.0),
             author=text(data, "author"),
@@ -130,8 +125,6 @@ class CloneConfig:
             messages=from_config(data),
             clone_mode=clone_mode_of(data),
             passive=bool(data.get("passive", False)),
-            only_root_forwarded=bool(
-                data.get("only_root_forwarded_from_channel", False)),
             last_source_message_id=num(data, "last_source_message_id", 0,
                                        kind=int, minimum=0),
             total_cloned=num(data, "total_cloned", 0, kind=int, minimum=0),
@@ -316,7 +309,6 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
         mode=config.mode,
         mapping=len(config.mapping),
         passive="on" if config.passive else "off",
-        only_root_forwarded=("yes" if config.only_root_forwarded else "no"),
         resume_after=config.last_source_message_id or "-",
         max_items=config.max_items,
         post_interval=f"{config.post_interval_min:.0f}-"

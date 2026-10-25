@@ -93,6 +93,12 @@ def test_clone_pairs_win_over_a_stale_mapping_entry():
 
 
 def test_clone_reads_the_passive_switches():
+    """The passives + resume state of the clone page.
+
+    ``onlyRootForwardedFromChannel`` is *not* among them: the dump puts that key
+    in the ai_comment block only (its label is "Only comment channel-forwarded
+    root messages"), so the clone config no longer claims it.
+    """
     config = CloneConfig.from_dict(
         {"ai_clone": {"targets": "@t1", "sources": "@s1",
                       "passive": True,
@@ -102,7 +108,7 @@ def test_clone_reads_the_passive_switches():
         _settings(),
     )
     assert config.passive is True
-    assert config.only_root_forwarded is True
+    assert not hasattr(config, "only_root_forwarded")
     assert config.last_source_message_id == 42
     assert config.total_cloned == 7
 

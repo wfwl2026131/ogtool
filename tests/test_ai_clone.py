@@ -209,3 +209,17 @@ def test_multi_to_one_is_spelled_with_a_dash_in_the_dump():
 
     assert clone_mode_of({"clone_mode": "multi-to-one"}) == "multi_to_one"
     assert clone_mode_of({"clone_mode": "one_to_one"}) == "one_to_one"
+
+
+def test_the_clone_page_has_no_comment_only_knobs():
+    """`pollIntervalSeconds` / `onlyRootForwardedFromChannel` are ai_comment's.
+
+    The dump's ai_clone block (pairIndex/pairKey/sourceRaw/targetRaw/
+    lastSourceMessageId/totalCloned/pairs/cloneMode/passive/passive_listen) has
+    neither key, so the clone config must not claim them - a knob that exists in
+    our config but not in the reference is a lie in the other direction.
+    """
+    from ogtool.features.ai_clone import CloneConfig
+
+    assert not hasattr(CloneConfig(), "poll_interval")
+    assert not hasattr(CloneConfig(), "only_root_forwarded")
