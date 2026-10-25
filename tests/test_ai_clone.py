@@ -223,3 +223,44 @@ def test_the_clone_page_has_no_comment_only_knobs():
 
     assert not hasattr(CloneConfig(), "poll_interval")
     assert not hasattr(CloneConfig(), "only_root_forwarded")
+
+
+def test_the_watermark_skips_what_the_last_run_already_copied():
+    """``lastSourceMessageId``: resume after this id, and say how many that was."""
+    from ogtool.features.ai_clone import CloneConfig, plan
+    from ogtool.sources import SourceMessage
+
+    messages = [SourceMessage(peer="@s1", sender="", text=f"post {n}",
+                              message_id=n) for n in (3, 7, 9)]
+    config = CloneConfig(sources=["@s1"], targets=["@t1"],
+                         messages=messages, last_source_message_id=7,
+                         mapping={"@s1": "@t1"})
+    items, collected = plan(config, ["acc1"])
+    assert [item.source.message_id for item in items] == [9]
+    assert collected.reasons == {"resume": 2}
+    assert "resume=2" in collected.summary()
+
+
+def test_without_a_watermark_nothing_is_skipped():
+    from ogtool.features.ai_clone import CloneConfig, plan
+    from ogtool.sources import SourceMessage
+
+    messages = [SourceMessage(peer="@s1", sender="", text="a", message_id=3)]
+    config = CloneConfig(sources=["@s1"], targets=["@t1"], messages=messages)
+    items, _collected = plan(config, ["acc1"])
+    assert len(items) == 1
+
+
+def test_the_run_prints_the_next_watermark_and_the_total(ctx, capsys):
+    from ogtool.features.ai_clone import CloneConfig, run
+    from ogtool.sources import SourceMessage
+
+    messages = [SourceMessage(peer="@s1", sender="", text="a", message_id=11),
+                SourceMessage(peer="@s1", sender="", text="b", message_id=12)]
+    config = CloneConfig(sources=["@s1"], targets=["@t1"], messages=messages,
+                         mapping={"@s1": "@t1"}, total_cloned=40,
+                         post_interval_min=0, post_interval_max=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "resume: next run continues after 12" in output
+    assert "total cloned: 42 (this run +2)" in output

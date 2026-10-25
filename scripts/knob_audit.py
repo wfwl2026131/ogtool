@@ -45,9 +45,6 @@ KNOWN = {
         "the passive listener's fallback polling cadence; this run is one-shot",
     "ai_clone.passive":
         "the reference's own long-running follow mode; this run is one-shot",
-    "ai_clone.last_source_message_id":
-        "the reference's resumable pair watermark, not a page option",
-    "ai_clone.total_cloned": "a counter the reference persists, not an option",
     "batch_login.account_labels":
         "consumed through accounts_of(raw, data) - a heuristic false positive",
     "batch_login.hide_import_dialog":

@@ -222,6 +222,15 @@ def plan(config: CloneConfig, labels: list[str],
     collected = Collected(scanned=len(messages))
     kept: list[SourceMessage] = []
     for message in messages:
+        # ``lastSourceMessageId``: the reference stores the id it reached inside
+        # the pair, so the next run starts after it instead of re-copying the
+        # same posts. Honoured here the same way: anything at or below the
+        # watermark is not a candidate, and the drop is reported rather than
+        # silently missing from the count.
+        if config.last_source_message_id and \
+                message.message_id <= config.last_source_message_id:
+            collected.drop("resume")
+            continue
         if not keep(message, config.keywords):
             collected.drop("keyword")
             continue
@@ -319,13 +328,15 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
     )
 
     task = open_task(ctx, config.task_name, FEATURE,
-                     {"sources": config.sources, "targets": config.targets},
+                     {"sources": config.sources, "targets": config.targets,
+                      "resume_after": config.last_source_message_id},
                      len(items))
     sender = ctx.sender()
     ai = ai_client(ctx) if rewriting else None
     ok = failed = 0
     waited = 0.0
     fallback = 0
+    landed: list[int] = []
 
     for index, item in enumerate(items, start=1):
         target: Target = parse_many([item.target], "custom")[0]
@@ -346,6 +357,8 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
         waited += item.delay
         if outcome.ok:
             ok += 1
+            if item.source.message_id:
+                landed.append(item.source.message_id)
             record(ctx, task, item.account, target.display(), True,
                    detail=item.source.sender)
             state = "ok"
@@ -364,6 +377,17 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
     if rewriting:
         print(f"ai calls: {len(ai.calls) if ai else 0} (fallback {fallback})")
     print(f"waited: {format_duration(waited)}")
+    # ``totalCloned`` / ``lastSourceMessageId``: the counter and the watermark the
+    # page keeps in the saved pair. We do not rewrite the task file, so both are
+    # printed as the values to store, and the watermark only counts posts that
+    # actually landed - advancing it past a failed post would lose that post.
+    watermark = max(landed, default=0)
+    if config.last_source_message_id or watermark:
+        print(f"resume: next run continues after "
+              f"{watermark or config.last_source_message_id}")
+    total = config.total_cloned + ok
+    if config.total_cloned or ok:
+        print(f"total cloned: {total} (this run +{ok})")
     print(f"PLAN: {len(items)} posts, {max(1, len(labels))} accounts, "
           f"ETA {format_duration(waited)}")
     close_task(ctx, task, ok=ok, failed=failed)
