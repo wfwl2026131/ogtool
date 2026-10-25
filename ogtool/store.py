@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -121,6 +122,55 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE INDEX IF NOT EXISTS idx_results_task ON results(task_id);
 CREATE INDEX IF NOT EXISTS idx_ai_task ON ai_calls(task_id);
 CREATE INDEX IF NOT EXISTS idx_results_created ON results(created_at);
+CREATE TABLE IF NOT EXISTS todo_list (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id     TEXT NOT NULL DEFAULT '',
+    from_name   TEXT NOT NULL DEFAULT '',
+    peer_id     TEXT NOT NULL DEFAULT '',
+    peer_name   TEXT NOT NULL DEFAULT '',
+    receiver_id TEXT NOT NULL DEFAULT '0',
+    chat_type   INTEGER NOT NULL DEFAULT 1,
+    msg_type    INTEGER NOT NULL DEFAULT 1,
+    msg_id      INTEGER NOT NULL DEFAULT 0,
+    title       TEXT NOT NULL DEFAULT '',
+    msg         TEXT NOT NULL DEFAULT '',
+    media       TEXT NOT NULL DEFAULT '',
+    priority    INTEGER NOT NULL DEFAULT 1,
+    -- 1 pending / 2 done / 3 archived, straight from the dump's own comment.
+    status      INTEGER NOT NULL DEFAULT 1,
+    is_blacklist INTEGER NOT NULL DEFAULT 0,
+    -- This rebuild's two filter columns. The page filters on "service" and
+    -- "bot" messages, but the dump's msg_type/chat_type value table sits in
+    -- Chinese comments that the string extraction stripped, so the mapping is
+    -- not readable; storing the two facts explicitly keeps the filter honest
+    -- instead of guessing which integer means "service".
+    is_service  INTEGER NOT NULL DEFAULT 0,
+    is_bot      INTEGER NOT NULL DEFAULT 0,
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    from_count  INTEGER NOT NULL DEFAULT 0,
+    last_msg_at INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL DEFAULT 0,
+    updated_at  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(from_id, peer_id, receiver_id)
+);
+
+CREATE TABLE IF NOT EXISTS todo_archive (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_id     TEXT NOT NULL DEFAULT '',
+    from_name   TEXT NOT NULL DEFAULT '',
+    peer_id     TEXT NOT NULL DEFAULT '',
+    peer_name   TEXT NOT NULL DEFAULT '',
+    receiver_id TEXT NOT NULL DEFAULT '0',
+    msg_id      INTEGER NOT NULL DEFAULT 0,
+    msg         TEXT NOT NULL DEFAULT '',
+    media       TEXT NOT NULL DEFAULT '',
+    priority    INTEGER NOT NULL DEFAULT 1,
+    is_blacklist INTEGER NOT NULL DEFAULT 0,
+    last_msg_at INTEGER NOT NULL DEFAULT 0,
+    archived_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_todo_status ON todo_list(status, priority);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
 """
 
@@ -450,6 +500,148 @@ class Store:
                  utcnow()),
             )
             self._conn.commit()
+
+    # todo list --------------------------------------------------------
+    def upsert_todo(self, row: dict[str, Any]) -> int:
+        """Insert a queue row, or bump the one that already has its key.
+
+        The dump declares ``UNIQUE(from_id, peer_id, receiver_id)``: the same
+        customer writing again is the same piece of work, so the second message
+        raises ``unread_count``/``from_count`` instead of opening a second row.
+        """
+        now = int(time.time())
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO todo_list
+                       (from_id, from_name, peer_id, peer_name, receiver_id,
+                        chat_type, msg_type, msg_id, title, msg, media,
+                        priority, status, is_blacklist, is_service, is_bot,
+                        unread_count, from_count, last_msg_at, created_at,
+                        updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           ?, ?, ?)
+                   ON CONFLICT(from_id, peer_id, receiver_id) DO UPDATE SET
+                       msg          = excluded.msg,
+                       media        = excluded.media,
+                       msg_id       = excluded.msg_id,
+                       from_name    = excluded.from_name,
+                       peer_name    = excluded.peer_name,
+                       priority     = excluded.priority,
+                       is_service   = excluded.is_service,
+                       is_bot       = excluded.is_bot,
+                       unread_count = todo_list.unread_count + 1,
+                       from_count   = todo_list.from_count + 1,
+                       last_msg_at  = excluded.last_msg_at,
+                       updated_at   = excluded.updated_at,
+                       -- a new message reopens work that was marked done
+                       status       = CASE WHEN todo_list.status = 3
+                                           THEN todo_list.status
+                                           ELSE 1 END""",
+                (row.get("from_id", ""), row.get("from_name", ""),
+                 row.get("peer_id", ""), row.get("peer_name", ""),
+                 str(row.get("receiver_id", "0")),
+                 int(row.get("chat_type", 1)), int(row.get("msg_type", 1)),
+                 int(row.get("msg_id", 0)), row.get("title", ""),
+                 row.get("msg", ""), row.get("media", ""),
+                 int(row.get("priority", 1)), int(row.get("status", 1)),
+                 int(bool(row.get("is_blacklist", False))),
+                 int(bool(row.get("is_service", False))),
+                 int(bool(row.get("is_bot", False))),
+                 int(row.get("unread_count", 1)),
+                 int(row.get("from_count", 1)),
+                 int(row.get("last_msg_at", now)), now, now),
+            )
+            self._conn.commit()
+            found = self._conn.execute(
+                """SELECT id FROM todo_list
+                   WHERE from_id = ? AND peer_id = ? AND receiver_id = ?""",
+                (row.get("from_id", ""), row.get("peer_id", ""),
+                 str(row.get("receiver_id", "0"))),
+            ).fetchone()
+        return int(found["id"]) if found else 0
+
+    def list_todos(self, status: int | None = None,
+                   limit: int = 200) -> list[dict[str, Any]]:
+        query = "SELECT * FROM todo_list"
+        args: list[Any] = []
+        if status is not None:
+            query += " WHERE status = ?"
+            args.append(int(status))
+        query += " ORDER BY priority ASC, last_msg_at DESC, id DESC LIMIT ?"
+        args.append(int(limit))
+        with self._lock:
+            rows = self._conn.execute(query, args).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_todos(self, status: int | None = None) -> int:
+        if status is None:
+            with self._lock:
+                return int(self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM todo_list").fetchone()["n"])
+        with self._lock:
+            return int(self._conn.execute(
+                "SELECT COUNT(*) AS n FROM todo_list WHERE status = ?",
+                (int(status),)).fetchone()["n"])
+
+    def set_todo_status(self, ids: list[int], status: int) -> int:
+        return self._todo_update("status", int(status), ids)
+
+    def set_todo_blacklist(self, ids: list[int], blocked: bool) -> int:
+        return self._todo_update("is_blacklist", int(bool(blocked)), ids)
+
+    def _todo_update(self, column: str, value: int, ids: list[int]) -> int:
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE todo_list SET {column} = ?, updated_at = ? "
+                f"WHERE id IN ({placeholders})",
+                [value, int(time.time()), *ids])
+            self._conn.commit()
+        return cursor.rowcount
+
+    def archive_todos(self, ids: list[int] | None = None) -> int:
+        """Move rows out of the live queue into ``todo_archive``.
+
+        The dump has both tables (``from_todo_list`` and ``from_todo_archive``),
+        so archiving is a move, not a delete: a customer's history survives
+        being cleared from the queue.
+        """
+        with self._lock:
+            if ids:
+                placeholders = ",".join("?" for _ in ids)
+                where, args = f"WHERE id IN ({placeholders})", list(ids)
+            else:
+                where, args = "WHERE status IN (2, 3)", []
+            rows = self._conn.execute(
+                f"SELECT * FROM todo_list {where}", args).fetchall()
+            now = int(time.time())
+            moved = 0
+            for row in rows:
+                self._conn.execute(
+                    """INSERT INTO todo_archive
+                           (from_id, from_name, peer_id, peer_name,
+                            receiver_id, msg_id, msg, media, priority,
+                            is_blacklist, last_msg_at, archived_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (row["from_id"], row["from_name"], row["peer_id"],
+                     row["peer_name"], row["receiver_id"], row["msg_id"],
+                     row["msg"], row["media"], row["priority"],
+                     row["is_blacklist"], row["last_msg_at"], now),
+                )
+                self._conn.execute("DELETE FROM todo_list WHERE id = ?",
+                                   (row["id"],))
+                moved += 1
+            self._conn.commit()
+        return moved
+
+    def list_todo_archive(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM todo_archive ORDER BY archived_at DESC, id DESC "
+                "LIMIT ?", (int(limit),)).fetchall()
+        return [dict(row) for row in rows]
 
     # ai calls ---------------------------------------------------------
 

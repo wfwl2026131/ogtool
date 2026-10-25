@@ -105,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
     _accounts_parser(subs)
 
     _botlinks_parser(subs)
+    _todo_parser(subs)
 
     for name in ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
@@ -190,6 +191,56 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     login.add_argument("--dry-run", action="store_true",
                        help="print the plan, connect to nothing")
     login.add_argument("--live", action="store_true", help="the default here")
+
+
+def _todo_parser(subs: argparse._SubParsersAction) -> None:
+    todo = subs.add_parser("todo", help="the customer-service queue "
+                                        "(from_todo_list)")
+    todo_subs = todo.add_subparsers(dest="action", required=True)
+
+    listing = todo_subs.add_parser("list", help="the queue, newest first")
+    listing.add_argument("--status", default="pending",
+                         choices=["pending", "done", "archived", "all"])
+    listing.add_argument("--limit", type=int, default=50)
+    listing.add_argument("--include-blacklisted", action="store_true")
+    listing.add_argument("--show-service", action="store_true",
+                         help="keep join/leave notifications (Filter service messages off)")
+    listing.add_argument("--show-bot", action="store_true",
+                         help="keep bot replies (Filter bot messages off)")
+    listing.add_argument("--menu-links", default="",
+                         help="promo links for the reply menu, comma separated")
+    listing.add_argument("--links-per-menu", type=int, default=3)
+    listing.add_argument("--no-clean-previous", action="store_true",
+                         help="keep the menu on older messages too")
+    listing.add_argument("--json", action="store_true")
+
+    add = todo_subs.add_parser("add", help="queue one incoming message")
+    add.add_argument("--from-id", required=True)
+    add.add_argument("--peer-id", required=True)
+    add.add_argument("--from-name", default="")
+    add.add_argument("--peer-name", default="")
+    add.add_argument("--receiver-id", default="0")
+    add.add_argument("--msg", default="")
+    add.add_argument("--media", default="")
+    add.add_argument("--priority", type=int, default=1)
+    add.add_argument("--service", action="store_true")
+    add.add_argument("--bot", action="store_true")
+    add.add_argument("--blacklisted", action="store_true")
+
+    mark = todo_subs.add_parser("mark", help="mark rows read or unread")
+    mark.add_argument("ids", nargs="+", type=int)
+    mark.add_argument("--unread", action="store_true")
+
+    block = todo_subs.add_parser("blacklist", help="blacklist or unblacklist rows")
+    block.add_argument("ids", nargs="+", type=int)
+    block.add_argument("--off", action="store_true")
+
+    archive = todo_subs.add_parser("archive", help="move rows out of the queue")
+    archive.add_argument("ids", nargs="*", type=int,
+                         help="empty means every done/archived row")
+    archive.add_argument("--dry-run", action="store_true", help="the default")
+    archive.add_argument("--live", action="store_true",
+                         help="really move the rows (default: dry-run)")
 
 
 def _botlinks_parser(subs: argparse._SubParsersAction) -> None:
@@ -358,6 +409,8 @@ def run(argv: list[str] | None = None) -> int:
 
     if args.command == "accounts":
         return _accounts(args, settings)
+    if args.command == "todo":
+        return _todo(args, settings)
     base = settings.raw
     if getattr(args, "task", None):
         try:
@@ -409,6 +462,91 @@ def run(argv: list[str] | None = None) -> int:
         return 130
     finally:
         ctx.close()
+        store.close()
+
+
+def _todo(args: argparse.Namespace, settings: Settings) -> int:
+    """The queue commands. Mirrors the page's own verbs: mark, block, archive."""
+    import json
+
+    from .store import Store as _Store
+    from .todo import (
+        DONE,
+        PENDING,
+        STATUS_NAMES,
+        MenuConfig,
+        TodoFilter,
+        TodoRecord,
+        render,
+    )
+
+    store = _Store(settings.db_path)
+    try:
+        if args.action == "add":
+            row_id = store.upsert_todo({
+                "from_id": args.from_id, "from_name": args.from_name,
+                "peer_id": args.peer_id, "peer_name": args.peer_name,
+                "receiver_id": args.receiver_id, "msg": args.msg,
+                "media": args.media, "priority": args.priority,
+                "is_service": args.service, "is_bot": args.bot,
+                "is_blacklist": args.blacklisted,
+            })
+            print(f"todo #{row_id} added")
+            return 0
+        if args.action == "mark":
+            status = PENDING if args.unread else DONE
+            changed = store.set_todo_status(args.ids, status)
+            print(f"marked {changed} row(s) {STATUS_NAMES[status]}")
+            return 0 if changed else 1
+        if args.action == "blacklist":
+            changed = store.set_todo_blacklist(args.ids, not args.off)
+            print(f"blacklist {'off' if args.off else 'on'}: {changed} row(s)")
+            return 0 if changed else 1
+        if args.action == "archive":
+            if not args.live:
+                if args.ids:
+                    print(f"dry-run: would archive {len(args.ids)} row(s)")
+                else:
+                    print("dry-run: would archive every done/archived row")
+                return 0
+            moved = store.archive_todos(args.ids or None)
+            print(f"archived {moved} row(s)")
+            return 0 if moved else 1
+        status = {"pending": PENDING, "done": DONE, "archived": 3,
+                  "all": None}[args.status]
+        rows = store.list_todos(status, limit=args.limit)
+        filter_ = TodoFilter(hide_service=not args.show_service,
+                            hide_bot=not args.show_bot,
+                            include_blacklisted=args.include_blacklisted)
+        menu = MenuConfig(links=[part.strip() for part in
+                                 args.menu_links.split(",") if part.strip()],
+                          links_per_menu=args.links_per_menu,
+                          auto_clean_previous=not args.no_clean_previous)
+        records = [TodoRecord(**{key: row[key] for key in (
+            "from_id", "peer_id", "receiver_id", "from_name", "peer_name",
+            "chat_type", "msg_type", "msg_id", "title", "msg", "media",
+            "priority", "status", "is_blacklist", "is_service", "is_bot",
+            "unread_count", "from_count", "last_msg_at", "created_at",
+            "updated_at", "id")}) for row in rows]
+        records = [record for record in records
+                   if record.status == status or status is None]
+        if args.json:
+            print(json.dumps([record.__dict__ for record in records],
+                             ensure_ascii=False, default=str))
+            return 0
+        lines = render(records, filter_, menu if menu.links else None,
+                       now=int(__import__("time").time()))
+        if not lines:
+            print(f"queue empty (status={args.status})")
+            return 0
+        for line in lines:
+            print(line)
+        hidden = len(records) - sum(1 for record in records
+                                    if filter_.keeps(record))
+        print(f"total: {len(records)} kept: {len(records) - hidden} "
+              f"filtered: {hidden}")
+        return 0
+    finally:
         store.close()
 
 
