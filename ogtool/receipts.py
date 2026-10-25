@@ -133,6 +133,22 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         return None
 
 
+def order(body: dict[str, Any]) -> tuple[str, int]:
+    """Sort key: when it finished, then which task it was."""
+    return (str(body.get("finished_at") or ""), int(body.get("task_id") or 0))
+
+
+def line(body: dict[str, Any]) -> str:
+    """One receipt as one readable line, the way the sweep prints features."""
+    verdict = str(body.get("verdict") or "?")
+    return (f"{str(body.get('finished_at') or '')[:19]}  "
+            f"{str(body.get('feature') or '?'):16s} "
+            f"{str(body.get('mode') or '?'):8s} "
+            f"planned {int(body.get('planned') or 0):4d}  "
+            f"ok {int(body.get('ok') or 0):4d}  "
+            f"failed {int(body.get('failed') or 0):4d}  {verdict}")
+
+
 def validate(body: Any) -> list[str]:
     """Everything wrong with one receipt body, as readable sentences."""
     if not isinstance(body, dict):
@@ -179,4 +195,5 @@ def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 __all__ = ["REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
-           "receipt_dir", "snapshot", "validate", "write", "write_run"]
+           "line", "order", "receipt_dir", "snapshot", "validate", "write",
+           "write_run"]

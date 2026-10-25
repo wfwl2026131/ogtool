@@ -110,3 +110,56 @@ def test_snapshot_tells_a_run_apart_from_the_previous_one(settings):
     assert receipts.snapshot(settings) == frozenset()
     receipts.write_run(settings, "settings", exit_code=0, live=False)
     assert receipts.snapshot(settings) == frozenset({"settings-run.json"})
+
+
+def _config(settings) -> str:
+    return str(settings.path)
+
+
+def test_runs_list_shows_the_newest_first(settings, capsys):
+    from ogtool import cli
+
+    receipts.write_run(settings, "settings", exit_code=0, live=False)
+    receipts.write_run(settings, "proxy", exit_code=0, live=False)
+    assert cli.run(["--config", _config(settings), "runs", "list"]) == 0
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert len(lines) == 2
+    assert "settings" in lines[0] or "proxy" in lines[0]
+    assert all("dry-run" in line for line in lines)
+
+
+def test_runs_list_filters_and_limits(settings, capsys):
+    from ogtool import cli
+
+    receipts.write_run(settings, "settings", exit_code=0, live=False)
+    receipts.write_run(settings, "proxy", exit_code=2, live=False)
+    assert cli.run(["--config", _config(settings), "runs", "list",
+                    "--feature", "proxy"]) == 0
+    output = capsys.readouterr().out
+    assert "proxy" in output
+    assert "settings" not in output
+    assert "failed" in output
+
+
+def test_runs_check_catches_a_broken_receipt(settings, capsys):
+    from ogtool import cli
+
+    receipts.write_run(settings, "settings", exit_code=0, live=False)
+    broken = receipts.receipt_dir(settings) / "broken.json"
+    broken.write_text('{"version": 1}', encoding="utf-8")
+    assert cli.run(["--config", _config(settings), "runs", "check"]) == 1
+    output = capsys.readouterr().out
+    assert "receipts: 2  problems:" in output
+    assert "missing feature" in output
+
+
+def test_runs_show_prints_one_receipt(settings, capsys):
+    from ogtool import cli
+
+    receipts.write_run(settings, "proxy", exit_code=0, live=False)
+    assert cli.run(["--config", _config(settings), "runs", "show",
+                    "--feature", "proxy"]) == 0
+    output = capsys.readouterr().out
+    assert '"feature": "proxy"' in output
+    assert cli.run(["--config", _config(settings), "runs", "show",
+                    "--feature", "nope"]) == 2

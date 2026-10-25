@@ -103,6 +103,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     subs = parser.add_subparsers(dest="command", required=True)
     _accounts_parser(subs)
+    _runs_parser(subs)
 
     _botlinks_parser(subs)
     _todo_parser(subs)
@@ -118,6 +119,58 @@ def build_parser() -> argparse.ArgumentParser:
     _auto_reply_parser(subs.choices["auto_reply"])
     _keep_online_parser(subs.choices["keep_online"])
     return parser
+
+
+def _runs_parser(subs: argparse._SubParsersAction) -> None:
+    runs = subs.add_parser("runs", help="what the last runs left behind")
+    run_subs = runs.add_subparsers(dest="action", required=True)
+    listing = run_subs.add_parser("list", help="receipts, newest first")
+    listing.add_argument("--limit", type=int, default=20)
+    listing.add_argument("--feature", default="", help="one page only")
+    listing.add_argument("--json", action="store_true")
+    show = run_subs.add_parser("show", help="one receipt in full, as JSON")
+    show.add_argument("--feature", default="", help="page name (optional)")
+    show.add_argument("--id", type=int, default=0, help="task id")
+    check = run_subs.add_parser("check", help="validate every receipt")
+    check.add_argument("--feature", default="")
+
+
+def _runs(args: argparse.Namespace, settings: Settings) -> int:
+    """Read the receipts back: the run's own account of itself."""
+    import json
+
+    directory = receipts.receipt_dir(settings)
+    bodies, problems = receipts.read_all(directory)
+    if args.action == "check":
+        for body in bodies:
+            problems.extend(f"{body.get('feature', '?')}: {problem}"
+                            for problem in receipts.validate(body))
+        print(f"receipts: {len(bodies)}  problems: {len(problems)}")
+        for problem in problems:
+            print(f"  {problem}")
+        return 0 if not problems else 1
+    if args.action == "show":
+        wanted = [body for body in bodies
+                  if (not args.feature or body.get("feature") == args.feature)
+                  and (not args.id or body.get("task_id") == args.id)]
+        if not wanted:
+            print("ERROR: no receipt matches")
+            return 2
+        print(json.dumps(sorted(wanted, key=receipts.order)[-1],
+                         ensure_ascii=False, indent=2))
+        return 0
+    rows = sorted((body for body in bodies
+                   if not args.feature or body.get("feature") == args.feature),
+                  key=receipts.order, reverse=True)[: max(0, args.limit)]
+    if args.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=2))
+        return 0
+    if not rows:
+        print(f"no receipts in {directory}")
+        return 0
+    for body in rows:
+        print(receipts.line(body))
+    return 0
 
 
 def _accounts_parser(subs: argparse._SubParsersAction) -> None:
@@ -439,6 +492,8 @@ def run(argv: list[str] | None = None) -> int:
 
     if args.command == "accounts":
         return _accounts(args, settings)
+    if args.command == "runs":
+        return _runs(args, settings)
     if args.command == "todo":
         return _todo(args, settings)
     base = settings.raw
