@@ -4,7 +4,13 @@ The page is a workflow runner, not a new kind of job: it chains the modules
 that already exist.
 
     1) add contacts      2) create your own groups      3) play the script
-    4) invite your contacts into those groups            5) message them
+    4) pull your own contacts                            5) message them
+
+The reference's own numbering says the same thing, and it is easy to misread:
+"1) Batch Contacts  2) Create owned group/channel  3) Puppet Chat v2
+4) Batch Pull v2 (pull own contacts)  5) Mass Send DM v2 (to own contacts)".
+Stage 4 is a *pull*, not an invite: it reads the account's own address book and
+that becomes stage 5's target list.
 
 Everything a stage needs is a field on this page; ``--stop-after`` cuts the run
 after one stage so a single step can be checked on its own.  Two things the page
@@ -29,7 +35,7 @@ from ..runtime import RunContext
 from ..senders import Content
 from ..store import Account, TaskRef
 from ..targets import parse_many
-from . import add_contact, batch_invite_v2, mass_send_v2, register
+from . import add_contact, mass_send_v2, register
 from ._common import (
     accounts_of,
     close_task,
@@ -51,7 +57,7 @@ STAGES = (
     ("add_contact", "add contacts"),
     ("create_group", "create groups"),
     ("puppet_chat_v2", "play the script"),
-    ("batch_invite_v2", "invite own contacts"),
+    ("batch_pull", "pull own contacts"),
     ("mass_send_v2", "message own contacts"),
 )
 
@@ -273,21 +279,39 @@ def stage_play(config: MixConfig, ctx: RunContext, refs: list[str],
     return result
 
 
-def stage_invite(config: MixConfig, ctx: RunContext, task: TaskRef,
-                 refs: list[str], labels: list[str]) -> StageResult:
-    result = StageResult("batch_invite_v2", STAGES[3][1])
-    contacts = [entry.split("|", 1)[-1] for entry in config.contacts]
-    jobs = batch_invite_v2.build_jobs(refs, contacts, labels or ["-"])
+def stage_pull(config: MixConfig, ctx: RunContext, task: TaskRef,
+               labels: list[str], owners: dict[str, str]) -> StageResult:
+    """Read each account's own address book; that list feeds the last stage.
+
+    The reference calls this step "Batch Pull v2 (pull own contacts)". It is not
+    an invite: nothing is added to a group here, the contacts are collected and
+    remembered per account so the DM stage knows who belongs to whom.
+    """
+    result = StageResult("batch_pull", STAGES[3][1])
     sender = ctx.sender()
-    for account, group, contact in jobs:
-        answer = sender.invite(account, parse_many([group], "group")[0],
-                               parse_many([contact], "custom")[0])
-        if answer.ok:
-            result.ok += 1
-        else:
+    pulled: list[str] = []
+    for label in labels or ["-"]:
+        answer = sender.pull_contacts(label)  # type: ignore[attr-defined]
+        rows = [row for row in (answer.detail or "").splitlines()
+                if row.strip()] if answer.ok else []
+        if not answer.ok:
             result.failed += 1
-        record(ctx, task, account, f"{group}<-{contact}", answer.ok,
-               answer.code, answer.detail)
+            print(f"pull: account={label} failed {answer.code}")
+            record(ctx, task, label, "own contacts", False, answer.code)
+            continue
+        for row in rows:
+            name, _, ref = row.partition("|")
+            entry = f"{name}|{ref}" if ref else name
+            pulled.append(entry)
+            owners[ref or name] = label
+        result.ok += len(rows)
+        record(ctx, task, label, "own contacts", True)
+    if not pulled:
+        # A plan has no address book to read: the configured contacts stand in,
+        # and the run says so instead of quietly sending to nobody.
+        pulled = list(config.contacts)
+        print("pull: nothing returned, the configured contacts stand in")
+    config.contacts = pulled
     return result
 
 
@@ -386,7 +410,7 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     live_refs = [ref for ref in refs if ref not in dead]
 
     run_stage(3, stage_play, config, ctx, live_refs, labels)
-    run_stage(4, stage_invite, config, ctx, task, live_refs, labels)
+    run_stage(4, stage_pull, config, ctx, task, labels, owners)
     run_stage(5, stage_send, config, ctx, task, labels, owners)
 
     ok = sum(item.ok for item in results)

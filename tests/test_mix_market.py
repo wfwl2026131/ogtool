@@ -63,14 +63,14 @@ def test_all_five_stages_run_end_to_end(ctx, pattern_file, capsys):
     assert f"stage 1/{len(STAGES)} add_contact" in output
     assert f"stage 2/{len(STAGES)} create_group" in output
     assert f"stage 3/{len(STAGES)} puppet_chat_v2" in output
-    assert f"stage 4/{len(STAGES)} batch_invite_v2" in output
+    assert f"stage 4/{len(STAGES)} batch_pull" in output
     assert f"stage 5/{len(STAGES)} mass_send_v2" in output
     assert "Processed: 5 / 5" in output
 
 
 def test_every_stage_leaves_an_audit_row(ctx, pattern_file, capsys):
     # Stages 4 and 5 used to bump their own counters and record nothing, so a
-    # run that had invited and messaged looked like it had done neither.
+    # run that had pulled and messaged looked like it had done neither.
     ctx.script.codes = ["ok"] * 40
     config = make(pattern=pattern_file(["A4|L0|D6|hello there"]))
     assert run(config, ctx) == 0
@@ -79,7 +79,8 @@ def test_every_stage_leaves_an_audit_row(ctx, pattern_file, capsys):
     rows = ctx.store.results_for_feature("mix_market")
     targets = {row["target"] for row in rows}
     assert "Ann|@ann" not in targets
-    assert any("<-" in target for target in targets), f"no invite row in {targets}"
+    # Stage 4 is the pull, and it records one row per account it read.
+    assert "own contacts" in targets, f"no pull row in {targets}"
     assert targets & {"@ann", "@bob"}, f"no send row in {targets}"
 
 
@@ -92,7 +93,9 @@ def test_the_created_groups_are_what_the_later_stages_use(ctx, pattern_file,
     output = capsys.readouterr().out
     ref = create_refs_[0]
     assert f"target={ref} hours=unknown -> alive" in output
-    assert f"group={ref} member=@ann" in output
+    # The last stage messages the contacts the pull stage collected.
+    assert "pull: nothing returned, the configured contacts stand in" in output
+    assert "stage 5/5 mass_send_v2: ok=2" in output
 
 
 def test_stop_after_cuts_the_run(ctx, pattern_file, capsys):
@@ -144,8 +147,11 @@ def test_a_bad_activity_entry_is_a_config_error():
 
 
 def test_the_stage_names_are_the_documented_order():
+    # The reference's own numbering: contacts, owned group, puppet chat, PULL,
+    # then DM. Stage 4 is a pull - it reads the address book, it invites nobody.
     assert [name for name, _label in STAGES] == [
         "add_contact", "create_group", "puppet_chat_v2",
-        "batch_invite_v2", "mass_send_v2",
+        "batch_pull", "mass_send_v2",
     ]
     assert mix_market.STAGES[0][1] == "add contacts"
+    assert mix_market.STAGES[3][1] == "pull own contacts"

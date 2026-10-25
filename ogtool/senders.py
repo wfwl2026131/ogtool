@@ -490,6 +490,10 @@ class DryRunSender:
     def leave(self, account: str, target: Target) -> SendResult:
         return self._answer("leave", account, f"target={target.display()}")
 
+    def pull_contacts(self, account: str) -> SendResult:
+        """The account's own contact list, the pull stage's only job."""
+        return self._answer("pull_contacts", account, "own contacts")
+
     def start_bot(self, account: str, bot: str, param: str = "") -> SendResult:
         """Open a bot link, with its ``start`` parameter when there is one."""
         return self._answer("start_bot", account,
@@ -813,6 +817,31 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("leave", account, action)
+
+    def pull_contacts(self, account: str) -> SendResult:
+        """``contacts.GetContactsRequest``: the account's own address book.
+
+        The result rides on ``detail`` as ``user|handle`` lines, because that is
+        what the next stage consumes and inventing a second return shape for one
+        caller would make the sender interface lie about itself.
+        """
+
+        def action() -> SendResult:
+            from telethon.tl.functions.contacts import GetContactsRequest
+
+            client = self._client(account)
+            found = client(GetContactsRequest(hash=0))
+            rows: list[str] = []
+            for user in getattr(found, "users", []) or []:
+                handle = getattr(user, "username", "") or ""
+                name = " ".join(part for part in (
+                    getattr(user, "first_name", "") or "",
+                    getattr(user, "last_name", "") or "") if part).strip()
+                rows.append(f"{name or '-'}|@{handle}" if handle
+                            else f"{name or '-'}|{getattr(user, 'id', '')}")
+            return SendResult(ok=True, detail="\n".join(rows))
+
+        return self._guard("pull_contacts", account, action)
 
     def start_bot(self, account: str, bot: str, param: str = "") -> SendResult:
         """``messages.StartBotRequest``: the same call a ``t.me/bot?start=`` link makes.
