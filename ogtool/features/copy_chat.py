@@ -13,6 +13,7 @@ the second to the second, and the last group covers every remaining target.
 from __future__ import annotations
 
 import random
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -601,32 +602,70 @@ def pick(accounts: list[str], budget: dict[str, int], limit: int,
     return None
 
 
+def poll_count(minutes: int, interval: int) -> int:
+    """How many collector polls a capture window gets.
+
+    ``collectionIntervalMinutes`` is "how often the collector polls", so a window
+    of N minutes with an interval of M polls ``ceil(N/M)`` times; no interval
+    means one poll that takes the whole window.
+    """
+    if interval <= 0 or minutes <= 0:
+        return 1
+    return max(1, -(-minutes // interval))
+
+
 def capture(sender: object, account: str, sources: list[str], minutes: int,
-            limit: int = CAPTURE_LIMIT) -> tuple[list[SourceMessage],
-                                                list[tuple[str, str]]]:
+            limit: int = CAPTURE_LIMIT, interval: int = 0,
+            sleep: object = time.sleep) -> tuple[list[SourceMessage],
+                                                 list[tuple[str, str]]]:
     """Read the source chats live; ``(messages, failures)``.
 
     The capture window is the page's ``copy back for N minutes``; the limit is
     how many messages one source gives up so a busy chat cannot stall the run.
     A source that cannot be read is returned as a failure with its code, not
     dropped: an empty capture and an empty chat must not look the same.
+
+    With ``collectionIntervalMinutes`` set the window is polled instead of read
+    once: each poll asks for the last ``interval`` minutes and repeats are
+    dropped by message id, so a slow chat is still collected as it arrives.
     """
-    entries: list[str] = []
     media_dir = str(Path("data") / "logs" / "copied")
     failures: list[tuple[str, str]] = []
-    for source in sources:
-        target = parse_many([source], "group")[0]
-        result = sender.history(account, target,  # type: ignore[attr-defined]
-                                minutes=minutes, limit=limit,
-                                media_dir=media_dir)
-        if not result.ok:
-            failures.append((source, result.code))
-            print(f"source={source} capture failed: {result.code}")
-            continue
-        entries.extend(result.items)
-        print(f"source={source} captured {len(result.items)}/{result.count} "
-              f"minutes={minutes} limit={limit}")
-    return parse_source_messages(entries), failures
+    seen: set[tuple[str, int]] = set()
+    messages: list[SourceMessage] = []
+    polls = poll_count(minutes, interval)
+    window = interval if interval > 0 else minutes
+    for index in range(polls):
+        if index:
+            print(f"collector: sleeping {interval} min before poll "
+                  f"{index + 1}/{polls}")
+            sleep(interval * 60)  # type: ignore[operator]
+        entries: list[str] = []
+        for source in sources:
+            target = parse_many([source], "group")[0]
+            result = sender.history(account, target,  # type: ignore[attr-defined]
+                                    minutes=window, limit=limit,
+                                    media_dir=media_dir)
+            if not result.ok:
+                if (source, result.code) not in failures:
+                    failures.append((source, result.code))
+                print(f"source={source} capture failed: {result.code}")
+                continue
+            entries.extend(result.items)
+            print(f"source={source} captured {len(result.items)}/{result.count} "
+                  f"minutes={window} limit={limit}"
+                  + (f" poll={index + 1}/{polls}" if polls > 1 else ""))
+        fresh = 0
+        for message in parse_source_messages(entries):
+            key = (message.peer, message.message_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            messages.append(message)
+            fresh += 1
+        if polls > 1:
+            print(f"collector poll {index + 1}/{polls}: +{fresh} new message(s)")
+    return messages, failures
 
 
 def run(config: CopyConfig, ctx: RunContext) -> int:
@@ -636,7 +675,8 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     failures: list[tuple[str, str]] = []
     if ctx.live and not config.messages and config.sources and accounts:
         messages, failures = capture(sender, labels[0], config.sources,
-                                     config.capture_minutes)
+                                     config.capture_minutes,
+                                     interval=config.collection_interval_minutes)
         config = replace(config, messages=messages)
         if not messages and failures:
             print("ERROR: no source history was captured: "

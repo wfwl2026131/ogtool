@@ -174,3 +174,54 @@ def test_a_dry_run_never_touches_the_history(ctx, capsys):
                         messages=from_config({"messages": ["@src|@a|task file"]}))
     assert run(config, ctx) == 0
     assert "source=@src captured" not in capsys.readouterr().out
+
+
+def test_poll_count_spans_the_capture_window():
+    """``collectionIntervalMinutes`` divides the window into polls."""
+    from ogtool.features.copy_chat import poll_count
+
+    assert poll_count(0, 5) == 1
+    assert poll_count(60, 0) == 1
+    assert poll_count(60, 15) == 4
+    assert poll_count(50, 20) == 3
+
+
+def test_capture_polls_and_drops_repeats():
+    from ogtool.features.copy_chat import capture
+    from ogtool.senders import SendResult
+
+    class PollSender:
+        def __init__(self):
+            self.calls = 0
+
+        def history(self, account, target, minutes=0, limit=0, media_dir=""):
+            self.calls += 1
+            result = SendResult(ok=True)
+            result.count = 2
+            # The same two messages come back on both polls.
+            result.items = ["@s1|chan|first", "@s1|chan|second"]
+            return result
+
+    sender = PollSender()
+    slept: list[float] = []
+    messages, failures = capture(sender, "acc1", ["@s1"], 30, interval=15,
+                                 sleep=slept.append)
+    assert sender.calls == 2
+    assert slept == [900]
+    assert len(messages) == 2
+    assert failures == []
+
+
+def test_a_single_poll_window_sleeps_not_at_all():
+    from ogtool.features.copy_chat import capture
+    from ogtool.senders import SendResult
+
+    class OneSender:
+        def history(self, account, target, minutes=0, limit=0, media_dir=""):
+            result = SendResult(ok=True)
+            result.items = ["@s1|chan|first"]
+            return result
+
+    slept: list[float] = []
+    capture(OneSender(), "acc1", ["@s1"], 30, interval=0, sleep=slept.append)
+    assert slept == []
