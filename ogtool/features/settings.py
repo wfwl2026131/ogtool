@@ -135,7 +135,21 @@ def knobs(runtime: Any) -> list[tuple[str, str, Any]]:
     return [(key, label, getattr(runtime, key, 0)) for key, label, _ in KNOBS]
 
 
-def problems(runtime: Any) -> list[str]:
+#: The hidden gate the page documents only in its own error text: a restart
+#: interval below one hour is refused unless this marker file exists.
+DEBUG_MARKER = "tdata/.debug"
+MIN_RESTART_SECONDS = 3600.0
+
+
+def debug_gate_open(path: object = None) -> bool:
+    """Whether the reference's ``tdata/.debug`` marker is present."""
+    from pathlib import Path as _Path
+
+    base = _Path(str(path)) if path else _Path(".")
+    return (base / DEBUG_MARKER).exists()
+
+
+def problems(runtime: Any, data_dir: object = None) -> list[str]:
     """Every knob that cannot be used as it stands, with its rule."""
     found: list[str] = []
     for key, label, rule in KNOBS:
@@ -144,6 +158,13 @@ def problems(runtime: Any) -> list[str]:
             found.append(f"{key} ({label}) must be above 0, is {value}")
         elif rule == "non_negative" and value < 0:
             found.append(f"{key} ({label}) must not be negative, is {value}")
+    interval = getattr(runtime, "restart_interval", 0.0)
+    if 0 < interval < MIN_RESTART_SECONDS and not debug_gate_open(data_dir):
+        # The page's own sentence, kept verbatim: it is the only place the
+        # marker file is ever mentioned in the interface.
+        found.append(
+            f"restart_interval ({MIN_RESTART_SECONDS:.0f}s floor) cannot be "
+            f"less than 1 hour unless {DEBUG_MARKER} exists, is {interval}")
     return found
 
 
@@ -162,7 +183,8 @@ def restart_due(runtime: Any) -> str:
 def run(config: SettingsPageConfig, ctx: RunContext) -> int:
     runtime = ctx.settings.runtime
     rows = knobs(runtime)
-    found = problems(runtime)
+    data_dir = getattr(ctx.settings, "data_dir", None)
+    found = problems(runtime, data_dir)
 
     if config.as_json:
         # The flat object is the shape the page has always emitted, one key per
@@ -188,6 +210,8 @@ def run(config: SettingsPageConfig, ctx: RunContext) -> int:
     for key, label, value in rows:
         print(f"  {key:<18} {label:<14} {value}")
     print(f"restart due at: {restart_due(runtime)}")
+    print(f"debug gate ({DEBUG_MARKER}): "
+          f"{'open' if debug_gate_open(data_dir) else 'closed'}")
     print("overload check: "
           f"{'off' if runtime.tp_overload <= 0 else runtime.tp_overload}")
     for line in found:
@@ -200,5 +224,6 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(SettingsPageConfig.from_dict(raw), ctx)
 
 
-__all__ = ["FEATURE", "FLAGS", "KNOBS", "SettingsPageConfig", "knobs", "main",
-           "overload_line", "problems", "restart_due", "run"]
+__all__ = ["DEBUG_MARKER", "FEATURE", "FLAGS", "GLOBAL_KEYS", "KNOBS",
+           "SettingsPageConfig", "debug_gate_open", "knobs", "main",
+           "overload_line", "problems", "read_global", "restart_due", "run"]

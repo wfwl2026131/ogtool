@@ -1,8 +1,12 @@
-"""#14 video manage - join or leave one group with a set of accounts.
+"""#14 video manage - drive a group call with a set of accounts.
 
-Fields: the group link, the operation interval in milliseconds, the progress
-counter, and the joined account list.  The page has join / leave / stop / refresh;
-``--action`` picks one and the run reports progress per account.
+The dump's own action list for the page is Join / Leave / Speak / Mic off, with
+an "(in call)" state, a "[Muted]" marker and "success cached group call slug"
+next to the config keys ``operation`` and ``intervalMs`` in
+``video_manage_config.json``. So this is group-call automation, not video
+upload: an account joins the call, can be switched to speaking or muted, and
+the group call slug is cached so a second action on the same group does not
+resolve it again.
 """
 
 from __future__ import annotations
@@ -35,11 +39,15 @@ TITLE = "#14 视频管理"
 JOIN = "join"
 LEAVE = "leave"
 STOP = "stop"
+SPEAK = "speak"
+MIC_OFF = "mic_off"
 
 FLAGS = (
     Flag("--link", "link", str, "the group link"),
     Flag("--interval-ms", "interval_ms", int, "operation interval in milliseconds"),
-    Flag("--action", "action", str, "join|leave|stop"),
+    Flag("--action", "action", str, "join|leave|speak|mic_off|stop"),
+    Flag("--operation", "operation", str,
+         "the page's operation key (join|leave|speak|mic_off|stop)"),
 )
 
 
@@ -49,6 +57,9 @@ class VideoConfig:
     link: str = ""
     interval_ms: int = 1000
     action: str = JOIN
+    #: ``success cached group call slug``: the slug kept between actions so a
+    #: second call action on the same group reuses it.
+    slug_cache: dict[str, str] = field(default_factory=dict)
     task_name: str = "video-manage"
 
     @classmethod
@@ -58,9 +69,12 @@ class VideoConfig:
         link = text(data, "link")
         if not link:
             raise ConfigError(f"{SECTION}: give the group link (--link)")
-        action = str(data.get("action") or JOIN).lower()
-        if action not in (JOIN, LEAVE, STOP):
-            raise ConfigError(f"{SECTION}: action must be join, leave or stop")
+        action = str(data.get("operation") or data.get("action") or JOIN).lower()
+        allowed = (JOIN, LEAVE, SPEAK, MIC_OFF, STOP)
+        if action not in allowed:
+            raise ConfigError(
+                f"{SECTION}: operation must be one of "
+                f"{', '.join(allowed)}, is {action}")
         return cls(
             account_labels=accounts_of(raw, data),
             link=link,
@@ -84,6 +98,8 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
                  + (" (no account bound, plan only)" if not accounts else ""),
     )
 
+    action_label = {SPEAK: "已发言账号", MIC_OFF: "已闭麦账号"}.get(
+        config.action, "")
     if config.action == STOP:
         print("进度：0/0  已加入账号：-")
         print("PLAN: 0 operations, stop requested before the first account")
@@ -96,7 +112,8 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
     joined: list[str] = []
     # The page keeps one list for whichever action ran; saying "joined" after a
     # leave would be a plain lie in the run report.
-    done_label = "已加入账号" if config.action == JOIN else "已退出账号"
+    done_label = (action_label or
+                  ("已加入账号" if config.action == JOIN else "已退出账号"))
     failed = 0
     waited = 0.0
     for index, account in enumerate(labels, start=1):
@@ -104,8 +121,19 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
             delay = config.interval_ms / 1000.0
             waited += delay
             pause(ctx, delay)
-        result = (sender.join(account, target) if config.action == JOIN
-                  else sender.leave(account, target))
+        if config.action in (JOIN, LEAVE):
+            result = (sender.join(account, target) if config.action == JOIN
+                      else sender.leave(account, target))
+        else:
+            # Speak / mic-off are call actions: the same group call is reused
+            # across accounts, which is what the page's cached slug is for.
+            if target.ref not in config.slug_cache:
+                config.slug_cache[target.ref] = (f"call:"
+                                                 f"{target.ref.lstrip('@')}")
+                print(f"group call slug cached: "
+                      f"{config.slug_cache[target.ref]}")
+            result = sender.join_call(account, target,
+                                      muted=config.action == MIC_OFF)
         if result.ok:
             joined.append(account)
             record(ctx, task, account, target.ref, True)
@@ -128,4 +156,5 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(VideoConfig.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["JOIN", "LEAVE", "STOP", "TITLE", "VideoConfig", "main", "run"]
+__all__ = ["JOIN", "LEAVE", "MIC_OFF", "SPEAK", "STOP", "TITLE", "VideoConfig",
+           "main", "run"]

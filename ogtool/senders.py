@@ -490,6 +490,13 @@ class DryRunSender:
     def leave(self, account: str, target: Target) -> SendResult:
         return self._answer("leave", account, f"target={target.display()}")
 
+    def join_call(self, account: str, target: Target,
+                  muted: bool = False) -> SendResult:
+        """Enter the group call, muted or speaking, like the page's two actions."""
+        return self._answer(
+            "call", account,
+            f"target={target.display()} muted={1 if muted else 0}")
+
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
         return self._answer("invite", account,
                             f"group={group.display()} member={member.display()}")
@@ -795,6 +802,55 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("leave", account, action)
+
+    def join_call(self, account: str, target: Target,
+                  muted: bool = False) -> SendResult:
+        """Join the group call, then set the microphone state.
+
+        ``JoinGroupCallRequest`` needs the call itself, which is a
+        ``phone.getGroupCall``-shaped lookup; the join is done first and the mic
+        is set on the participant entry, because joining unmuted is what the
+        page's "Speak" does while "Mic off" joins muted.
+        """
+
+        def action() -> SendResult:
+            from telethon.tl.functions.phone import (
+                EditGroupCallParticipantRequest,
+                JoinGroupCallRequest,
+            )
+            from telethon.tl.types import (
+                DataJSON,
+                PhoneCall,
+            )
+
+            client = self._client(account)
+            chat = chat_entity(client, target)
+            call: PhoneCall | None = None
+            try:
+                from telethon.tl.functions.channels import (
+                    GetFullChannelRequest,
+                )
+
+                resolved = client(GetFullChannelRequest(chat))
+                call_holder = getattr(
+                    getattr(resolved, "full_chat", None), "call", None)
+                if call_holder is not None:
+                    call = getattr(call_holder, "call", None) or call_holder
+            except Exception:  # noqa: BLE001 - the call may simply not exist
+                call = None
+            if call is None:
+                return SendResult(ok=False, code="GROUP_CALL_NOT_FOUND",
+                                  detail="no group call on this chat")
+            params = DataJSON(data="{}")
+            client(JoinGroupCallRequest(call=call, join_as="me",
+                                        params=params, muted=muted,
+                                        video_stopped=True))
+            if not muted:
+                client(EditGroupCallParticipantRequest(
+                    call=call, participant="me", muted=False))
+            return SendResult(ok=True)
+
+        return self._guard("call", account, action)
 
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
         """Add one user to a group, joining a private link first if needed."""
