@@ -83,13 +83,18 @@ def header_lines(tree: ast.Module) -> set[int]:
 
 
 def cls_lines(tree: ast.Module) -> set[int]:
-    """Lines of every ``cls(...)`` / ``SomeConfig(...)`` constructor call."""
+    """Lines of every declaration: ``cls(...)``, ``SomeConfig(...)``, ``Flag(...)``.
+
+    A ``Flag("--x", "x", ...)`` line names the field once for the CLI parser; that
+    is a declaration, not a consumer, and counting it would mark every
+    CLI-exposed field as used.
+    """
     lines: set[int] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         name = node.func.id if isinstance(node.func, ast.Name) else ""
-        if name == "cls" or name.endswith("Config"):
+        if name in ("cls", "Flag") or name.endswith("Config"):
             for sub in ast.walk(node):
                 if hasattr(sub, "lineno"):
                     lines.add(sub.lineno)
@@ -106,8 +111,11 @@ def audit(path: pathlib.Path) -> list[str]:
     constructed = cls_lines(tree)
     used: set[str] = set()
     for node in ast.walk(tree):
+        # ``config.x`` in the run, and ``self.x`` inside a Config method (gap(),
+        # validate()): both are real reads, neither is the header.
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) \
-                and node.value.id == "config" and node.lineno not in printed:
+                and node.value.id in ("config", "self") \
+                and node.lineno not in printed:
             used.add(node.attr)
     dead = []
     for name in fields:

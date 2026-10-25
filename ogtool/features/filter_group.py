@@ -13,6 +13,7 @@ the needs approval bucket; without it the same answer is reported as can send.
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
@@ -28,6 +29,7 @@ from ._common import (
     accounts_of,
     close_task,
     header,
+    lanes_by,
     name_of,
     num,
     open_task,
@@ -168,26 +170,79 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
     sender = ctx.sender()
     stats = Stats(total=len(config.groups))
     buckets: dict[str, list[str]] = {name: [] for name in BUCKETS}
-    current = "-"
-    previous_account = ""
     waited = 0.0
 
+    lanes = lanes_by(lambda pair: labels[(pair[0] - 1) % len(labels)],
+                     list(enumerate(config.groups, start=1)), config.threads)
+
+    def resolve_serial() -> list[str]:
+        """The page's round robin: one group at a time, accounts in turn."""
+        nonlocal waited
+        marked: list[str] = []
+        previous_account = ""
+        for index, group in enumerate(config.groups, start=1):
+            account = labels[(index - 1) % len(labels)]
+            if index > 1:
+                delay = gap(config, previous_account, account)
+                waited += delay
+                pause(ctx, delay)
+            previous_account = account
+            target = parse_many([group], "group")[0]
+            result = sender.resolve(account, target)
+            bucket = classify(result.code, result.ok, config.deep)
+            marked.append(bucket)
+            stats.record(result.ok, result.code)
+            record(ctx, task, account, group, result.ok, result.code, bucket)
+            print(f"[{index:03d}/{stats.total:03d}] {group} -> {bucket}"
+                  f"{'' if result.ok else ' (' + result.code + ')'}")
+        return marked
+
+    def resolve_lane(lane: list[tuple[int, str]],
+                     account: str) -> list[tuple[int, str]]:
+        """One lane: a fixed account and its own pacing, so the gap is real."""
+        marked: list[tuple[int, str]] = []
+        previous = ""
+        for index, group in lane:
+            if previous:
+                delay = gap(config, previous, account)
+                locked = stats_lock
+                with locked:
+                    waited_box.append(delay)
+                pause(ctx, delay)
+            previous = account
+            target = parse_many([group], "group")[0]
+            result = sender.resolve(account, target)
+            bucket = classify(result.code, result.ok, config.deep)
+            marked.append((index, bucket))
+            stats.record(result.ok, result.code)
+            record(ctx, task, account, group, result.ok, result.code, bucket)
+            print(f"[{index:03d}/{stats.total:03d}] {group} -> {bucket}"
+                  f"{'' if result.ok else ' (' + result.code + ')'}")
+        return marked
+
+    results: dict[int, str] = {}
+    if len(lanes) > 1:
+        print(f"threads: {len(lanes)} lanes, one account each")
+        import threading
+
+        stats_lock = threading.Lock()
+        waited_box: list[float] = []
+        with ThreadPoolExecutor(max_workers=len(lanes)) as pool:
+            futures = [
+                pool.submit(resolve_lane, lane, labels[position % len(labels)])
+                for position, lane in enumerate(lanes)
+            ]
+            for future in futures:
+                for index, bucket in future.result():
+                    results[index] = bucket
+        waited += sum(waited_box)
+    else:
+        for (index, _), bucket in zip(enumerate(config.groups, start=1),
+                                      resolve_serial(), strict=False):
+            results[index] = bucket
     for index, group in enumerate(config.groups, start=1):
-        current = group
-        account = labels[(index - 1) % len(labels)]
-        if index > 1:
-            delay = gap(config, previous_account, account)
-            waited += delay
-            pause(ctx, delay)
-        previous_account = account
-        target = parse_many([group], "group")[0]
-        result = sender.resolve(account, target)
-        bucket = classify(result.code, result.ok, config.deep)
-        buckets[bucket].append(group)
-        stats.record(result.ok, result.code)
-        record(ctx, task, account, group, result.ok, result.code, bucket)
-        print(f"[{index:03d}/{stats.total:03d}] {group} -> {bucket}"
-              f"{'' if result.ok else ' (' + result.code + ')'}")
+        buckets[results.get(index, "")].append(group)
+    current = config.groups[-1] if config.groups else "-"
 
     print(f"当前：{current}")
     for name in BUCKETS:

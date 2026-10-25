@@ -144,3 +144,25 @@ def test_a_group_without_a_link_still_gets_a_row(ctx, live, tmp_path):
     assert run(config, ctx) == 0
     written = (tmp_path / "filter_group_invite_links.txt").read_text()
     assert "@g1\tCHAT_ADMIN_REQUIRED" in written
+
+
+def test_threads_split_the_groups_over_one_account_per_lane(ctx, live,
+                                                           ok_sender, capsys):
+    """``threads``: the page's concurrency, one account to a lane."""
+    live(ok_sender)
+    config = GroupConfig(groups=["@g1", "@g2", "@g3", "@g4"], threads=2,
+                         global_interval_ms=0, account_interval_ms=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "threads: 2 lanes, one account each" in output
+    assert output.count("-> 可发言") == 4
+
+
+def test_one_thread_keeps_the_round_robin_and_its_intervals(ctx, live,
+                                                            ok_sender, slept):
+    live(ok_sender)
+    config = GroupConfig(groups=["@g1", "@g2", "@g3"], threads=1,
+                         global_interval_ms=500, account_interval_ms=800)
+    assert run(config, ctx) == 0
+    # Two accounts in turn: the global gap applies, not the per-account one.
+    assert slept == [0.5, 0.5]
