@@ -35,7 +35,6 @@ from ._common import (
     record_ai,
     section,
     targets_of,
-    text,
 )
 
 FEATURE = "ai_comment"
@@ -90,13 +89,25 @@ class CommentConfig:
     likes_min: int = 0
     likes_max: int = 3
     emoji_probability: int = 30
-    like_emoji: str = ""
+    #: ``likeEmojis``: a pool, one of which is picked per reaction.
+    like_emojis: list[str] = field(default_factory=list)
     max_chars: int = 80
     poll_interval: float = 60.0
     poll_recent: int = 3
     extra_prompts: list[str] = field(default_factory=list)
     posts: int = 3
     messages: list[SourceMessage] = field(default_factory=list)
+    #: ``onlyRootForwardedFromChannel``: only comment on channel forwards.
+    only_root_forwarded: bool = False
+    #: ``commentRequired`` / ``likeRequired``: a post is not "done" until both.
+    require_comment: bool = True
+    require_like: bool = False
+    #: ``commentConcurrentPosts``: posts handled at the same time.
+    concurrent_posts: int = 1
+    #: ``commentRetryMax``: retries for one post before it is given up on.
+    retry_max: int = 0
+    #: ``stickerSendPercent`` / ``emojiSendPerMille``: sticker vs emoji share.
+    sticker_send_percent: int = 0
     seed: int | None = None
     task_name: str = "ai-comment"
 
@@ -113,24 +124,58 @@ class CommentConfig:
             targets=targets,
             comment_interval_min=num(data, "comment_interval_min", 15.0),
             comment_interval_max=num(data, "comment_interval_max", 45.0),
-            per_post_min=num(data, "per_post_min", 1, kind=int, minimum=0),
-            per_post_max=num(data, "per_post_max", 2, kind=int, minimum=0),
-            positive_ratio=min(100, num(data, "positive_ratio", 60, kind=int,
-                                        minimum=0)),
-            likes_min=num(data, "likes_min", 0, kind=int, minimum=0),
-            likes_max=num(data, "likes_max", 3, kind=int, minimum=0),
+            per_post_min=num(data, "comment_min_count",
+                             num(data, "per_post_min", 1), kind=int,
+                             minimum=0),
+            per_post_max=num(data, "comment_max_count",
+                             num(data, "per_post_max", 2), kind=int,
+                             minimum=0),
+            positive_ratio=min(100, num(data, "positive_ratio_percent",
+                                        num(data, "positive_ratio", 60),
+                                        kind=int, minimum=0)),
+            likes_min=num(data, "like_min_count",
+                          num(data, "likes_min", 0), kind=int, minimum=0),
+            likes_max=num(data, "like_max_count",
+                          num(data, "likes_max", 3), kind=int, minimum=0),
             emoji_probability=min(100, num(data, "emoji_probability", 30,
                                            kind=int, minimum=0)),
-            like_emoji=text(data, "like_emoji"),
-            max_chars=num(data, "max_chars", 80, kind=int, minimum=1),
-            poll_interval=num(data, "poll_interval", 60.0),
-            poll_recent=num(data, "poll_recent", 3, kind=int, minimum=1),
+            like_emojis=_emoji_pool(data),
+            max_chars=num(data, "comment_max_chars",
+                          num(data, "max_chars", 80), kind=int, minimum=1),
+            poll_interval=num(data, "poll_interval_seconds",
+                              num(data, "poll_interval", 60.0)),
+            poll_recent=num(data, "poll_scan_recent_count",
+                            num(data, "poll_recent", 3), kind=int, minimum=1),
+            only_root_forwarded=bool(
+                data.get("only_root_forwarded_from_channel", False)),
+            require_comment=bool(data.get("comment_required", True)),
+            require_like=bool(data.get("like_required", False)),
+            concurrent_posts=num(data, "comment_concurrent_posts", 1,
+                                 kind=int, minimum=1),
+            retry_max=num(data, "comment_retry_max", 0, kind=int, minimum=0),
+            sticker_send_percent=min(100, num(data, "sticker_send_percent", 0,
+                                              kind=int, minimum=0)),
             extra_prompts=blocks(data, "extra_prompts"),
             posts=num(data, "posts", 3, kind=int, minimum=0),
             messages=from_config(data),
             seed=int(seed) if seed is not None and str(seed).strip() else None,
             task_name=name_of(raw, data, "ai-comment"),
         )
+
+
+def _emoji_pool(data: dict) -> list[str]:
+    """``likeEmojis`` (a list or a raw blob) with ``likeEmoji`` as one entry."""
+    raw = data.get("like_emojis")
+    pool: list[str] = []
+    if isinstance(raw, (list, tuple)):
+        pool = [str(item).strip() for item in raw if str(item).strip()]
+    elif raw:
+        pool = [part.strip() for part in str(raw).replace(",", " ").split()
+                if part.strip()]
+    single = str(data.get("like_emoji") or "").strip()
+    if single and single not in pool:
+        pool.insert(0, single)
+    return pool
 
 
 @dataclass(slots=True)
@@ -271,8 +316,15 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         positive_ratio=f"{config.positive_ratio}%",
         likes=f"{config.likes_min}-{config.likes_max}",
         emoji_probability=f"{config.emoji_probability}%",
+        reactions=(", ".join(config.like_emojis) or DEFAULT_REACTION),
         max_chars=config.max_chars,
         poll_recent=config.poll_recent,
+        concurrent_posts=config.concurrent_posts,
+        retry_max=config.retry_max or "-",
+        required=("comment" + ("+like" if config.require_like else "")
+                  if config.require_comment else
+                  ("like" if config.require_like else "none")),
+        only_root_forwarded=("yes" if config.only_root_forwarded else "no"),
         queue=stats.total,
     )
 
@@ -312,8 +364,10 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
             for like in range(max(0, spec.likes)):
                 if like >= len(labels):
                     break  # an account may leave only one reaction per post
+                reaction = (random.choice(config.like_emojis)
+                            if config.like_emojis else DEFAULT_REACTION)
                 one = sender.react(labels[like], target, spec.post_id,
-                                   config.like_emoji or DEFAULT_REACTION)
+                                   reaction)
                 if not one.ok:
                     print(f"reaction on {spec.post_id} from {labels[like]} "
                           f"-> {one.code}")

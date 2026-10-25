@@ -70,6 +70,20 @@ class AiChatConfig:
     topics: list[str] = field(default_factory=list)
     news: list[str] = field(default_factory=list)
     count: int = 3
+    #: ``topicMinCount``: at least this many topics in one batch.
+    topic_min_count: int = 0
+    #: ``topicStickiness``: how long one topic stays the subject, in percent.
+    topic_stickiness: int = 0
+    #: ``chatTextMaxCharsLevels``: sentence length ladder.
+    text_max_chars_levels: list[int] = field(default_factory=list)
+    #: ``stickerSendPerMille`` / ``emojiSendPerMille``: per-thousand shares.
+    sticker_send_per_mille: int = 0
+    emoji_send_per_mille: int = 0
+    #: ``replyEnabled`` / ``allowFollowUp``: answer what is said to us.
+    reply_enabled: bool = False
+    allow_follow_up: bool = False
+    #: ``patternRefreshSeconds``: how often the wording is refreshed.
+    pattern_refresh_seconds: int = 0
     task_name: str = "ai-chat"
 
     @classmethod
@@ -91,6 +105,21 @@ class AiChatConfig:
             topics=blocks(data, "topics"),
             news=_news(data.get("news")),
             count=num(data, "count", 3, kind=int, minimum=1),
+            topic_min_count=num(data, "topic_min_count", 0, kind=int,
+                                minimum=0),
+            topic_stickiness=min(100, num(data, "topic_stickiness", 0,
+                                          kind=int, minimum=0)),
+            text_max_chars_levels=[int(item) for item in
+                                   data.get("chat_text_max_chars_levels") or []
+                                   if str(item).strip().isdigit()],
+            sticker_send_per_mille=num(data, "sticker_send_per_mille", 0,
+                                       kind=int, minimum=0),
+            emoji_send_per_mille=num(data, "emoji_send_per_mille", 0,
+                                     kind=int, minimum=0),
+            reply_enabled=bool(data.get("reply_enabled", False)),
+            allow_follow_up=bool(data.get("allow_follow_up", False)),
+            pattern_refresh_seconds=num(data, "pattern_refresh_seconds", 0,
+                                        kind=int, minimum=0),
             task_name=name_of(raw, data, "ai-chat"),
         )
 
@@ -165,6 +194,17 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
         insert_probability=f"{config.insert_probability}%",
         news_items=len(config.news),
         topics=len(config.topics),
+        topic_min_count=config.topic_min_count or "-",
+        topic_stickiness=f"{config.topic_stickiness}%"
+                         if config.topic_stickiness else "-",
+        text_levels=(", ".join(str(item) for item in
+                               config.text_max_chars_levels) or "-"),
+        per_mille=f"sticker {config.sticker_send_per_mille} / "
+                  f"emoji {config.emoji_send_per_mille}",
+        replies=("on" if config.reply_enabled else "off")
+                + (" +follow-up" if config.allow_follow_up else ""),
+        refresh=f"{config.pattern_refresh_seconds}s"
+                if config.pattern_refresh_seconds else "-",
         queue=len(lines),
     )
 

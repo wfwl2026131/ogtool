@@ -90,6 +90,14 @@ class CloneConfig:
     keywords: list[str] = field(default_factory=list)
     replacements: list[tuple[str, str]] = field(default_factory=list)
     messages: list[SourceMessage] = field(default_factory=list)
+    #: ``passive``: follow the source instead of scanning it once.
+    passive: bool = False
+    #: ``onlyRootForwardedFromChannel``: only clone channel forwards.
+    only_root_forwarded: bool = False
+    #: ``lastSourceMessageId``: continue after this message.
+    last_source_message_id: int = 0
+    #: ``totalCloned``: the counter the page shows; carried for the export.
+    total_cloned: int = 0
     task_name: str = "ai-clone"
 
     @classmethod
@@ -106,7 +114,7 @@ class CloneConfig:
             sources=sources,
             targets=targets,
             mode=text(data, "mode", "copy"),
-            mapping=parse_mapping(data.get("mapping")),
+            mapping=mapping_of(data),
             max_items=num(data, "max_items", 10, kind=int, minimum=1),
             poll_interval=num(data, "poll_interval", 60.0),
             post_interval_min=num(data, "post_interval_min", 10.0),
@@ -116,6 +124,12 @@ class CloneConfig:
             keywords=_split(data.get("filter_keywords")),
             replacements=parse_replacements(_lines(data.get("replacements"))),
             messages=from_config(data),
+            passive=bool(data.get("passive", False)),
+            only_root_forwarded=bool(
+                data.get("only_root_forwarded_from_channel", False)),
+            last_source_message_id=num(data, "last_source_message_id", 0,
+                                       kind=int, minimum=0),
+            total_cloned=num(data, "total_cloned", 0, kind=int, minimum=0),
             task_name=name_of(raw, data, "ai-clone"),
         )
 
@@ -131,6 +145,32 @@ def _lines(value: object) -> list[str]:
 def _split(value: object) -> list[str]:
     return [part.strip() for part in ",".join(_lines(value)).split(",")
             if part.strip()]
+
+
+def mapping_of(data: dict) -> dict[str, str]:
+    """The source->target map, from either ``mapping`` or the page's ``pairs``.
+
+    ``pairs`` is a list of objects (``sourceRaw`` / ``targetRaw`` / ``pairIndex``)
+    in the stored task; a run may also hand over the same list of
+    ``source=target`` strings, which is what the field holds in practice.
+    """
+    mapping = parse_mapping(data.get("mapping"))
+    pairs = data.get("pairs")
+    if not pairs:
+        return mapping
+    for pair in pairs if isinstance(pairs, (list, tuple)) else [pairs]:
+        if isinstance(pair, dict):
+            source = str(pair.get("sourceRaw") or pair.get("source") or "")
+            target = str(pair.get("targetRaw") or pair.get("target") or "")
+            if source.strip() and target.strip():
+                mapping[source.strip()] = target.strip()
+            continue
+        body = str(pair).strip()
+        if "=" in body:
+            left, right = body.split("=", 1)
+            if left.strip() and right.strip():
+                mapping[left.strip()] = right.strip()
+    return mapping
 
 
 def parse_mapping(value: object) -> dict[str, str]:
@@ -243,6 +283,9 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
         targets=len(config.targets),
         mode=config.mode,
         mapping=len(config.mapping),
+        passive="on" if config.passive else "off",
+        only_root_forwarded=("yes" if config.only_root_forwarded else "no"),
+        resume_after=config.last_source_message_id or "-",
         max_items=config.max_items,
         post_interval=f"{config.post_interval_min:.0f}-"
                       f"{config.post_interval_max:.0f}s",
