@@ -20,6 +20,7 @@ import io
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -243,10 +244,37 @@ def check_live(base: Path | None = None,
     output = (run_smoke.stdout or "") + (run_smoke.stderr or "")
     lines = [line for line in output.splitlines() if line.strip()]
     summary = lines[-1] if lines else "no output"
-    if run_smoke.returncode == 0:
-        return summary, []
-    return summary, [f"live_smoke exited {run_smoke.returncode}\n"
-                     f"{output[-800:]}"]
+    problems = gate_problems(here) if run_smoke.returncode == 0 else [
+        f"live_smoke exited {run_smoke.returncode}\n{output[-800:]}"]
+    return summary, problems
+
+
+def gate_problems(here: Path) -> list[str]:
+    """The write gate has to refuse, and proving it must cost nobody a message.
+
+    A case file is handed to the smoke script through ``OGTOOL_LIVE_CASES`` with a
+    case marked ``write: true``; the run must exit 2 saying it refused, without
+    reaching the account. This is the half of the gate that a passing suite can
+    never show, and it was only ever checked by hand.
+    """
+    with tempfile.TemporaryDirectory(prefix="og-gate-") as scratch:
+        path = Path(scratch) / "live_cases.yaml"
+        path.write_text("cases:\n  - name: gate-canary\n"
+                        "    args: [mass_send, --live]\n"
+                        "    write: true\n", encoding="utf-8")
+        run = subprocess.run(  # noqa: S603 - our own script, fixed arguments
+            [sys.executable, str(here / "scripts/live_smoke.py")],
+            cwd=here, capture_output=True, text=True, timeout=120, check=False,
+            env={**_env(), "PYTHONPATH": str(here),
+                 "OGTOOL_LIVE_CASES": str(path)})
+    said = (run.stdout or "") + (run.stderr or "")
+    if run.returncode != 2:
+        return [f"the write gate did not refuse (exit {run.returncode})\n"
+                f"{said[-400:]}"]
+    if "refusing" not in said or "gate-canary" not in said:
+        return [f"the write gate refused without naming the case\n"
+                f"{said[-400:]}"]
+    return []
 
 
 def run(settings: Any, only: list[str] | None = None,

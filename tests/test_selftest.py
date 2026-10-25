@@ -135,3 +135,16 @@ def test_a_stale_live_block_is_reported(tmp_path):
     _line, problems = selftest.check_docs(
         (note,), expected=1, block="")
     assert any("live block is stale" in item for item in problems), problems
+
+
+def test_the_gate_check_names_a_refusal(monkeypatch):
+    """The live check proves the gate refuses, without sending anything."""
+    from pathlib import Path
+
+    from ogtool import selftest as module
+
+    here = Path(__file__).resolve().parents[1]
+    # The real case file may name real chats; the gate probe uses its own.
+    monkeypatch.setenv("OGTOOL_LIVE_CASES", str(here / "does-not-exist.yaml"))
+    problems = module.gate_problems(here)
+    assert problems == [], problems

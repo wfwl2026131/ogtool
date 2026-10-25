@@ -23,6 +23,7 @@ Usage::
 from __future__ import annotations
 
 import json
+import os
 import re
 import signal
 import socket
@@ -100,7 +101,14 @@ def config_path() -> Path:
 
 
 def extra_path() -> Path:
-    return ROOT / "live_cases.yaml"
+    """Where the per-machine cases live (``OGTOOL_LIVE_CASES`` overrides).
+
+    The override exists so a check can hand this script a case file of its own -
+    the write gate is worth verifying without editing the file that names real
+    chats.
+    """
+    chosen = os.environ.get("OGTOOL_LIVE_CASES", "").strip()
+    return Path(chosen) if chosen else ROOT / "live_cases.yaml"
 
 
 def load_extra(path: Path) -> tuple[list[Case], list[str]]:
