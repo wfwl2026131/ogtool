@@ -167,10 +167,19 @@ CREATE TABLE IF NOT EXISTS todo_archive (
     priority    INTEGER NOT NULL DEFAULT 1,
     is_blacklist INTEGER NOT NULL DEFAULT 0,
     last_msg_at INTEGER NOT NULL DEFAULT 0,
+    -- The dump's archive table carries the topic reply id and declares
+    -- UNIQUE(peer_id, msg_id, receiver_id); both are kept here.
+    topic_msg_id INTEGER NOT NULL DEFAULT 0,
     archived_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_todo_status ON todo_list(status, priority);
+-- The dump names these three indexes on from_todo_list itself.
+CREATE INDEX IF NOT EXISTS idx_todo_from_id ON todo_list(from_id);
+CREATE INDEX IF NOT EXISTS idx_todo_peer_id ON todo_list(peer_id);
+CREATE INDEX IF NOT EXISTS idx_todo_chat_type ON todo_list(chat_type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_archive_key
+    ON todo_archive(peer_id, msg_id, receiver_id);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
 """
 
@@ -620,15 +629,16 @@ class Store:
             moved = 0
             for row in rows:
                 self._conn.execute(
-                    """INSERT INTO todo_archive
+                    """INSERT OR REPLACE INTO todo_archive
                            (from_id, from_name, peer_id, peer_name,
                             receiver_id, msg_id, msg, media, priority,
-                            is_blacklist, last_msg_at, archived_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            is_blacklist, last_msg_at, topic_msg_id,
+                            archived_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (row["from_id"], row["from_name"], row["peer_id"],
                      row["peer_name"], row["receiver_id"], row["msg_id"],
                      row["msg"], row["media"], row["priority"],
-                     row["is_blacklist"], row["last_msg_at"], now),
+                     row["is_blacklist"], row["last_msg_at"], 0, now),
                 )
                 self._conn.execute("DELETE FROM todo_list WHERE id = ?",
                                    (row["id"],))

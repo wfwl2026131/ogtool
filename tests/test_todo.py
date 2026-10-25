@@ -157,3 +157,32 @@ def test_a_new_message_reopens_a_done_row_but_not_an_archived_one(store):
     store.set_todo_status([row], DONE)
     store.upsert_todo({"from_id": "u1", "peer_id": "@p", "msg": "b"})
     assert store.list_todos()[0]["status"] == PENDING
+
+
+def test_the_archive_table_matches_the_dump_s_declaration(store):
+    """``from_todo_archive`` declares UNIQUE(peer_id, msg_id, receiver_id) and a
+    ``topic_msg_id`` column (1723664-1723680). Both are present here."""
+    columns = {row["name"] for row in store._conn.execute(
+        "PRAGMA table_info(todo_archive)")}
+    assert "topic_msg_id" in columns
+    indexes = {row["name"] for row in store._conn.execute(
+        "PRAGMA index_list(todo_archive)")}
+    assert "idx_todo_archive_key" in indexes
+
+
+def test_archiving_the_same_message_twice_does_not_duplicate_it(store):
+    row = store.upsert_todo({"from_id": "u1", "peer_id": "@p", "msg_id": 7,
+                             "msg": "hi"})
+    store.set_todo_status([row], DONE)
+    store.archive_todos([row])
+    again = store.upsert_todo({"from_id": "u1", "peer_id": "@p", "msg_id": 7,
+                               "msg": "hi again"})
+    store.set_todo_status([again], DONE)
+    store.archive_todos([again])
+    assert len(store.list_todo_archive()) == 1
+
+
+def test_the_dump_s_three_indexes_exist(store):
+    names = {row["name"] for row in store._conn.execute(
+        "PRAGMA index_list(todo_list)")}
+    assert {"idx_todo_from_id", "idx_todo_peer_id", "idx_todo_chat_type"} <= names
