@@ -36,6 +36,11 @@ class Evidence:
     #: says a page was proven once; the date says whether that proof is old
     #: enough to be worth re-running.
     last_live: str = ""
+    #: Live receipts that were NOT counted as proof, and why the newest one lost.
+    #: Without this a page looks like it was never run on a real account when in
+    #: fact it was run and recorded nothing - two very different problems.
+    rejected: int = 0
+    why: str = ""
 
     @property
     def level(self) -> str:
@@ -122,10 +127,24 @@ def _only_local_failures(body: dict[str, Any]) -> bool:
 
 def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
     """(live, dry, newest live finish) for one feature."""
+    live, dry, newest, _, _ = count_receipts_full(directory, feature)
+    return live, dry, newest
+
+
+def count_receipts_full(directory: Path, feature: str) -> tuple[
+        int, int, str, int, str]:
+    """The same counts, plus how many live runs were rejected and why.
+
+    The why is read from the newest rejected receipt, so the note can say
+    "recorded no rows" or "SESSION_BUSY 2" instead of leaving a dry grade
+    unexplained.
+    """
     live = dry = 0
+    rejected = 0
+    why = ""
     newest = ""
     if not directory.exists():
-        return 0, 0, newest
+        return 0, 0, newest, 0, ""
     for path in directory.glob(f"{feature}-*.json"):
         try:
             body = json.loads(path.read_text(encoding="utf-8"))
@@ -136,16 +155,25 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
             # one synthetic row about the run, not a row per chat or account.
             # Counting it as live evidence would let 'settings' claim real-machine
             # proof for reading a config file.
-            if (int(body.get("task_id") or 0) > 0
-                    and not _has_no_rows(body)
-                    and not _only_local_failures(body)):
+            task_id = int(body.get("task_id") or 0)
+            if task_id <= 0:
+                pass
+            elif _has_no_rows(body):
+                rejected += 1
+                why = "recorded no rows"
+            elif _only_local_failures(body):
+                rejected += 1
+                codes = body.get("codes")
+                why = (", ".join(str(code) for code in sorted(codes))
+                       if isinstance(codes, dict) and codes else "local failure")
+            else:
                 live += 1
             stamp = str(body.get("finished_at") or "")
             if stamp > newest:
                 newest = stamp
         elif body.get("mode") == "dry-run":
             dry += 1
-    return live, dry, newest
+    return live, dry, newest, rejected, why
 
 
 def stamp_short(stamp: str) -> str:
@@ -214,24 +242,27 @@ def collect(root: Path, directory: Path,
     swept = sweep_features(root / "logs" / "sweep.json")
     rows: list[Evidence] = []
     for feature in features:
-        live, dry, newest = count_receipts(directory, feature)
+        live, dry, newest, rejected, why = count_receipts_full(directory,
+                                                              feature)
         if dry == 0 and swept.get(feature):
             # The sweep's receipts are written into throwaway directories, so
             # its summary file is the only place that remembers they happened.
             dry = 1
         rows.append(Evidence(feature, count_tests(root, feature), live, dry,
-                             newest))
+                             newest, rejected, why if not live else ""))
     return rows
 
 
 def render(rows: list[Evidence]) -> str:
     """The table, plus the one summary line the checks parse."""
     width = max((len(row.feature) for row in rows), default=7)
-    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  last"]
+    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  last"
+             f"  why"]
     for row in rows:
         lines.append(f"{row.feature:{width}s}  {row.level:5s}  "
                      f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}  "
-                     f"{age(row.last_live) or '-':>5s}")
+                     f"{age(row.last_live) or '-':>5s}  "
+                     f"{row.why or ''}".rstrip())
     counts = {level: sum(1 for row in rows if row.level == level)
               for level in LEVELS}
     lines.append(f"evidence: {len(rows)} feature(s), "
@@ -245,7 +276,8 @@ def as_dict(rows: list[Evidence]) -> dict[str, Any]:
         "features": [
             {"feature": row.feature, "level": row.level, "tests": row.tests,
              "live": row.live, "dry": row.dry, "last_live": row.last_live,
-             "age": age(row.last_live)}
+             "age": age(row.last_live), "rejected": row.rejected,
+             "why": row.why}
             for row in rows
         ],
         "counts": {level: sum(1 for row in rows if row.level == level)
@@ -302,12 +334,14 @@ def live_markdown(rows: list[Evidence], directory: Path) -> str:
 
 def as_markdown(rows: list[Evidence]) -> str:
     """A paste-ready table, so the note never carries a number nobody derived."""
-    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 最近真机 |",
-             "|---|---|---|---|---|---|"]
+    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 最近真机 | 真机被排除 |",
+             "|---|---|---|---|---|---|---|"]
     for row in rows:
         lines.append(f"| `{row.feature}` | {row.level} | {row.tests} | "
                      f"{row.live} | {row.dry} | "
-                     f"{stamp_short(row.last_live)} |")
+                     f"{stamp_short(row.last_live)} | "
+                     f"{row.rejected or ''}"
+                     f"{('（' + row.why + '）') if row.why else ''} |")
     counts = as_dict(rows)["counts"]
     lines.append("")
     lines.append(f"共 {len(rows)} 项：" + "，".join(

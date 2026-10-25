@@ -110,7 +110,8 @@ def test_json_output_is_the_same_rows():
     body = evidence.as_dict(rows)
     assert body["features"][0] == {"feature": "a", "level": "live",
                                    "tests": 2, "live": 1, "dry": 0,
-                                   "last_live": "", "age": ""}
+                                   "last_live": "", "age": "", "rejected": 0,
+                                   "why": ""}
     assert body["counts"]["live"] == 1
     assert body["counts"]["dry"] == 1
 
@@ -231,3 +232,23 @@ def test_a_locked_session_is_excluded_by_the_codes_not_by_rows(tmp_path):
     body["codes"] = {"SESSION_BUSY": 1, "CHANNEL_PRIVATE": 1}
     (tmp_path / "mass_send-2.json").write_text(json.dumps(body))
     assert evidence.count_receipts(tmp_path, "mass_send")[0] == 1
+
+
+def test_a_rejected_live_run_says_why(tmp_path):
+    """'dry' with live receipts is a different problem from 'never run'."""
+    (tmp_path / "watch_chat-1.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 7, "results": {"total": 0}, "rows": []}))
+    live, dry, _, rejected, why = evidence.count_receipts_full(
+        tmp_path, "watch_chat")
+    assert (live, dry, rejected) == (0, 0, 1)
+    assert why == "recorded no rows"
+
+
+def test_the_rejection_reason_names_the_codes(tmp_path):
+    (tmp_path / "mass_send-1.json").write_text(json.dumps(
+        {"mode": "live", "task_id": 8,
+         "results": {"planned": 0, "sent": 0, "failed": 2, "total": 2},
+         "codes": {"SESSION_BUSY": 2}}))
+    _, _, _, rejected, why = evidence.count_receipts_full(tmp_path, "mass_send")
+    assert rejected == 1
+    assert why == "SESSION_BUSY"

@@ -233,16 +233,31 @@ def order(body: dict[str, Any]) -> tuple[str, int]:
     return (str(body.get("finished_at") or ""), int(body.get("task_id") or 0))
 
 
+def codes_text(body: dict[str, Any]) -> str:
+    """The failure codes of one receipt, as ``CODE 2, CODE 1``, or ''.
+
+    A receipt that says ``failed 1`` and nothing else cannot be argued with: the
+    code is what separates "the server said no" from "the session was locked".
+    """
+    codes = body.get("codes")
+    if not isinstance(codes, dict) or not codes:
+        return ""
+    return ", ".join(f"{code} {int(count)}"
+                     for code, count in sorted(codes.items()))
+
+
 def line(body: dict[str, Any]) -> str:
     """One receipt as one readable line, the way the sweep prints features."""
     verdict = str(body.get("verdict") or "?")
+    codes = codes_text(body)
     return (f"{str(body.get('finished_at') or '')[:19]}  "
             f"{str(body.get('feature') or '?'):16s} "
             f"{str(body.get('mode') or '?'):8s} "
             f"planned {int(body.get('planned') or 0):4d}  "
             f"ok {int(body.get('ok') or 0):4d}  "
             f"failed {int(body.get('failed') or 0):4d}  "
-            f"waited {float(body.get('waited') or 0):7.1f}s  {verdict}")
+            f"waited {float(body.get('waited') or 0):7.1f}s  {verdict}"
+            + (f"  [{codes}]" if codes else ""))
 
 
 #: The receipt fields a diff compares besides the knobs.
