@@ -322,3 +322,36 @@ def test_rows_without_an_account_are_counted_not_named(settings, store):
     assert body["accounts"] == []
     assert body["unattributed"] == 2
     assert receipts.validate(body) == []
+
+
+def test_auto_reply_writes_a_task_receipt_not_a_run_receipt(ctx, settings):
+    """It used store.finish_task by hand, so the CLI's thin run receipt was all
+    that existed - no rules, no planned count, no accounts."""
+    from ogtool.features.auto_reply import AutoReplyConfig
+    from ogtool.features.auto_reply import run as reply_run
+
+    config = AutoReplyConfig(rules=[], simulate=["@demo|ana|hi"])
+    assert reply_run(config, ctx) == 0
+    bodies, problems = receipts.read_all(receipts.receipt_dir(settings))
+    assert problems == []
+    assert [body["feature"] for body in bodies] == ["auto_reply"]
+    body = bodies[0]
+    assert body["task_id"] > 0
+    assert body["verdict"] == "dry-run"
+    assert "rules" in body["knobs"]
+
+
+def test_mass_send_writes_a_task_receipt_too(ctx, settings):
+    from ogtool.features.mass_send import MassSendConfig
+    from ogtool.features.mass_send import run as send_run
+
+    raw = {"accounts": ["acc1"], "targets": {"inline": "@demo"},
+           "content": {"text": "x"}, "send": {"threads": 1,
+                                              "account_interval_min": 0.0,
+                                              "account_interval_max": 0.0}}
+    config = MassSendConfig.from_dict(raw, settings, dry_run=True)
+    assert send_run(config, ctx) == 0
+    bodies, _problems = receipts.read_all(receipts.receipt_dir(settings))
+    assert [body["feature"] for body in bodies] == ["mass_send"]
+    assert bodies[0]["task_id"] > 0
+    assert bodies[0]["planned"] >= 1

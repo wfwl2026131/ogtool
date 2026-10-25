@@ -15,6 +15,7 @@ from datetime import UTC, datetime, timedelta
 from ..limiter import format_duration
 from ..runtime import RunContext
 from . import register
+from ._common import close_task, open_task, record
 
 FEATURE = "auto_reply"
 
@@ -156,24 +157,21 @@ def run(config: AutoReplyConfig, ctx: RunContext) -> int:
     print(f"PLAN: {replies} replies, {len(accounts)} accounts, "
           f"ETA {format_duration(0)}")
 
-    task = ctx.store.create_task(
-        config.task_name, FEATURE,
-        config={"rules": [rule.name for rule in config.rules],
-                "duplicate_seconds": config.duplicate_seconds},
-        mode="live" if ctx.live else "dry-run",
-        planned=replies,
-    )
-    ctx.task_id = task.id
+    task = open_task(ctx, config.task_name, FEATURE,
+                     {"rules": [rule.name for rule in config.rules],
+                      "keywords": [rule.keywords for rule in config.rules],
+                      "duplicate_seconds": config.duplicate_seconds,
+                      "enabled": config.enabled}, replies)
 
     if not ctx.live:
         print("dry-run: no session was opened")
-        ctx.store.finish_task(task.id, status="dry-run")
+        close_task(ctx, task, ok=0, failed=0, status="dry-run")
         return 0
 
-    return _run_live(config, ctx, task.id)
+    return _run_live(config, ctx, task)
 
 
-def _run_live(config: AutoReplyConfig, ctx: RunContext, task_id: int) -> int:
+def _run_live(config: AutoReplyConfig, ctx: RunContext, task) -> int:
     """Attach a handler to every account and answer until interrupted."""
     try:
         from telethon import events
@@ -202,8 +200,8 @@ def _run_live(config: AutoReplyConfig, ctx: RunContext, task_id: int) -> int:
             return
         await event.reply(rule.reply)
         answered += 1
-        ctx.store.add_result(task_id, "auto", str(event.chat_id), "sent",
-                             detail=rule.name)
+        record(ctx, task, "auto", str(event.chat_id),
+               True, detail=rule.name)
 
     for client in clients:  # pragma: no cover - live only
         client.add_event_handler(handler)
@@ -215,7 +213,10 @@ def _run_live(config: AutoReplyConfig, ctx: RunContext, task_id: int) -> int:
     except KeyboardInterrupt:
         ctx.note("interrupted by the operator", "warn")
     finally:
-        ctx.store.finish_task(task_id, sent=answered)
+        # The receipt is written here, not by the CLI's fallback: a run receipt
+        # has no rules, no planned count and no accounts, which is everything
+        # this page is about.
+        close_task(ctx, task, ok=answered, failed=0)
     print(f"DONE: replies={answered}")
     return 0
 

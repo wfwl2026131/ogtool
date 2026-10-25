@@ -41,7 +41,7 @@ from ..senders import PEER_FLOOD, Content
 from ..store import Account
 from ..targets import Target, collect
 from . import register
-from ._common import lanes_by, pause
+from ._common import close_task, lanes_by, open_task, pause
 
 FEATURE = "mass_send"
 
@@ -396,20 +396,15 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     print(f"PLAN: {len(planned)} messages, {len(accounts)} accounts, "
           f"ETA {format_duration(eta)}")
 
-    task = ctx.store.create_task(
-        config.task_name, FEATURE,
-        config={"targets": [t.ref for t in config.targets],
-                "limits": asdict(config.limits)},
-        mode="dry-run" if not ctx.live else "live",
-        planned=len(planned),
-    )
-    ctx.task_id = task.id
+    task = open_task(ctx, config.task_name, FEATURE,
+                     {"targets": [t.ref for t in config.targets],
+                      "limits": asdict(config.limits)}, len(planned))
     if not ctx.live:
         for item in planned:
             ctx.store.add_result(task.id, item.account, item.target.ref,
                                  "planned")
         print("dry-run: nothing was sent")
-        ctx.store.finish_task(task.id, sent=0, status="dry-run")
+        close_task(ctx, task, ok=0, failed=0, status="dry-run")
         return 0
 
     sender = ctx.sender()
@@ -458,7 +453,7 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
             for future in [pool.submit(send_lane, lane) for lane in lanes]:
                 future.result()
     sent, failed = counters["sent"], counters["failed"]
-    ctx.store.finish_task(task.id, sent=sent, failed=failed)
+    close_task(ctx, task, ok=sent, failed=failed)
     print(f"DONE: sent={sent} failed={failed}")
     return 0 if not failed else 1
 
