@@ -104,6 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="command", required=True)
     _accounts_parser(subs)
 
+    _botlinks_parser(subs)
+
     for name in ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
         _common(feature)
@@ -171,6 +173,17 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     login.add_argument("--live", action="store_true", help="the default here")
 
 
+def _botlinks_parser(subs: argparse._SubParsersAction) -> None:
+    from .botlinks import FLAGS
+
+    parser = subs.add_parser(
+        "bot_links",
+        help="batch open bot links with the console's own start/startapp rules")
+    _common(parser)
+    for flag in FLAGS:
+        parser.add_argument(flag.name, **flag.to_kwargs())
+
+
 def _common(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--task", default=None, help="task YAML merged over config")
     parser.add_argument("--accounts", nargs="*", default=None,
@@ -228,6 +241,11 @@ def _overrides(args: argparse.Namespace) -> dict[str, Any]:
         return raw | _mass_send_overrides(args)
     if args.command == "auto_reply":
         return raw | _auto_reply_overrides(args)
+    if args.command == "bot_links":
+        from .botlinks import FLAGS, SECTION
+
+        values = section(args, FLAGS)
+        return raw | ({SECTION: values} if values else {})
     if args.command == "keep_online":
         online: dict[str, Any] = {}
         if args.interval is not None:
@@ -342,6 +360,23 @@ def run(argv: list[str] | None = None) -> int:
     ctx = RunContext(settings=settings, store=store, log=logger,
                      live=bool(args.live),
                      script=Script.parse(raw.get("simulate_responses")))
+    if args.command == "bot_links":
+        from .botlinks import BotLinkConfig, BotLinkError
+        from .botlinks import run as run_bot_links
+
+        try:
+            config = BotLinkConfig.from_dict(raw, settings, live=ctx.live)
+        except BotLinkError as error:
+            print(f"ERROR: {error}")
+            ctx.close()
+            store.close()
+            return 2
+        try:
+            return run_bot_links(config, ctx)
+        finally:
+            ctx.close()
+            store.close()
+
     try:
         return get(args.command)(raw, ctx)
     except ConfigError as error:

@@ -300,6 +300,43 @@ def _resolve_media(config: MassSendConfig) -> None:
         config.content.media = str(candidate)
 
 
+#: The page's own validation sentences, kept as they are worded in the dump
+#: (1741448-1453). The two bound checks are refusals; the rest are warnings the
+#: page still lets you start with.
+LIMIT_CEILING = 100_000
+
+
+def validate(config: MassSendConfig, accounts: list[str],
+             targets: list[object]) -> tuple[list[str], list[str]]:
+    """``(errors, warnings)`` for the page's own configuration rules."""
+    errors: list[str] = []
+    warnings: list[str] = []
+    limits = config.limits
+    for name, value in (("success", limits.success_cap),
+                        ("attempt", limits.exec_cap)):
+        if value < 0 or value > LIMIT_CEILING:
+            errors.append(f"Per-account {name} limit must be between 0 and "
+                          f"{LIMIT_CEILING}, is {value}")
+    if (limits.success_cap and limits.exec_cap
+            and limits.exec_cap < limits.success_cap):
+        errors.append("Per-account attempt limit must be greater than or "
+                      "equal to success limit")
+    total = len(targets)
+    if limits.success_cap and limits.success_cap > total:
+        warnings.append(f"Per-account limit ({limits.success_cap}) is higher "
+                        f"than total targets ({total}), limit will not be "
+                        f"effective")
+    if config.load_balance and len(accounts) == 1:
+        warnings.append("Load balancing is enabled but only one account is "
+                        "selected")
+    capacity = limits.daily_limit * max(1, len(accounts))
+    if limits.daily_limit and capacity < total:
+        warnings.append(f"Daily limit implies it may take multiple days: "
+                        f"capacityPerDay={capacity} targets, "
+                        f"totalTargets={total}")
+    return errors, warnings
+
+
 def run(config: MassSendConfig, ctx: RunContext) -> int:
     if not config.targets:
         ctx.note("no targets given", "error")
@@ -309,6 +346,15 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels or None)
     if not accounts:
         ctx.note("no account bound, the plan is printed without one", "warn")
+
+    errors, warnings = validate(config, [a.label for a in accounts],
+                               config.targets)
+    for message in errors:
+        print(f"ERROR: {message}")
+    if errors:
+        return 2
+    for message in warnings:
+        print(f"warning: {message}")
 
     _resolve_media(config)
     content, source = build_content(

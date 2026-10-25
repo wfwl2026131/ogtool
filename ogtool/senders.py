@@ -490,6 +490,17 @@ class DryRunSender:
     def leave(self, account: str, target: Target) -> SendResult:
         return self._answer("leave", account, f"target={target.display()}")
 
+    def start_bot(self, account: str, bot: str, param: str = "") -> SendResult:
+        """Open a bot link, with its ``start`` parameter when there is one."""
+        return self._answer("start_bot", account,
+                            f"bot=@{bot} param={param or '-'}")
+
+    def request_mini_app(self, account: str, bot: str, param: str = "",
+                         app: str = "") -> SendResult:
+        """Trigger a mini app, the ``startapp`` half of the same link."""
+        return self._answer("mini_app", account,
+                            f"bot=@{bot} app={app or '-'} param={param or '-'}")
+
     def join_call(self, account: str, target: Target,
                   muted: bool = False) -> SendResult:
         """Enter the group call, muted or speaking, like the page's two actions."""
@@ -802,6 +813,40 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("leave", account, action)
+
+    def start_bot(self, account: str, bot: str, param: str = "") -> SendResult:
+        """``messages.StartBotRequest``: the same call a ``t.me/bot?start=`` link makes.
+
+        The reference's own log line for this is "silently started bot %2" -
+        silent because the bot's answer is not read, only the start is sent.
+        """
+
+        def action() -> SendResult:
+            import os
+
+            from telethon.tl.functions.messages import StartBotRequest
+
+            client = self._client(account)
+            peer = client.get_input_entity("me")
+            client(StartBotRequest(bot=bot, peer=peer,
+                                   random_id=int.from_bytes(
+                                       os.urandom(8), "big", signed=True),
+                                   start_param=param or ""))
+            return SendResult(ok=True)
+
+        return self._guard("start_bot", account, action)
+
+    def request_mini_app(self, account: str, bot: str, param: str = "",
+                         app: str = "") -> SendResult:
+        """A ``startapp`` link is a start with the app name in the parameter.
+
+        Telegram has one entry point for both, so this reuses ``start_bot`` and
+        documents that the app name travels in the same ``start_param`` slot.
+        """
+        combined = param or app
+        if app and param:
+            combined = f"{app}___{param}"
+        return self.start_bot(account, bot, combined)
 
     def join_call(self, account: str, target: Target,
                   muted: bool = False) -> SendResult:
