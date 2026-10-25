@@ -80,6 +80,11 @@ class AiChatConfig:
     text_max_chars_levels: list[int] = field(default_factory=list)
     #: ``stickerSendPerMille`` / ``emojiSendPerMille``: per-thousand shares.
     sticker_send_per_mille: int = 0
+    #: ``stickerShortName`` / ``stickerEmoji``: the pool a sticker comes from and
+    #: the emoji that picks one out of it (the page logs "sending sticker by
+    #: shortName: %3, emoji: %4").
+    sticker_sets: list[str] = field(default_factory=list)
+    sticker_emoji: str = ""
     emoji_send_per_mille: int = 0
     #: ``replyEnabled`` / ``allowFollowUp``: answer what is said to us.
     reply_enabled: bool = False
@@ -116,6 +121,12 @@ class AiChatConfig:
                                    if str(item).strip().isdigit()],
             sticker_send_per_mille=num(data, "sticker_send_per_mille", 0,
                                        kind=int, minimum=0),
+            sticker_sets=[item for item in
+                          data.get("sticker_short_names") or []
+                          if str(item).strip()]
+                         or ([text(data, "sticker_short_name")]
+                             if text(data, "sticker_short_name") else []),
+            sticker_emoji=text(data, "sticker_emoji"),
             emoji_send_per_mille=num(data, "emoji_send_per_mille", 0,
                                      kind=int, minimum=0),
             reply_enabled=bool(data.get("reply_enabled", False)),
@@ -144,6 +155,8 @@ class Line:
     topic: str
     news: str = ""
     delay: float = 0.0
+    #: ``stickerSendPerMille`` drew this line: it is a sticker, not a sentence.
+    sticker: bool = False
 
 
 def plan(config: AiChatConfig, labels: list[str],
@@ -177,7 +190,9 @@ def plan(config: AiChatConfig, labels: list[str],
             account = labels[len(lines) % len(labels)] if labels else "-"
             delay = generator.uniform(config.interval_min, config.interval_max)
             lines.append(Line(account=account, target=target, topic=topic,
-                              news=news, delay=delay))
+                              news=news, delay=delay,
+                              sticker=(generator.randrange(1000)
+                                       < config.sticker_send_per_mille)))
     return lines
 
 
@@ -329,6 +344,30 @@ def read_news(sender: object, account: str, channel: str,
             if message.text.strip()]
 
 
+def send_sticker(sender: object, config: AiChatConfig, line: Line,
+                 target: Target) -> object | None:
+    """``stickerSendPerMille``: the sticker path, or ``None`` to fall back to text.
+
+    The page logs "sticker intent not matched, skip" when the drawn sticker has
+    nowhere to come from, and that is what happens here too: no set, or a set
+    that cannot be resolved, means the line is spoken instead - with a line of
+    output saying so, so a text-only "sticker run" is never silent.
+    """
+    if not config.sticker_sets:
+        print("sticker intent not matched, skip (no sticker set is configured)")
+        return None
+    outcome = getattr(sender, "send_sticker", None)
+    if outcome is None:
+        print("sticker intent not matched, skip (this sender has no sticker path)")
+        return None
+    result = outcome(line.account, target, config.sticker_sets,
+                     emoji=config.sticker_emoji)
+    if not result.ok:
+        print(f"sticker intent not matched, skip ({result.code}: {result.detail})")
+        return None
+    return result
+
+
 def run(config: AiChatConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -370,6 +409,7 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
     sender = ctx.sender()
     ai = ai_client(ctx)
     ok = failed = 0
+    stickers = 0
     waited = 0.0
     # ``patternRefreshSeconds``: the reference re-asks for a wording pattern on a
     # timer ("topic prompt changed, refresh pattern"), so a long run does not
@@ -386,6 +426,19 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
                   f"{tail} line(s) replanned")
             line = lines[index - 1]
         target: Target = parse_many([line.target], "custom")[0]
+        if line.sticker:
+            sticker = send_sticker(sender, config, line, target)
+            if sticker is not None:
+                paused = line.delay
+                pause(ctx, paused)
+                waited += paused
+                ok += 1
+                stickers += 1
+                record(ctx, task, line.account, target.display(), True,
+                       detail=f"sticker {sticker.detail}")
+                print(f"[{index:03d}/{len(lines):03d}] sticker "
+                      f"{line.account} -> {target.display()} {sticker.detail}")
+                continue
         generated = ai.generate(_prompt(ctx, line),
                                 fallback=_fallback(line))
         record_ai(ctx, task, line.account, "chat", generated)
@@ -422,6 +475,8 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
     print(f"Processed: {ok + failed} / {len(lines)}")
     print(f"ok: {ok}")
     print(f"failed: {failed}")
+    if config.sticker_send_per_mille:
+        print(f"stickers: {stickers}")
     if config.reply_enabled:
         print(f"replies: {answered} answered, {reply_failed} failed")
     fallback = sum(1 for call in ai.calls if not call.ok)

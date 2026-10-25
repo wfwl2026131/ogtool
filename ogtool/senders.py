@@ -477,13 +477,15 @@ class DryRunSender:
         return SendResult(ok=True)
 
     def send_sticker(self, account: str, target: Target, sets: list[str],
-                     reply_to: int = 0) -> SendResult:
-        """A sticker comment from the enabled sets; a dry run sends nothing."""
+                     reply_to: int = 0, emoji: str = "") -> SendResult:
+        """A sticker from the enabled sets; a dry run sends nothing."""
         self.calls.append(("sticker", f"{account}:{target.ref}"))
         if not sets:
             return SendResult(ok=False, code="STICKER_SET_MISSING",
                               detail="no sticker set is enabled")
-        return SendResult(ok=True, detail=f"set={random.choice(sets)}")
+        return SendResult(ok=True,
+                          detail=f"set={random.choice(sets)}"
+                                 + (f" emoji={emoji}" if emoji else ""))
 
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         self.sent.append((account, target, content))
@@ -658,6 +660,15 @@ def _save_media(message: Any, folder: str) -> str:
     except Exception:  # noqa: BLE001 - the text still gets copied
         return ""
     return str(path or "")
+
+
+def _sticker_emoji(document: Any) -> str:
+    """The emoji a sticker document advertises, empty when it has none."""
+    for attribute in getattr(document, "attributes", []) or []:
+        emoji = getattr(attribute, "alt", "")
+        if type(attribute).__name__ == "DocumentAttributeSticker" and emoji:
+            return str(emoji)
+    return ""
 
 
 def _forward_flags(message: Any) -> tuple[str, ...]:

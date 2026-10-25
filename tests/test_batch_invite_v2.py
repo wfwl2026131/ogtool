@@ -131,3 +131,14 @@ def test_a_zero_handler_ceiling_never_rests_it(ctx, scripted, capsys):
                             peer_flood_target_max_retries=0)
     run(config, ctx)
     assert "handler rested" not in capsys.readouterr().out
+
+
+def test_an_empty_plan_is_an_answer_not_a_crash(ctx, capsys):
+    """No lanes to build used to be IndexError: lanes[0] on an empty list."""
+    from ogtool.features.batch_invite_v2 import run
+
+    config = InviteV2Config(targets=["@g1"], contacts=[])
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "no jobs: nothing to invite" in output
+    assert "PLAN: 0 invites" in output

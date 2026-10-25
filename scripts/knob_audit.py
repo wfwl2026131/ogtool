@@ -43,9 +43,6 @@ KNOWN = {
         "operation_type and the two toggles",
     "ai_comment.poll_interval":
         "the passive listener's fallback polling cadence; this run is one-shot",
-    "ai_chat.sticker_send_per_mille":
-        "needs a sticker pool; this page carries none and Content.sticker "
-        "takes a path",
     "ai_clone.passive":
         "the reference's own long-running follow mode; this run is one-shot",
     "ai_clone.last_source_message_id":

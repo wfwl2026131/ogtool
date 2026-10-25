@@ -401,6 +401,13 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
     flood: list[str] = []
     timeouts: list[str] = []
     waited: list[float] = []
+    if not jobs:
+        # An empty plan is a legitimate answer (nothing matched the filters), not
+        # a crash: there is simply no lane to build.
+        print("no jobs: nothing to invite (check the target and member lists)")
+        print("PLAN: 0 invites, failed 0")
+        close_task(ctx, task, ok=0, failed=0)
+        return 0
     lanes = lanes_by(lambda job: job[0], jobs, config.threads)
     if len(lanes) > 1:
         print(f"threads: {len(lanes)} lanes, one handler account each")

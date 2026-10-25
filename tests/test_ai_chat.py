@@ -299,3 +299,78 @@ def test_a_dry_run_does_not_read_the_news_channel(ctx, capsys):
                           news_channel="@news", insert_probability=100)
     assert run(config, ctx) == 0
     assert "read from @news" not in capsys.readouterr().out
+
+
+def test_sticker_per_mille_is_drawn_in_the_plan():
+    """``stickerSendPerMille``: a per-thousand share, not a percentage."""
+    from ogtool.features.ai_chat import AiChatConfig, plan
+
+    config = AiChatConfig(targets=["@g1"], count=200, sticker_send_per_mille=1000,
+                          interval_min=0, interval_max=0)
+    lines = plan(config, ["acc1"], rng=__import__("random").Random(3))
+    assert all(line.sticker for line in lines)
+
+    config = AiChatConfig(targets=["@g1"], count=200, sticker_send_per_mille=0,
+                          interval_min=0, interval_max=0)
+    lines = plan(config, ["acc1"], rng=__import__("random").Random(3))
+    assert not any(line.sticker for line in lines)
+
+
+def test_a_sticker_with_no_set_is_skipped_and_the_line_is_spoken(ctx, capsys):
+    """The page's own words: 'sticker intent not matched, skip'."""
+    from ogtool.features.ai_chat import AiChatConfig, run
+
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hi"],
+                          sticker_send_per_mille=1000,
+                          interval_min=0, interval_max=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "sticker intent not matched, skip" in output
+    assert "stickers: 0" in output
+
+
+def test_a_configured_sticker_set_sends_a_sticker(ctx, live, capsys):
+    from ogtool.features.ai_chat import AiChatConfig, run
+    from ogtool.senders import SendResult
+
+    class StickerSender:
+        def __init__(self):
+            self.stickers = 0
+            self.texts = 0
+
+        def send_sticker(self, account, target, sets, reply_to=0, emoji=""):
+            self.stickers += 1
+            return SendResult(ok=True, detail=f"set={sets[0]} emoji={emoji}")
+
+        def send(self, account, target, content):
+            self.texts += 1
+            return SendResult(ok=True)
+
+        def close(self):
+            pass
+
+    sender = StickerSender()
+    live(sender)
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hi"],
+                          sticker_send_per_mille=1000,
+                          sticker_sets=["cats"], sticker_emoji="🔥",
+                          interval_min=0, interval_max=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert sender.stickers == 1
+    assert sender.texts == 0
+    assert "stickers: 1" in output
+
+
+def test_the_emoji_narrows_the_sticker_pool():
+    """'sending sticker by shortName: %3, emoji: %4' - the emoji is a filter."""
+    from ogtool.senders import _sticker_emoji
+
+    attribute = type("DocumentAttributeSticker", (), {})
+    attribute.alt = "\U0001F525"
+
+    class Doc:
+        attributes = [attribute()]
+
+    assert _sticker_emoji(Doc()) == "\U0001F525"
+    assert _sticker_emoji(type("D", (), {"attributes": []})()) == ""
