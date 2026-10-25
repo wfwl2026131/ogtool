@@ -241,3 +241,28 @@ def test_the_account_interval_still_wins_when_it_is_longer():
     first = Job(account="a", subject="@g1")
     same = Job(account="a", subject="@g2")
     assert gap(config, same, first, leaving=True) == 60.0
+
+
+def test_max_join_count_stops_the_assignment():
+    """``maxJoinCount`` is the page's ceiling on how many chats one run joins."""
+    from ogtool.features.batch_join import assign
+
+    targets = parse_many(["@g1", "@g2", "@g3", "@g4"], "group")
+    pairs = assign(["a", "b"], targets, 0, 0, max_join_count=3)
+    assert len(pairs) == 3
+    assert [target.ref for _, target in pairs] == ["@g1", "@g2", "@g3"]
+
+
+def test_zero_max_join_count_means_no_ceiling():
+    from ogtool.features.batch_join import assign
+
+    targets = parse_many(["@g1", "@g2", "@g3"], "group")
+    assert len(assign(["a"], targets, 0, 0, 0)) == 3
+
+
+def test_max_join_count_never_overrides_the_per_account_cap():
+    from ogtool.features.batch_join import assign
+
+    targets = parse_many(["@g1", "@g2", "@g3"], "group")
+    pairs = assign(["a", "b"], targets, 1, 0, max_join_count=3)
+    assert len(pairs) == 2

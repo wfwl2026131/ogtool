@@ -223,13 +223,21 @@ class JoinConfig:
 
 
 def assign(accounts: list[str], targets: list[Target],
-           per_account_cap: int, exec_cap: int) -> list[tuple[str, Target]]:
-    """Round robin, honouring the per account cap and the overall one."""
+           per_account_cap: int, exec_cap: int,
+           max_join_count: int = 0) -> list[tuple[str, Target]]:
+    """Round robin, honouring the per account cap and the overall one.
+
+    ``maxJoinCount`` is the page's own ceiling on how many chats one run may
+    join at all: with it set, the assignment stops there rather than trimming
+    afterwards, so the header's queue count is the number that gets tried.
+    """
     pairs: list[tuple[str, Target]] = []
     if not accounts or not targets:
         return pairs
     used: dict[str, int] = {account: 0 for account in accounts}
     for position, target in enumerate(targets):
+        if max_join_count and len(pairs) >= max_join_count:
+            break
         candidates = [a for a in accounts if not per_account_cap
                       or used[a] < per_account_cap]
         if not candidates:
@@ -297,7 +305,10 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
     pairs = assign(labels, targets, config.per_account_cap,
-                   config.exec_cap) if labels else []
+                   config.exec_cap, config.max_join_count) if labels else []
+    if config.max_join_count and len(targets) > config.max_join_count:
+        print(f"max_join_count: {config.max_join_count} of "
+              f"{len(targets)} target(s) planned")
     if not labels:
         pairs = [("-", target) for target in targets]
 
