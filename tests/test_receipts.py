@@ -163,3 +163,46 @@ def test_runs_show_prints_one_receipt(settings, capsys):
     assert '"feature": "proxy"' in output
     assert cli.run(["--config", _config(settings), "runs", "show",
                     "--feature", "nope"]) == 2
+
+
+def test_the_receipt_records_the_knobs_the_run_used(ctx, settings):
+    from ogtool.features.batch_rename import RenameConfig
+    from ogtool.features.batch_rename import run as rename_run
+
+    config = RenameConfig(names=[("A", ""), ("B", "")],
+                          operation_interval=0.0)
+    assert rename_run(config, ctx) == 0
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("batch_rename-*.json")).read_text())
+    assert body["knobs"]["entries"] == 2
+    assert body["knobs"]["file"] == ""
+    assert isinstance(body["knobs"], dict)
+    # ``lists`` is the per-list item counts, i.e. a dict - not a switch, so it is
+    # counted as dropped instead of being pasted in wholesale.
+    assert "lists" not in body["knobs"]
+    assert body["knobs_dropped"] >= 0
+
+
+def test_a_value_too_big_to_be_a_knob_is_dropped_not_copied():
+    from ogtool.receipts import KNOB_TEXT, knobs_of
+
+    kept, dropped = knobs_of(json.dumps({
+        "sources": ["@s1", "@s2"],
+        "messages": [{"peer": "@s1", "text": "x" * 50}] * 30,
+        "note": "y" * (KNOB_TEXT + 50),
+        "flat": True,
+    }))
+    assert kept["sources"] == ["@s1", "@s2"]
+    assert kept["flat"] is True
+    assert kept["note"].endswith("...")
+    assert len(kept["note"]) == KNOB_TEXT + 3
+    assert "messages" not in kept
+    assert dropped == 1
+
+
+def test_a_broken_config_blob_does_not_break_the_receipt():
+    from ogtool.receipts import knobs_of
+
+    assert knobs_of("{not json") == ({}, 1)
+    assert knobs_of(None) == ({}, 1)
+    assert knobs_of(["a"]) == ({}, 1)

@@ -25,8 +25,44 @@ VERSION = 1
 REQUIRED: tuple[str, ...] = (
     "version", "feature", "task", "task_id", "mode",
     "planned", "ok", "failed", "unaccounted",
-    "results", "verdict", "created_at", "finished_at",
+    "results", "knobs", "verdict", "created_at", "finished_at",
 )
+
+#: Longest string kept verbatim in ``knobs``; a prompt or a file body is not a
+#: knob and must not turn a receipt into a copy of the task file.
+KNOB_TEXT = 120
+
+
+def knobs_of(raw: Any) -> tuple[dict[str, Any], int]:
+    """The config a run actually stored, flattened to what a reader can use.
+
+    Every page hands ``open_task`` a small dict of the settings it is working
+    with ("file", "entries", "sources", ...). That dict is the honest answer to
+    "which switches was this run using" - unlike the task file, which also holds
+    values the page ignored. Long text and nested structures are dropped and
+    counted, not silently truncated to look complete.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            return {}, 1
+    if not isinstance(raw, dict):
+        return {}, 1
+    kept: dict[str, Any] = {}
+    skipped = 0
+    for key, value in raw.items():
+        if isinstance(value, (bool, int, float)):
+            kept[str(key)] = value
+        elif isinstance(value, str):
+            kept[str(key)] = value if len(value) <= KNOB_TEXT \
+                else value[:KNOB_TEXT] + "..."
+        elif isinstance(value, (list, tuple)) and len(value) <= 5 and all(
+                isinstance(item, (bool, int, float, str)) for item in value):
+            kept[str(key)] = list(value)
+        else:
+            skipped += 1
+    return kept, skipped
 
 VERDICTS = ("dry-run", "done", "stopped", "failed")
 
@@ -55,6 +91,7 @@ def build(store: Any, task: Any, *, ok: int, failed: int) -> dict[str, Any]:
         state = str(result["status"] or "")
         if state in results:
             results[state] += 1
+    knobs, dropped = knobs_of(row["config"] if row is not None else None)
     verdict = "dry-run" if mode == "dry-run" and not failed else (
         "failed" if failed else ("stopped" if status == "stopped" else "done"))
     return {
@@ -72,6 +109,11 @@ def build(store: Any, task: Any, *, ok: int, failed: int) -> dict[str, Any]:
         # them all - it can only say how much of the plan went unexplained.
         "unaccounted": planned - int(ok) - int(failed),
         "results": results,
+        # What the run was told to do. ``knobs_dropped`` counts the values too
+        # large to be a switch (a message list, a whole file body): a receipt
+        # that quietly copied them would stop being a summary.
+        "knobs": knobs,
+        "knobs_dropped": dropped,
         "verdict": verdict,
         "created_at": str(row["created_at"] or "") if row is not None else "",
         "finished_at": str(row["finished_at"] or "") if row is not None else "",
@@ -116,6 +158,8 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "failed": 0 if exit_code == 0 else 1,
         "unaccounted": 0,
         "results": {"planned": 0, "sent": 0, "failed": 0},
+        "knobs": {"live": live},
+        "knobs_dropped": 0,
         "verdict": ("failed" if exit_code else
                     ("dry-run" if not live else "done")),
         "created_at": stamp,
@@ -162,6 +206,12 @@ def validate(body: Any) -> list[str]:
             problems.append(f"{key} is not an integer: {value!r}")
         elif value < 0:
             problems.append(f"{key} is negative: {value}")
+    knobs = body.get("knobs")
+    if not isinstance(knobs, dict):
+        problems.append(f"knobs is not an object: {knobs!r}")
+    dropped = body.get("knobs_dropped", 0)
+    if not isinstance(dropped, int) or isinstance(dropped, bool) or dropped < 0:
+        problems.append(f"knobs_dropped is not a count: {dropped!r}")
     results = body.get("results")
     if not isinstance(results, dict):
         problems.append(f"results is not an object: {results!r}")
@@ -195,5 +245,5 @@ def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 __all__ = ["REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
-           "line", "order", "receipt_dir", "snapshot", "validate", "write",
-           "write_run"]
+           "KNOB_TEXT", "knobs_of", "line", "order", "receipt_dir",
+           "snapshot", "validate", "write", "write_run"]
