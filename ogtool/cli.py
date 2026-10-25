@@ -154,6 +154,17 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
                          help="seconds to wait for the bot's answer")
     spambot.add_argument("--apply", action="store_true",
                          help="write the verdict into the pool's kind column")
+    password = account_subs.add_parser(
+        "password",
+        help="batch modify cloud passwords for the selected accounts")
+    password.add_argument("--accounts", nargs="*", default=None)
+    password.add_argument("--new-password-file", default=None,
+                          help="file holding the new password (never a flag)")
+    password.add_argument("--current-password-file", default=None,
+                          help="file holding the current password, when there is one")
+    password.add_argument("--dry-run", action="store_true", help="the default")
+    password.add_argument("--live", action="store_true",
+                          help="really change the password (default: dry-run)")
     spambot.add_argument("--dry-run", action="store_true", help="the default")
     spambot.add_argument("--live", action="store_true",
                          help="really talk to @spambot (default: dry-run)")
@@ -393,6 +404,15 @@ def run(argv: list[str] | None = None) -> int:
         store.close()
 
 
+def _read_secret(path: str | None) -> str:
+    """Read a password from a file: a flag would land in the shell history."""
+    if not path:
+        return ""
+    from pathlib import Path as _Path
+
+    return _Path(path).expanduser().read_text(encoding="utf-8").strip()
+
+
 def _accounts(args: argparse.Namespace, settings: Settings) -> int:
     store = Store(settings.db_path)
     pool = _Pool(settings, store)
@@ -434,6 +454,23 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             store.set_account_kind(args.label, wanted)
             print(f"{args.label} kind={wanted or '-'}")
             return 0
+        if args.action == "password":
+
+            try:
+                new_password = _read_secret(args.new_password_file)
+                current_password = _read_secret(args.current_password_file)
+            except OSError as error:
+                print(f"ERROR: {error}")
+                return 2
+            rows = pool.passwords(args.accounts, new_password,
+                                  live=bool(args.live),
+                                  current_password=current_password)
+            for label, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print(f"Password change task finished. "
+                  f"Success: {done}/{len(rows)}")
+            return 0 if done == len(rows) else 1
         if args.action == "spambot":
             rows = pool.spambot(args.accounts, live=bool(args.live),
                                 wait=args.wait, apply=bool(args.apply))

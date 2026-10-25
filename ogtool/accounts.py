@@ -187,6 +187,61 @@ class AccountPool:
         return rows
 
 
+    def passwords(self, names: list[str] | None, new_password: str, live: bool,
+                  client_factory=None,
+                  current_password: str = "") -> list[tuple[str, bool, str]]:
+        """Batch modify cloud passwords for the selected accounts.
+
+        The console tool is the reference's own ("Batch modify cloud passwords
+        for selected accounts", 1737291) and so are its outcomes: "Account %1
+        modify successfully via %2", "Account %1 password updated and metadata
+        synced", "Password change task finished. Success: %1/%2".
+
+        The password never reaches the log or the terminal: rows carry the
+        account, a verdict and the reference's own sentence, nothing else.
+        """
+        rows: list[tuple[str, bool, str]] = []
+        if not new_password:
+            labels = [account.label for account in self.resolve(names)] or ["-"]
+            return [(label, False, "no new password given")
+                    for label in labels]
+        credentials = None
+        for account in self.resolve(names):
+            path = Path(account.session)
+            if not path.exists():
+                rows.append((account.label, False,
+                             f"{SESSION_NOT_FOUND}: {path}"))
+                continue
+            if not live:
+                rows.append((account.label, True,
+                             "dry-run: would change the cloud password"))
+                continue
+            if credentials is None:
+                try:
+                    credentials = _credentials(self.settings)
+                except ConfigError as error:
+                    rows.append((account.label, False, str(error)))
+                    continue
+            client = None
+            try:
+                client = _client(client_factory, str(path), credentials,
+                                 self.settings.proxy)
+                client.connect()
+                client.edit_2fa(current_password=current_password or None,
+                                new_password=new_password)
+                rows.append((account.label, True,
+                             f"Account {account.label} modify successfully "
+                             f"via 2fa"))
+            except Exception as error:  # noqa: BLE001 - reported as a row
+                rows.append((account.label, False,
+                             f"{type(error).__name__}: {error}"))
+            finally:
+                if client is not None:
+                    with contextlib.suppress(Exception):
+                        client.disconnect()
+        return rows
+
+
 def _latest_bot_reply(client, username: str, wait: float) -> str:
     """The newest text in that bot chat, polled for ``wait`` seconds.
 
