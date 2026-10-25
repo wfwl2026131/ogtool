@@ -29,6 +29,7 @@ from ._common import (
     close_task,
     header,
     name_of,
+    open_task,
     out_dir,
     section,
     text,
@@ -197,9 +198,11 @@ def run(config: ExportConfig, ctx: RunContext) -> int:
         masked_phones="yes",
     )
 
-    task = ctx.store.create_task(config.task_name, FEATURE,
-                                 {"accounts": sorted(label_set)}, len(rows))
-    ctx.task_id = task.id
+    # Keyword arguments, and through the shared helper: ``len(rows)`` in the
+    # mode slot is how a receipt ends up saying mode "2" with planned 0.
+    task = open_task(ctx, config.task_name, FEATURE,
+                     {"accounts": sorted(label_set), "formats": config.formats,
+                      "copy_sessions": config.copy_sessions}, len(rows))
 
     written: list[str] = []
     if "csv" in config.formats:

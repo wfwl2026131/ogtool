@@ -20,7 +20,7 @@ from ..runtime import RunContext
 from ..senders import Content
 from ..targets import TargetError, parse_many
 from . import register
-from ._common import close_task, header, name_of, section, text
+from ._common import close_task, header, name_of, open_task, section, text
 
 FEATURE = "auto_script"
 SECTION = "auto_script"
@@ -226,8 +226,8 @@ def run(config: ScriptConfig, ctx: RunContext) -> int:
         target=config.target or "-",
         variables=len(config.variables) or "-",
     )
-    task = ctx.store.create_task(config.task_name, FEATURE,
-                                 {"script": script.path}, len(plan))
+    task = open_task(ctx, config.task_name, FEATURE,
+                     {"script": script.path, "steps": len(plan)}, len(plan))
     ctx.task_id = task.id
     code = execute(config, ctx, script)
     close_task(ctx, task, ok=0, failed=0)

@@ -67,6 +67,9 @@ def knobs_of(raw: Any) -> tuple[dict[str, Any], int]:
 
 VERDICTS = ("dry-run", "done", "stopped", "failed")
 
+#: The only two modes a task row may carry.
+MODES = ("dry-run", "live")
+
 
 def receipt_dir(settings: Any) -> Path:
     """Where receipts live: next to the logs the task already writes."""
@@ -248,6 +251,11 @@ def validate(body: Any) -> list[str]:
     if not isinstance(body, dict):
         return [f"not an object: {type(body).__name__}"]
     problems = [f"missing {key}" for key in REQUIRED if key not in body]
+    # A mode that is not one of the two real ones means some caller put a count
+    # in that slot (mode "2" was a real receipt): the verdict can then never be
+    # trusted, so this belongs in the schema, not in a review.
+    if body.get("mode") not in MODES:
+        problems.append(f"mode is not dry-run/live: {body.get('mode')!r}")
     if body.get("version") != VERSION:
         problems.append(f"version {body.get('version')!r} != {VERSION}")
     for key in ("task_id", "planned", "ok", "failed"):
@@ -306,7 +314,8 @@ def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
     return bodies, problems
 
 
-__all__ = ["REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
+__all__ = [
+    "MODES","REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
            "COMPARED", "KNOB_TEXT", "diff", "knobs_of", "line", "order",
            "receipt_dir",
            "snapshot", "validate", "write", "write_run"]

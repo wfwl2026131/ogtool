@@ -355,3 +355,29 @@ def test_mass_send_writes_a_task_receipt_too(ctx, settings):
     assert [body["feature"] for body in bodies] == ["mass_send"]
     assert bodies[0]["task_id"] > 0
     assert bodies[0]["planned"] >= 1
+
+
+def test_validate_rejects_a_count_in_the_mode_slot():
+    """export_accounts passed len(rows) as mode and every receipt said mode "2"."""
+    body = {"version": receipts.VERSION, "feature": "export_accounts",
+            "task": "t", "task_id": 1, "mode": "2", "planned": 0, "ok": 2,
+            "failed": 0, "unaccounted": -2, "results": {"planned": 0,
+            "sent": 2, "failed": 0}, "accounts": [], "unattributed": 0,
+            "knobs": {}, "knobs_dropped": 0, "waited": 0.0, "verdict": "done",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "finished_at": "2026-01-01T00:00:01+00:00"}
+    problems = receipts.validate(body)
+    assert any("mode is not dry-run/live" in item for item in problems)
+
+
+def test_export_accounts_records_a_real_mode_and_count(ctx, settings):
+    from ogtool.features.export_accounts import ExportConfig
+    from ogtool.features.export_accounts import run as export_run
+
+    config = ExportConfig.from_dict({}, settings)
+    assert export_run(config, ctx) == 0
+    bodies, problems = receipts.read_all(receipts.receipt_dir(settings))
+    assert problems == []
+    body = bodies[0]
+    assert body["mode"] in receipts.MODES
+    assert body["planned"] == body["ok"] == 2  # the pool has two accounts
