@@ -309,6 +309,15 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     test.add_argument("--dry-run", action="store_true", help="the default")
     test.add_argument("--live", action="store_true")
 
+    dialogs = account_subs.add_parser(
+        "dialogs", help="list the chats an account can see (read only)")
+    dialogs.add_argument("--accounts", nargs="*", default=None)
+    dialogs.add_argument("--limit", type=int, default=20)
+    dialogs.add_argument("--kind", default="",
+                         help="only group / channel / user / bot / chat")
+    dialogs.add_argument("--dry-run", action="store_true", help="the default")
+    dialogs.add_argument("--live", action="store_true")
+
     spambot = account_subs.add_parser(
         "spambot", help="ask @spambot whether an account is limited (frozen)")
     spambot.add_argument("--accounts", nargs="*", default=None)
@@ -884,6 +893,15 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             print(f"Password change task finished. "
                   f"Success: {done}/{len(rows)}")
             return 0 if done == len(rows) else 1
+        if args.action == "dialogs":
+            rows = pool.dialogs(args.accounts, live=bool(args.live),
+                                limit=args.limit)
+            wanted = (args.kind or "").strip().lower()
+            shown = [row for row in rows if not wanted or row[1] == wanted]
+            for label, kind, ref, title in shown:
+                print(f"{kind:8s} {ref:20s} {title}  ({label})")
+            print(f"total: {len(shown)} of {len(rows)}")
+            return 0
         if args.action == "spambot":
             rows = pool.spambot(args.accounts, live=bool(args.live),
                                 wait=args.wait, apply=bool(args.apply))

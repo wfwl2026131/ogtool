@@ -134,6 +134,61 @@ class AccountPool:
                         client.disconnect()
         return rows
 
+    def dialogs(self, names: list[str] | None, live: bool, limit: int = 20,
+                client_factory=None) -> list[tuple[str, str, str, str]]:
+        """The chats this account can see: ``(label, kind, ref, title)``.
+
+        Read-only, and the only way to find a real group for the live checks:
+        every other page is told which chats to touch, so without this the
+        filter pages can only ever be exercised against a made-up reference.
+        """
+        rows: list[tuple[str, str, str, str]] = []
+        credentials = None
+        for account in self.resolve(names):
+            path = Path(account.session)
+            if not path.exists():
+                rows.append((account.label, "?", "",
+                             f"{SESSION_NOT_FOUND}: {path}"))
+                continue
+            if not live:
+                rows.append((account.label, "?", "",
+                             "dry-run: would list the newest dialogs"))
+                continue
+            if credentials is None:
+                try:
+                    credentials = _credentials(self.settings)
+                except ConfigError as error:
+                    rows.append((account.label, "?", "", str(error)))
+                    continue
+            client = None
+            try:
+                client = _client(client_factory, str(path), credentials,
+                                 self.settings.proxy)
+                client.connect()
+                for dialog in client.iter_dialogs(limit=limit):
+                    entity = dialog.entity
+                    if getattr(entity, "megagroup", False):
+                        kind = "group"
+                    elif getattr(entity, "broadcast", False):
+                        kind = "channel"
+                    elif getattr(entity, "bot", False):
+                        kind = "bot"
+                    elif dialog.is_user:
+                        kind = "user"
+                    else:
+                        kind = "chat"
+                    username = getattr(entity, "username", "") or ""
+                    ref = f"@{username}" if username else str(dialog.id)
+                    rows.append((account.label, kind, ref,
+                                 str(dialog.name or "")))
+            except Exception as error:  # noqa: BLE001 - reported as a row
+                rows.append((account.label, "?", "", type(error).__name__))
+            finally:
+                if client is not None:
+                    with contextlib.suppress(Exception):
+                        client.disconnect()
+        return rows
+
     def spambot(self, names: list[str] | None, live: bool,
                 client_factory=None, wait: float = 8.0,
                 apply: bool = False
