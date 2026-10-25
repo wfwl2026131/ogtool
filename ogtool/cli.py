@@ -154,6 +154,14 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
                          help="seconds to wait for the bot's answer")
     spambot.add_argument("--apply", action="store_true",
                          help="write the verdict into the pool's kind column")
+    logout = account_subs.add_parser(
+        "logout", help="batch logout: move the session files to a trash folder")
+    logout.add_argument("--accounts", nargs="*", default=None)
+    logout.add_argument("--trash", default=None,
+                        help="where the session files go (default: sessions/trash)")
+    logout.add_argument("--dry-run", action="store_true", help="the default")
+    logout.add_argument("--live", action="store_true",
+                        help="really move the session files (default: dry-run)")
     password = account_subs.add_parser(
         "password",
         help="batch modify cloud passwords for the selected accounts")
@@ -454,6 +462,14 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             store.set_account_kind(args.label, wanted)
             print(f"{args.label} kind={wanted or '-'}")
             return 0
+        if args.action == "logout":
+            rows = pool.logout(args.accounts, live=bool(args.live),
+                               trash=args.trash or "")
+            for label, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print(f"Batch logout finished. Success: {done}/{len(rows)}")
+            return 0 if done == len(rows) else 1
         if args.action == "password":
 
             try:

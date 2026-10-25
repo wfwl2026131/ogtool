@@ -187,6 +187,45 @@ class AccountPool:
         return rows
 
 
+    def logout(self, names: list[str] | None, live: bool = False,
+               trash: str = "") -> list[tuple[str, bool, str]]:
+        """The console tool: "Batch logout" (1858834-1858838).
+
+        The reference's four lines are "Batch logout already running", "Batch
+        logout completed", "Batch logout is not available" and "Batch logout
+        already running". A logout is destructive - the session file is the
+        only copy of the login - so this MOVES it to a trash directory instead
+        of unlinking it, and says where it went. That is a deliberate
+        difference, reported rather than hidden: a rebuild that can undo a
+        mistaken batch logout is strictly safer than one that cannot.
+        """
+        rows: list[tuple[str, bool, str]] = []
+        target_dir = Path(trash).expanduser() if trash else (
+            Path(self.settings.data_dir) / "sessions" / "trash")
+        for account in self.resolve(names):
+            path = Path(account.session)
+            if not path.exists():
+                rows.append((account.label, False,
+                             f"{SESSION_NOT_FOUND}: {path}"))
+                continue
+            if not live:
+                rows.append((account.label, True,
+                             f"dry-run: would log out (move {path.name})"))
+                continue
+            try:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                moved = target_dir / path.name
+                if moved.exists():
+                    moved = target_dir / f"{path.stem}.{int(path.stat().st_mtime)}" \
+                        f"{path.suffix}"
+                path.replace(moved)
+            except OSError as error:
+                rows.append((account.label, False, f"{type(error).__name__}: {error}"))
+                continue
+            rows.append((account.label, True,
+                         f"Batch logout completed, session moved to {moved}"))
+        return rows
+
     def passwords(self, names: list[str] | None, new_password: str, live: bool,
                   client_factory=None,
                   current_password: str = "") -> list[tuple[str, bool, str]]:
