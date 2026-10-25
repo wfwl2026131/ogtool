@@ -145,6 +145,17 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     test.add_argument("--dry-run", action="store_true", help="the default")
     test.add_argument("--live", action="store_true")
 
+    spambot = account_subs.add_parser(
+        "spambot", help="ask @spambot whether an account is limited (frozen)")
+    spambot.add_argument("--accounts", nargs="*", default=None)
+    spambot.add_argument("--wait", type=float, default=8.0,
+                         help="seconds to wait for the bot's answer")
+    spambot.add_argument("--apply", action="store_true",
+                         help="write the verdict into the pool's kind column")
+    spambot.add_argument("--dry-run", action="store_true", help="the default")
+    spambot.add_argument("--live", action="store_true",
+                         help="really talk to @spambot (default: dry-run)")
+
     login = account_subs.add_parser(
         "login", help="live login, the code read from a file (no prompts)")
     login.add_argument("--label", default="", help="pool label for the account")
@@ -388,6 +399,15 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             store.set_account_kind(args.label, wanted)
             print(f"{args.label} kind={wanted or '-'}")
             return 0
+        if args.action == "spambot":
+            rows = pool.spambot(args.accounts, live=bool(args.live),
+                                wait=args.wait, apply=bool(args.apply))
+            for label, kind, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} "
+                      f"kind={kind or '-'} {detail}")
+            known = sum(1 for _, kind, _, _ in rows if kind)
+            print(f"total: {len(rows)} classified: {known}")
+            return 0 if all(ok for _, _, ok, _ in rows) else 1
         if args.action == "list":
             rows = pool.list()
             if args.json:

@@ -134,6 +134,81 @@ class AccountPool:
                         client.disconnect()
         return rows
 
+    def spambot(self, names: list[str] | None, live: bool,
+                client_factory=None, wait: float = 8.0,
+                apply: bool = False
+                ) -> list[tuple[str, str, bool, str]]:
+        """Ask @spambot about each account, the reference's own frozen check.
+
+        ``rows`` are ``(label, kind, ok, detail)``. In dry-run nothing is sent:
+        the row says what would be sent and to whom. Live sends ``/start`` and
+        reads the newest message in that bot chat after ``wait`` seconds.
+        """
+        from .spambot import SPAMBOT, START, classify, headline, shorten
+
+        rows: list[tuple[str, str, bool, str]] = []
+        credentials = None
+        for account in self.resolve(names):
+            path = Path(account.session)
+            if not path.exists():
+                rows.append((account.label, "", False,
+                             f"{SESSION_NOT_FOUND}: {path}"))
+                continue
+            if not live:
+                rows.append((account.label, "", True,
+                             f"dry-run: would send {START} to @{SPAMBOT}"))
+                continue
+            if credentials is None:
+                try:
+                    credentials = _credentials(self.settings)
+                except ConfigError as error:
+                    rows.append((account.label, "", False, str(error)))
+                    continue
+            client = None
+            try:
+                client = _client(client_factory, str(path), credentials,
+                                 self.settings.proxy)
+                client.connect()
+                client.send_message(SPAMBOT, START)
+                reply = _latest_bot_reply(client, SPAMBOT, wait)
+                kind, marker = classify(reply)
+                rows.append((account.label, kind, True,
+                             f"{headline(kind)}"
+                             + (f" [kw={marker}]" if marker else "")
+                             + f" reply={shorten(reply) or '-'}"))
+                if apply and kind:
+                    self.store.set_account_kind(account.label, kind)
+            except Exception as error:  # noqa: BLE001 - reported as a row
+                rows.append((account.label, "", False, type(error).__name__))
+            finally:
+                if client is not None:
+                    with contextlib.suppress(Exception):
+                        client.disconnect()
+        return rows
+
+
+def _latest_bot_reply(client, username: str, wait: float) -> str:
+    """The newest text in that bot chat, polled for ``wait`` seconds.
+
+    A bot answers when it answers, so this is a bounded wait rather than one
+    read: it stops as soon as a text message exists.
+    """
+    import time
+
+    deadline = time.monotonic() + max(0.0, wait)
+    while True:
+        try:
+            messages = client.get_messages(username, limit=5)
+        except Exception:  # noqa: BLE001 - an empty answer is a valid answer
+            messages = []
+        for message in messages or []:
+            text = getattr(message, "message", "") or ""
+            if text:
+                return text
+        if time.monotonic() >= deadline:
+            return ""
+        time.sleep(1.0)
+
 
 def _credentials(settings: Settings):
     from .login import resolve_credentials
