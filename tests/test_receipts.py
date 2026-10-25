@@ -206,3 +206,57 @@ def test_a_broken_config_blob_does_not_break_the_receipt():
     assert knobs_of("{not json") == ({}, 1)
     assert knobs_of(None) == ({}, 1)
     assert knobs_of(["a"]) == ({}, 1)
+
+
+def _two_rename_runs(settings) -> None:
+    """Two runs of one page, with one entry fewer the second time."""
+    from ogtool import cli
+
+    path = settings.path.parent / "names.txt"
+    for text in ("A One\nB Two\n", "A One\n"):
+        path.write_text(text, encoding="utf-8")
+        assert cli.run(["--config", str(settings.path), "batch_rename",
+                        "--dry-run", "--file", str(path)]) == 0
+
+
+def test_runs_diff_names_the_changed_knobs(settings, capsys):
+    from ogtool import cli
+
+    _two_rename_runs(settings)
+    capsys.readouterr()
+    assert cli.run(["--config", str(settings.path), "runs", "diff",
+                    "--feature", "batch_rename"]) == 0
+    output = capsys.readouterr().out
+    assert "batch_rename: task 1 -> 2" in output
+    assert "knobs.entries  2 -> 1" in output
+    assert "planned" in output
+
+
+def test_runs_diff_needs_two_receipts(settings, capsys):
+    from ogtool import cli
+
+    (receipts.receipt_dir(settings) / "x.json").parent.mkdir(parents=True,
+                                                             exist_ok=True)
+    receipts.write_run(settings, "proxy", exit_code=0, live=False)
+    assert cli.run(["--config", str(settings.path), "runs", "diff",
+                    "--feature", "proxy"]) == 2
+    assert "need two receipts" in capsys.readouterr().out
+
+
+def test_diff_ignores_the_noise_and_finds_the_knob():
+    from ogtool.receipts import diff
+
+    before = {"mode": "dry-run", "planned": 2, "ok": 2, "failed": 0,
+              "unaccounted": 0, "verdict": "dry-run", "task_id": 1,
+              "finished_at": "2026-01-01T00:00:00+00:00",
+              "knobs": {"entries": 2, "file": "a.txt"},
+              "results": {"planned": 2, "sent": 0, "failed": 0}}
+    after = dict(before, task_id=2, finished_at="2026-01-02T00:00:00+00:00",
+                 planned=1, ok=1,
+                 knobs={"entries": 1, "file": "a.txt", "extra": True},
+                 results={"planned": 1, "sent": 0, "failed": 0})
+    keys = [key for key, _old, _new in diff(before, after)]
+    assert "knobs.entries" in keys
+    assert "knobs.extra" in keys
+    assert "task_id" not in keys
+    assert "finished_at" not in keys

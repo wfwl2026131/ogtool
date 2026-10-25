@@ -193,6 +193,31 @@ def line(body: dict[str, Any]) -> str:
             f"failed {int(body.get('failed') or 0):4d}  {verdict}")
 
 
+#: The receipt fields a diff compares besides the knobs.
+COMPARED = ("mode", "planned", "ok", "failed", "unaccounted", "verdict")
+
+
+def diff(before: dict[str, Any], after: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    """What changed between two receipts of the same page.
+
+    Only the fields that describe *how* a run was configured and *what* it
+    accounted for: comparing timestamps or task ids would bury the answer in
+    noise.
+    """
+    rows: list[tuple[str, Any, Any]] = []
+    for key in COMPARED:
+        if before.get(key) != after.get(key):
+            rows.append((key, before.get(key), after.get(key)))
+    left = before.get("knobs") if isinstance(before.get("knobs"), dict) else {}
+    right = after.get("knobs") if isinstance(after.get("knobs"), dict) else {}
+    for key in sorted(set(left) | set(right)):
+        if left.get(key) != right.get(key):
+            rows.append((f"knobs.{key}", left.get(key), right.get(key)))
+    if before.get("results") != after.get("results"):
+        rows.append(("results", before.get("results"), after.get("results")))
+    return rows
+
+
 def validate(body: Any) -> list[str]:
     """Everything wrong with one receipt body, as readable sentences."""
     if not isinstance(body, dict):
@@ -245,5 +270,6 @@ def read_all(directory: Path) -> tuple[list[dict[str, Any]], list[str]]:
 
 
 __all__ = ["REQUIRED", "VERSION", "VERDICTS", "build", "read_all",
-           "KNOB_TEXT", "knobs_of", "line", "order", "receipt_dir",
+           "COMPARED", "KNOB_TEXT", "diff", "knobs_of", "line", "order",
+           "receipt_dir",
            "snapshot", "validate", "write", "write_run"]

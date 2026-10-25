@@ -150,6 +150,10 @@ def _runs_parser(subs: argparse._SubParsersAction) -> None:
     show = run_subs.add_parser("show", help="one receipt in full, as JSON")
     show.add_argument("--feature", default="", help="page name (optional)")
     show.add_argument("--id", type=int, default=0, help="task id")
+    diff = run_subs.add_parser("diff", help="what changed between two runs")
+    diff.add_argument("--feature", required=True)
+    diff.add_argument("--from-id", type=int, default=0, help="older task id")
+    diff.add_argument("--to-id", type=int, default=0, help="newer task id")
     check = run_subs.add_parser("check", help="validate every receipt")
     check.add_argument("--feature", default="")
 
@@ -168,6 +172,8 @@ def _runs(args: argparse.Namespace, settings: Settings) -> int:
         for problem in problems:
             print(f"  {problem}")
         return 0 if not problems else 1
+    if args.action == "diff":
+        return _runs_diff(args, bodies)
     if args.action == "show":
         wanted = [body for body in bodies
                   if (not args.feature or body.get("feature") == args.feature)
@@ -189,6 +195,34 @@ def _runs(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     for body in rows:
         print(receipts.line(body))
+    return 0
+
+
+def _runs_diff(args: argparse.Namespace, bodies: list[dict]) -> int:
+    """Two receipts of one page, and the lines that differ."""
+    rows = sorted((body for body in bodies
+                   if body.get("feature") == args.feature),
+                  key=receipts.order)
+    if args.from_id:
+        rows = [body for body in rows if body.get("task_id") == args.from_id] \
+            or rows
+    if args.to_id:
+        rows = [body for body in rows if body.get("task_id") == args.to_id] \
+            or rows
+    if len(rows) < 2:
+        print(f"ERROR: need two receipts for {args.feature}, "
+              f"found {len(rows)}")
+        return 2
+    before, after = rows[-2], rows[-1]
+    changes = receipts.diff(before, after)
+    print(f"{args.feature}: task {before.get('task_id')} -> "
+          f"{after.get('task_id')}")
+    if not changes:
+        print("no difference")
+        return 0
+    width = max(len(key) for key, _old, _new in changes)
+    for key, old, new in changes:
+        print(f"  {key:{width}s}  {old!r} -> {new!r}")
     return 0
 
 
