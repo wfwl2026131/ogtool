@@ -12,3 +12,4 @@ og.sqlite
 logs/
 data/
 config.yaml.bak-*
+live_cases.yaml

@@ -83,6 +83,53 @@ def config_path() -> Path:
     return ROOT / "config.yaml"
 
 
+def extra_path() -> Path:
+    return ROOT / "live_cases.yaml"
+
+
+def load_extra(path: Path) -> tuple[list[Case], list[str]]:
+    """Cases from a file, so covering a chat needs no code change.
+
+    The file is per-machine (it names real chats), so a missing file is normal.
+    Each entry is ``name``, ``args`` (a list), and optionally ``interrupt_after``,
+    ``receipt_for``, ``expect`` and ``write: true``. A malformed entry is a
+    problem, never a silent skip.
+    """
+    if not path.exists():
+        return [], []
+    import yaml
+
+    try:
+        body = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as error:
+        return [], [f"{path.name}: {type(error).__name__}: {error}"]
+    entries = body.get("cases") if isinstance(body, dict) else None
+    if not isinstance(entries, list):
+        return [], [f"{path.name}: no 'cases' list"]
+    cases: list[Case] = []
+    problems: list[str] = []
+    for position, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict) or not entry.get("name") \
+                or not entry.get("args"):
+            problems.append(f"{path.name}: entry {position} needs name and args")
+            continue
+        args = entry["args"]
+        if not isinstance(args, list) or not all(
+                isinstance(item, str) for item in args):
+            problems.append(
+                f"{path.name}: {entry['name']}: args must be a list of strings "
+                "(quote the placeholders: '{account}', '{self}')")
+            continue
+        cases.append(Case(
+            name=str(entry["name"]),
+            args=tuple(args),
+            interrupt_after=entry.get("interrupt_after"),
+            receipt_for=str(entry.get("receipt_for", "")),
+            expect=str(entry.get("expect", "")),
+        ))
+    return cases, problems
+
+
 def receipts_dir(config: Path) -> Path:
     """Where this config's receipts land, read from the config itself."""
     text = config.read_text(encoding="utf-8")
@@ -159,15 +206,26 @@ def run_case(case: Case, config: Path, account: str, who: str) -> list[str]:
 
 def main(argv: list[str]) -> int:
     args = argv[1:]
+    cases, case_problems = load_extra(extra_path())
     if "--list" in args:
-        for case in CASES:
+        for case in list(CASES) + cases:
             print(f"{case.name:10s} {' '.join(case.args)}")
-        return 0
+        for problem in case_problems:
+            print(problem)
+        return 0 if not case_problems else 1
     account = "t1"
     if "--account" in args:
         account = args[args.index("--account") + 1]
     allow_write = "--allow-write" in args
-    refused = [case.name for case in CASES if case.name in WRITE_CASES]
+    # Extra cases go through the same gate: a file on disk must not be able to
+    # turn a write into something this script runs by default.
+    refused = [case.name for case in list(CASES) + cases
+               if case.name in WRITE_CASES]
+    if case_problems:
+        print(f"{extra_path().name} has {len(case_problems)} problem(s):")
+        for problem in case_problems:
+            print(f"  {problem}")
+        return 2
     if refused and not allow_write:
         print(f"refusing {len(refused)} write case(s) without --allow-write: "
               f"{', '.join(refused)}")
@@ -183,9 +241,10 @@ def main(argv: list[str]) -> int:
         return 1
     print(f"account: {account} (@{who})")
     problems: list[str] = []
-    for case in CASES:
+    every = list(CASES) + cases
+    for case in every:
         problems.extend(run_case(case, config, account, who))
-    print(f"live: {len(CASES)} case(s), {len(problems)} problem(s)")
+    print(f"live: {len(every)} case(s), {len(problems)} problem(s)")
     for problem in problems:
         print("-" * 60)
         print(problem)

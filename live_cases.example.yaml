@@ -1,0 +1,14 @@
+# Extra read-only cases for scripts/live_smoke.py.
+#
+# Copy to live_cases.yaml and edit: that file names real chats, so it is not
+# tracked. Everything here must read only - a case that writes needs
+# --allow-write and belongs in WRITE_CASES in the script first.
+#
+# Placeholders '{account}' and '{self}' are quoted so YAML does not read the
+# braces as a mapping.
+cases:
+  - name: groups
+    args: [filter_group, --live, --accounts, '{account}',
+           --groups, '@some_group']
+    expect: 'PLAN:'
+    receipt_for: filter_group

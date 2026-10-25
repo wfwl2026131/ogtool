@@ -70,3 +70,46 @@ def test_newest_receipt_wins(smoke, tmp_path):
     os.utime(new, (2, 2))
     assert smoke.newest_receipt(tmp_path, "watch_chat")["task_id"] == 2
     assert smoke.newest_receipt(tmp_path, "auto_reply") is None
+
+
+def test_extra_cases_come_from_a_file(smoke, tmp_path):
+    path = tmp_path / "live_cases.yaml"
+    path.write_text(
+        "cases:\n"
+        "  - name: groups\n"
+        "    args: [filter_group, --live, --accounts, '{account}',\n"
+        "           --groups, '@demo']\n"
+        "    expect: 'PLAN:'\n"
+        "    receipt_for: filter_group\n",
+        encoding="utf-8")
+    cases, problems = smoke.load_extra(path)
+    assert problems == []
+    assert [case.name for case in cases] == ["groups"]
+    assert cases[0].receipt_for == "filter_group"
+    assert "{account}" in cases[0].args
+
+
+def test_a_malformed_extra_case_is_a_problem(smoke, tmp_path):
+    path = tmp_path / "live_cases.yaml"
+    path.write_text("cases:\n  - name: noargs\n  - args: [x]\n",
+                    encoding="utf-8")
+    cases, problems = smoke.load_extra(path)
+    assert cases == []
+    assert len(problems) == 2
+
+
+def test_a_missing_extra_file_is_normal(smoke, tmp_path):
+    assert smoke.load_extra(tmp_path / "none.yaml") == ([], [])
+
+
+def test_extra_cases_cannot_smuggle_a_write(smoke, tmp_path, monkeypatch):
+    """An extra case is still a case: the write gate applies to it too."""
+    monkeypatch.setattr(smoke, "WRITE_CASES", frozenset({"groups"}))
+    monkeypatch.setattr(smoke, "config_path", lambda: tmp_path / "config.yaml")
+    (tmp_path / "config.yaml").write_text("logs: l\n", encoding="utf-8")
+    path = tmp_path / "live_cases.yaml"
+    path.write_text("cases:\n  - name: groups\n    args: [filter_group]\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(smoke, "extra_path", lambda: path)
+    # The refusal happens before any config is read or any case is run.
+    assert smoke.main(["live_smoke"]) == 2
