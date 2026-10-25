@@ -287,3 +287,38 @@ def test_a_run_writes_the_waited_total_it_accumulated(ctx, settings):
                            .glob("add_contact-*.json")).read_text())
     assert body["waited"] > 0
     assert body["waited"] == pytest.approx(ctx.waited, abs=0.1)
+
+
+def test_the_receipt_lists_the_accounts_that_actually_worked(ctx, settings,
+                                                             pooled):
+    """Read from the results rows: a bound account that did nothing is noise."""
+    from ogtool.features.batch_rename import RenameConfig
+    from ogtool.features.batch_rename import run as rename_run
+
+    config = RenameConfig(names=[("A", ""), ("B", ""), ("A", "")],
+                          operation_interval=0.0, account_labels=["acc1"])
+    assert rename_run(config, ctx) == 0
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("batch_rename-*.json")).read_text())
+    assert body["accounts"] == ["acc1"]
+    assert body["unattributed"] == 0
+
+
+def test_rows_without_an_account_are_counted_not_named(settings, store):
+    """A page run with no account writes "-" into that column: count, not name."""
+    import logging
+
+    from ogtool.features.batch_rename import RenameConfig
+    from ogtool.features.batch_rename import run as rename_run
+    from ogtool.runtime import RunContext
+
+    ctx = RunContext(settings=settings, store=store,
+                     log=logging.getLogger("ogtool.test"), live=False)
+    config = RenameConfig(names=[("A", ""), ("B", "")],
+                          operation_interval=0.0)
+    assert rename_run(config, ctx) == 0
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("batch_rename-*.json")).read_text())
+    assert body["accounts"] == []
+    assert body["unattributed"] == 2
+    assert receipts.validate(body) == []

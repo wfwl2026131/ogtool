@@ -25,7 +25,8 @@ VERSION = 1
 REQUIRED: tuple[str, ...] = (
     "version", "feature", "task", "task_id", "mode",
     "planned", "ok", "failed", "unaccounted",
-    "results", "knobs", "waited", "verdict", "created_at", "finished_at",
+    "results", "accounts", "unattributed", "knobs", "waited", "verdict",
+    "created_at", "finished_at",
 )
 
 #: Longest string kept verbatim in ``knobs``; a prompt or a file body is not a
@@ -88,10 +89,23 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
     mode = str(row["mode"] or "") if row is not None else ""
     status = str(row["status"] or "") if row is not None else ""
     results: dict[str, int] = {"planned": 0, "sent": 0, "failed": 0}
+    accounts: list[str] = []
+    unattributed = 0
     for result in store.results_for(task.id):
         state = str(result["status"] or "")
         if state in results:
             results[state] += 1
+        # Read from the rows rather than the config: a page may bind accounts it
+        # never used, and the results table is the only thing that knows which
+        # ones actually did something.
+        label = str(result["account"] or "")
+        if label in ("", "-"):
+            # A page without a bound account records "-" in that column. It is a
+            # real row, but naming it as an account would be a lie, so the count
+            # of such rows is kept separately.
+            unattributed += 1
+        elif label not in accounts:
+            accounts.append(label)
     knobs, dropped = knobs_of(row["config"] if row is not None else None)
     verdict = "dry-run" if mode == "dry-run" and not failed else (
         "failed" if failed else ("stopped" if status == "stopped" else "done"))
@@ -110,6 +124,8 @@ def build(store: Any, task: Any, *, ok: int, failed: int,
         # them all - it can only say how much of the plan went unexplained.
         "unaccounted": planned - int(ok) - int(failed),
         "results": results,
+        "accounts": accounts,
+        "unattributed": unattributed,
         # What the run was told to do. ``knobs_dropped`` counts the values too
         # large to be a switch (a message list, a whole file body): a receipt
         # that quietly copied them would stop being a summary.
@@ -162,6 +178,8 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "failed": 0 if exit_code == 0 else 1,
         "unaccounted": 0,
         "results": {"planned": 0, "sent": 0, "failed": 0},
+        "accounts": [],
+        "unattributed": 0,
         "knobs": {"live": live},
         "knobs_dropped": 0,
         "waited": 0.0,
@@ -200,7 +218,8 @@ def line(body: dict[str, Any]) -> str:
 
 
 #: The receipt fields a diff compares besides the knobs.
-COMPARED = ("mode", "planned", "ok", "failed", "unaccounted", "verdict")
+COMPARED = ("mode", "planned", "ok", "failed", "unaccounted", "verdict",
+            "accounts")
 
 
 def diff(before: dict[str, Any], after: dict[str, Any]) -> list[tuple[str, Any, Any]]:
@@ -243,6 +262,15 @@ def validate(body: Any) -> list[str]:
     dropped = body.get("knobs_dropped", 0)
     if not isinstance(dropped, int) or isinstance(dropped, bool) or dropped < 0:
         problems.append(f"knobs_dropped is not a count: {dropped!r}")
+    accounts = body.get("accounts")
+    if not isinstance(accounts, list):
+        problems.append(f"accounts is not a list: {accounts!r}")
+    elif any(not isinstance(item, str) for item in accounts):
+        problems.append(f"accounts holds a non-string: {accounts!r}")
+    unattributed = body.get("unattributed")
+    if not isinstance(unattributed, int) or isinstance(unattributed, bool) \
+            or unattributed < 0:
+        problems.append(f"unattributed is not a count: {unattributed!r}")
     results = body.get("results")
     if not isinstance(results, dict):
         problems.append(f"results is not an object: {results!r}")
