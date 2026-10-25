@@ -88,3 +88,20 @@ def test_a_dry_run_renames_without_waiting(ctx, slept, capsys):
     assert run(config, ctx) == 0
     assert slept == []
     assert "waited: " not in capsys.readouterr().out
+
+
+def test_flood_cap_retries_a_flooded_rename(ctx, scripted, capsys):
+    """``floodCap`` is the rename page's PEER_FLOOD retry count."""
+    scripted(["PEER_FLOOD", "PEER_FLOOD", "ok"])
+    config = RenameConfig(names=[("Alice", "")], flood_cap=2)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "PEER_FLOOD backoff" in output
+    assert "失败: 0" in output
+
+
+def test_a_zero_flood_cap_does_not_retry(ctx, scripted, capsys):
+    scripted(["PEER_FLOOD"])
+    config = RenameConfig(names=[("Alice", "")], flood_cap=0)
+    assert run(config, ctx) == 1
+    assert "PEER_FLOOD backoff" not in capsys.readouterr().out

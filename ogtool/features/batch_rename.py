@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
-from ..limiter import format_duration
+from ..limiter import PeerFloodBackoff, format_duration
 from ..runtime import RunContext
 from . import register
 from ._common import (
@@ -474,6 +474,7 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
     state.status = RUNNING
     print(f"状态：{state.status}")
     waited = 0.0
+    backoff = PeerFloodBackoff()
     for index, (first, last) in enumerate(config.names, start=1):
         if state.stop_at and index >= state.stop_at:
             state.status = STOPPED
@@ -496,6 +497,18 @@ def run(config: RenameConfig, ctx: RunContext) -> int:
             print(f"{FIRST_EMPTY}（第 {index} 条）")
         else:
             result = sender.update_profile(account, first, last)
+            # ``floodCap``: a profile edit that answered PEER_FLOOD is retried
+            # that many times before the entry is written off as failed.
+            attempts = 0
+            while (not result.ok and result.code == "PEER_FLOOD"
+                   and attempts < config.flood_cap):
+                attempts += 1
+                delay = backoff.wait_for(attempts - 1)
+                print(f"  PEER_FLOOD backoff {delay:.0f}s "
+                      f"(attempt {attempts}/{config.flood_cap})")
+                waited += delay
+                pause(ctx, delay)
+                result = sender.update_profile(account, first, last)
             state.processed += 1
             if result.ok:
                 state.bump("昵称")
