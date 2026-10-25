@@ -75,6 +75,26 @@ def count_tests(root: Path, feature: str) -> int:
     return total
 
 
+#: Failure codes that mean the run never reached Telegram: a missing or busy
+#: session, missing api credentials. A receipt of only these proves the command
+#: was invoked, not that anything real was touched.
+LOCAL_CODES = {"SESSION_BUSY", "SESSION_NOT_FOUND", "API_CREDENTIALS", "NO_ACCOUNT"}
+
+
+def _only_local_failures(body: dict[str, Any]) -> bool:
+    rows = body.get("rows") or []
+    if not rows:
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            return False
+        if row.get("status") != "failed":
+            return False
+        if str(row.get("code") or "") not in LOCAL_CODES:
+            return False
+    return True
+
+
 def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
     """(live, dry, newest live finish) for one feature."""
     live = dry = 0
@@ -91,7 +111,7 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
             # one synthetic row about the run, not a row per chat or account.
             # Counting it as live evidence would let 'settings' claim real-machine
             # proof for reading a config file.
-            if int(body.get("task_id") or 0) > 0:
+            if int(body.get("task_id") or 0) > 0 and not _only_local_failures(body):
                 live += 1
             stamp = str(body.get("finished_at") or "")
             if stamp > newest:

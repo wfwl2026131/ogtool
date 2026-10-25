@@ -166,3 +166,21 @@ def test_a_fallback_receipt_is_not_live_proof(tmp_path):
          "finished_at": "2026-01-01T00:00:00"}))
     assert evidence.count_receipts(tmp_path, "settings")[0] == 0
     assert evidence.count_receipts(tmp_path, "watch_chat")[0] == 1
+
+
+def test_a_session_lock_is_not_live_proof(tmp_path):
+    """SESSION_BUSY means the run never reached Telegram at all."""
+    body = {"mode": "live", "task_id": 1633, "rows": [
+        {"status": "failed", "code": "SESSION_BUSY", "subject": "x"}]}
+    (tmp_path / "mass_send-1.json").write_text(json.dumps(body))
+    assert evidence.count_receipts(tmp_path, "mass_send")[0] == 0
+
+    body["rows"] = [{"status": "sent", "code": "", "subject": "x"}]
+    (tmp_path / "mass_send-2.json").write_text(json.dumps(body))
+    assert evidence.count_receipts(tmp_path, "mass_send")[0] == 1
+
+    # A real server refusal is still real-machine evidence.
+    body["rows"] = [{"status": "failed", "code": "CHANNEL_PRIVATE",
+                     "subject": "x"}]
+    (tmp_path / "mass_send-3.json").write_text(json.dumps(body))
+    assert evidence.count_receipts(tmp_path, "mass_send")[0] == 2
