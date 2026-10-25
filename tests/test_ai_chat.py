@@ -148,3 +148,89 @@ def test_without_a_refresh_interval_nothing_is_replanned(ctx, capsys):
     output = capsys.readouterr().out
     assert "topic prompt changed" not in output
     assert "refresh: -" in output
+
+
+def test_clip_uses_one_of_the_levels_and_cuts_on_a_word():
+    from ogtool.features.ai_chat import clip
+
+    text = "one two three four five six seven"
+    assert clip(text, [12]) == "one two"
+    assert clip(text, []) == text
+    assert clip(text, [0]) == text
+    assert len(clip(text, [9])) <= 9
+
+
+def test_reply_enabled_answers_the_chat(ctx, live, capsys):
+    """``replyEnabled`` turns one-way chatter into a conversation."""
+    from ogtool.features.ai_chat import AiChatConfig, run
+    from ogtool.senders import SendResult
+
+    class ChatSender:
+        def __init__(self):
+            self.sent: list[tuple[str, int]] = []
+
+        def history(self, account, target, minutes=0, limit=0):
+            result = SendResult(ok=True)
+            result.items = ["@g1|Bob|are you there",
+                            "@g1|acc1|talking to myself"]
+            return result
+
+        def send(self, account, target, content):
+            self.sent.append((account, content.reply_to))
+            return SendResult(ok=True)
+
+        def close(self):
+            pass
+
+    sender = ChatSender()
+    live(sender)
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hello"],
+                          interval_min=0, interval_max=0, reply_enabled=True,
+                          allow_follow_up=True)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    # The first send is the planned chatter (no reply target); only Bob's line
+    # is answered - the pool's own message is filtered by author.
+    replies = [reply_to for _, reply_to in sender.sent if reply_to]
+    assert len(replies) == 1
+    assert "replies: 1 answered, 0 failed" in output
+
+
+def test_without_follow_up_a_sender_gets_one_answer(ctx, live, capsys):
+    from ogtool.features.ai_chat import AiChatConfig, run
+    from ogtool.senders import SendResult
+
+    class ChatSender:
+        def __init__(self):
+            self.sent = 0
+
+        def history(self, account, target, minutes=0, limit=0):
+            result = SendResult(ok=True)
+            result.items = ["@g1|Bob|first", "@g1|Bob|second"]
+            return result
+
+        def send(self, account, target, content):
+            if content.reply_to:
+                self.sent += 1
+            return SendResult(ok=True)
+
+        def close(self):
+            pass
+
+    sender = ChatSender()
+    live(sender)
+    config = AiChatConfig(targets=["@g1"], count=0, topics=["hello"],
+                          interval_min=0, interval_max=0, reply_enabled=True)
+    assert run(config, ctx) == 0
+    assert sender.sent == 1
+
+
+def test_a_dry_run_says_it_answers_nothing(ctx, capsys):
+    from ogtool.features.ai_chat import AiChatConfig, run
+
+    config = AiChatConfig(targets=["@g1"], count=1, topics=["hello"],
+                          interval_min=0, interval_max=0, reply_enabled=True)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "a dry run reads no history" in output
+    assert "replies: 0 answered" in output

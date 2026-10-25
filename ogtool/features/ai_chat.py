@@ -18,6 +18,8 @@ from ..limiter import format_duration
 from ..prompts import compose
 from ..runtime import RunContext
 from ..senders import Content
+from ..sources import SourceMessage
+from ..sources import parse_many as parse_sources
 from ..targets import Target, parse_many
 from . import register
 from ._common import (
@@ -205,6 +207,93 @@ def refreshed(config: AiChatConfig, labels: list[str],
     return [batch[index % len(batch)] for index in range(count)]
 
 
+def clip(text: str, levels: list[int],
+         rng: random.Random | None = None) -> str:
+    """Cut a generated line to one of the page's length levels.
+
+    ``textMaxCharsLevels`` is a list, not a single number: each message draws a
+    level and is cut to it, at a word boundary so a sentence never ends
+    mid-token. No levels means no cap at all.
+    """
+    flat = " ".join(text.split())
+    if not levels:
+        return flat
+    cap = (rng or random).choice(levels)
+    if cap <= 0 or len(flat) <= cap:
+        return flat
+    cut = flat[:cap]
+    if " " in cut:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,.;:!?-—") or flat[:cap]
+
+
+REPLY_WINDOW_MINUTES = 120
+REPLY_LIMIT = 20
+
+
+def incoming(sender: object, account: str, target: Target, labels: list[str],
+             config: AiChatConfig) -> list[SourceMessage]:
+    """Messages worth answering in one chat, oldest first.
+
+    ``replyEnabled`` turns a one-way chatter task into a conversation, so this
+    reads the chat's own history through the sender's ``history`` primitive -
+    the same one the copy and collect pages use - and drops anything the pool
+    itself said (``sender`` carries the author, which is all the reference gives
+    the planner to work with).
+    """
+    result = sender.history(account, target,  # type: ignore[attr-defined]
+                            minutes=REPLY_WINDOW_MINUTES, limit=REPLY_LIMIT)
+    if not result.ok:
+        print(f"reply read failed on {target.display()}: {result.code}")
+        return []
+    messages = parse_sources(result.items)
+    own = set(labels)
+    return [message for message in messages
+            if message.text.strip() and message.sender not in own]
+
+
+def reply_round(config: AiChatConfig, ctx: RunContext, sender: object,
+                ai: object, task: int, labels: list[str]) -> tuple[int, int]:
+    """Answer what the chat said, ``(answered, failed)``.
+
+    ``allowFollowUp`` decides whether a sender who talks twice in one round gets
+    two answers (a conversation) or one (a single reaction), which is the whole
+    difference between the page's two switches.
+    """
+    answered = failed = 0
+    for index, entry in enumerate(config.targets, start=1):
+        target = parse_many([entry], "custom")[0]
+        messages = incoming(sender, labels[0], target, labels, config)
+        seen: set[str] = set()
+        for message in messages:
+            if not config.allow_follow_up and message.sender in seen:
+                continue
+            seen.add(message.sender)
+            prompt = compose("ai_chat", settings=ctx.settings,
+                             topic=message.text, news="")
+            generated = ai.generate(prompt, fallback=message.text)  # type: ignore[attr-defined]
+            record_ai(ctx, task, labels[0], "reply", generated)
+            body = Content(text=clip(generated.response,
+                                     config.text_max_chars_levels),
+                           reply_to=message.message_id)
+            pause(ctx, config.interval_min)
+            outcome = sender.send(labels[0], target, body)  # type: ignore[attr-defined]
+            if outcome.ok:
+                answered += 1
+                record(ctx, task, labels[0], f"{target.display()}#"
+                       f"{message.message_id}", True)
+                state = "ok"
+            else:
+                failed += 1
+                record(ctx, task, labels[0], f"{target.display()}#"
+                       f"{message.message_id}", False, outcome.code)
+                state = outcome.code
+            print(f"[reply {index:02d}] to={message.sender or '-'} "
+                  f"chat={target.display()} msg={message.message_id} "
+                  f"ai={generated.label()} -> {state}")
+    return answered, failed
+
+
 def run(config: AiChatConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -258,7 +347,8 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
         generated = ai.generate(_prompt(ctx, line),
                                 fallback=_fallback(line))
         record_ai(ctx, task, line.account, "chat", generated)
-        body = Content(text=generated.response)
+        body = Content(text=clip(generated.response,
+                                 config.text_max_chars_levels))
         pause(ctx, line.delay)
         outcome = sender.send(line.account, target, body)
         waited += line.delay
@@ -276,16 +366,27 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
               f"delay={line.delay:.0f}s ai={generated.label()} "
               f"text={generated.response[:40]} -> {state}")
 
+    answered = reply_failed = 0
+    if config.reply_enabled and ctx.live:
+        # ``replyEnabled``: after talking into the chat, answer what it said
+        # back. A dry run never reads history, so it never claims replies.
+        answered, reply_failed = reply_round(config, ctx, sender, ai, task,
+                                             labels)
+    elif config.reply_enabled:
+        print("reply: on (a dry run reads no history, so it answers nothing)")
+
     print(f"Processed: {ok + failed} / {len(lines)}")
     print(f"ok: {ok}")
     print(f"failed: {failed}")
+    if config.reply_enabled:
+        print(f"replies: {answered} answered, {reply_failed} failed")
     fallback = sum(1 for call in ai.calls if not call.ok)
     print(f"ai calls: {len(ai.calls)} (fallback {fallback})")
     print(f"waited: {format_duration(waited)}")
     print(f"PLAN: {len(lines)} messages, {max(1, len(labels))} accounts, "
           f"ETA {format_duration(waited)}")
-    close_task(ctx, task, ok=ok, failed=failed)
-    return 0 if not failed else 1
+    close_task(ctx, task, ok=ok + answered, failed=failed + reply_failed)
+    return 0 if not (failed or reply_failed) else 1
 
 
 @register(FEATURE)
