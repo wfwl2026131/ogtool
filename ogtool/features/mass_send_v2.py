@@ -259,6 +259,10 @@ def schedule(flat: list[Contact], config: MassV2Config, *,
             continue
         lane = clocks.get(contact.account, 0.0)
         gap = rng.uniform(config.account_interval_min, config.account_interval_max)
+        # ``requestIntervalMsec`` ("Request interval (ms)"): the floor an account
+        # keeps between two requests, whatever the randomized lane gap is.
+        floor = config.request_interval_ms / 1000.0
+        gap = max(gap, floor)
         at = max(lane, target_clock.get(contact.ref, 0.0))
         plan.pairs.append(Pair(len(plan.pairs) + 1, contact.account,
                                contact.ref, contact.name, at))

@@ -183,3 +183,28 @@ def test_two_accounts_really_run_at_the_same_time(ctx, live, monkeypatch):
     assert first and second, "both accounts took work"
     # Overlap: the second lane starts before the first lane has finished.
     assert second[0] < first[-1], "the lanes were not serialized"
+
+
+def test_request_interval_is_a_floor_for_the_account_lane():
+    """``requestIntervalMsec`` is the page's own floor, not a decoration."""
+    from ogtool.features.mass_send_v2 import Contact, MassV2Config, schedule
+
+    config = MassV2Config(account_interval_min=0.1, account_interval_max=0.1,
+                          request_interval_ms=500, group_interval=0.0,
+                          targets=["@a1", "@a2"])
+    contacts = [Contact("acc1", "@a1", ""), Contact("acc1", "@a2", "")]
+    plan = schedule(contacts, config)
+    offsets = [pair.offset for pair in plan.pairs]
+    assert offsets[1] - offsets[0] >= 0.5
+
+
+def test_without_a_request_interval_the_lane_gap_still_wins():
+    from ogtool.features.mass_send_v2 import Contact, MassV2Config, schedule
+
+    config = MassV2Config(account_interval_min=2.0, account_interval_max=2.0,
+                          request_interval_ms=0, group_interval=0.0,
+                          targets=["@a1", "@a2"])
+    contacts = [Contact("acc1", "@a1", ""), Contact("acc1", "@a2", "")]
+    plan = schedule(contacts, config)
+    offsets = [pair.offset for pair in plan.pairs]
+    assert offsets[1] - offsets[0] >= 2.0
