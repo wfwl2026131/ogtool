@@ -229,6 +229,8 @@ class CopyConfig:
     #: ``crossoverMessageId``: passive mode starts after this message.
     crossover_message_id: int = 0
     ai_polish_level: int = 0
+    #: ``aiPolishBatchSize``: messages per polish call.
+    ai_polish_batch_size: int = 10
     message_speed: int = 0
     lightweight_mode: bool = False
     task_name: str = "copy-chat"
@@ -275,6 +277,8 @@ class CopyConfig:
             ignores=read_ignores(data),
             ai_polish_level=num(data, "ai_polish_level", 0, kind=int,
                                 minimum=0),
+            ai_polish_batch_size=num(data, "ai_polish_batch_size", 10,
+                                     kind=int, minimum=1),
             sources_per_target=num(data, "sources_per_target", 0, kind=int,
                                    minimum=0),
             daily_text_limit_per_account=num(
@@ -346,26 +350,85 @@ def read_ignores(data: dict) -> dict[str, bool]:
     return {name: bool(data.get(name)) for name in IGNORE_SENDERS}
 
 
-def polish_plan(plans: list[TargetPlan], ai: object, level: int) -> int:
+def parse_batch(answer: str, count: int) -> list[str | None]:
+    """Numbered answer -> one entry per input line, ``None`` when missing.
+
+    The page logs "AI polish batch parse empty", so a batch that comes back in
+    the wrong shape is a known outcome: the missing lines keep their original
+    text instead of shifting the rest by one.
+    """
+    found: dict[int, str] = {}
+    for line in answer.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        head, _, rest = stripped.partition(".")
+        if head.isdigit() and rest.strip():
+            index = int(head) - 1
+            if 0 <= index < count and index not in found:
+                found[index] = rest.strip()
+    return [found.get(index) for index in range(count)]
+
+
+def polish_batch(ai: object, texts: list[str], level: int,
+                 batch_size: int = 10) -> tuple[list[str], int, int]:
+    """Rewrite *texts* in batches; returns (texts, applied, failed_batches)."""
+    out = list(texts)
+    applied = 0
+    failed = 0
+    size = max(1, batch_size)
+    for start in range(0, len(texts), size):
+        chunk = texts[start:start + size]
+        if level not in POLISH_PROMPTS:
+            break
+        listing = "\n".join(f"{index}. {text}" for index, text in
+                             enumerate(chunk, start=1))
+        prompt = (f"{POLISH_PROMPTS[level]}\n\n待改写（按编号逐条返回，"
+                  f"每条一行，格式「编号. 正文」）：\n{listing}")
+        generated = ai.generate(prompt, fallback="")  # type: ignore[attr-defined]
+        if generated.source != "ai":
+            failed += 1
+            continue
+        answers = parse_batch(generated.response or "", len(chunk))
+        if not any(answers):
+            failed += 1
+            print(f"ai polish batch empty at {start + 1}.."
+                  f"{start + len(chunk)}/{len(texts)}")
+            continue
+        for offset, answer in enumerate(answers):
+            if answer:
+                out[start + offset] = answer
+                applied += 1
+    return out, applied, failed
+
+
+def polish_plan(plans: list[TargetPlan], ai: object, level: int,
+                batch_size: int = 10) -> int:
     """Rewrite the kept messages of every plan; returns how many changed.
 
     The plans share one capture, so a message is rewritten once and then sent
     to every target with the same wording — polishing per target would give
     the same source message two different texts for no reason.
     """
-    seen: dict[int, str] = {}
-    changed = 0
+    unique: dict[int, str] = {}
+    order: list[int] = []
     for plan in plans:
         for message in plan.collected.kept:
             key = message.message_id
-            if key in seen:
-                message.text = seen[key]
-                continue
-            text, source = polish_text(ai, message.text, level)
-            if source == "ai":
-                changed += 1
-            seen[key] = text
-            message.text = text
+            if key not in unique:
+                unique[key] = message.text
+                order.append(key)
+    if not order:
+        return 0
+    originals = [unique[key] for key in order]
+    polished, changed, failed = polish_batch(ai, originals, level, batch_size)
+    if failed:
+        print(f"ai polish: {failed} batch(es) kept their original text")
+    for key, rewritten in zip(order, polished, strict=True):
+        unique[key] = rewritten
+    for plan in plans:
+        for message in plan.collected.kept:
+            message.text = unique[message.message_id]
     return changed
 
 
@@ -532,8 +595,8 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                       "sources": config.sources}, total)
     if ctx.live and level:
         polished = polish_plan(plans, AIClient(ctx.settings.ai,
-                                               ctx.settings.ai.timeout),
-                               level)
+                                              ctx.settings.ai.timeout),
+                               level, config.ai_polish_batch_size)
         print(f"polished: {polished} message(s) at level {level}")
     rng = random.Random()
     ok = failed = skipped = 0

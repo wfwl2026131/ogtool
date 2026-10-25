@@ -71,7 +71,7 @@ def test_one_message_is_polished_once_across_targets(fake_ai):
 
     def counting(prompt, system, config):
         calls.append(prompt)
-        return "REWRITTEN", 3
+        return "1. REWRITTEN", 3
 
     config = CopyConfig(
         targets=["@dest1", "@dest2"],
@@ -94,3 +94,54 @@ def test_one_message_is_polished_once_across_targets(fake_ai):
     assert len(calls) == 1
     for plan in plans:
         assert plan.collected.kept[0].text == "REWRITTEN"
+
+
+def test_a_batch_is_one_call_for_several_messages(fake_ai):
+    from ogtool.features.copy_chat import polish_batch
+
+    calls = []
+
+    def transport(prompt, system, config):
+        calls.append(prompt)
+        return "1. one\n2. two\n3. three", 9
+
+    texts, applied, failed = polish_batch(fake_ai(transport),
+                                          ["a", "b", "c"], 2, batch_size=3)
+    assert texts == ["one", "two", "three"]
+    assert (applied, failed) == (3, 0)
+    assert len(calls) == 1
+    assert "1. a" in calls[0] and "3. c" in calls[0]
+
+
+def test_the_batch_size_is_respected(fake_ai):
+    from ogtool.features.copy_chat import polish_batch
+
+    calls = []
+
+    def transport(prompt, system, config):
+        calls.append(prompt)
+        return "1. x\n2. y", 4
+
+    texts, applied, failed = polish_batch(fake_ai(transport),
+                                          ["a", "b", "c", "d"], 1, batch_size=2)
+    assert len(calls) == 2
+    assert texts[0] == "x" and texts[2] == "x"
+    assert failed == 0
+
+
+def test_an_empty_batch_keeps_every_original(fake_ai):
+    from ogtool.features.copy_chat import polish_batch
+
+    texts, applied, failed = polish_batch(
+        fake_ai(lambda prompt, system, config: ("", 2)),
+        ["a", "b"], 2, batch_size=2)
+    assert texts == ["a", "b"]
+    assert (applied, failed) == (0, 1)
+
+
+def test_a_short_answer_does_not_shift_the_rest():
+    from ogtool.features.copy_chat import parse_batch
+
+    # Only the second line came back: the first must keep its own text rather
+    # than taking the second message's rewrite.
+    assert parse_batch("2. B", 2) == [None, "B"]
