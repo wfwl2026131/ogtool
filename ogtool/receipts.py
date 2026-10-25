@@ -25,7 +25,7 @@ VERSION = 1
 REQUIRED: tuple[str, ...] = (
     "version", "feature", "task", "task_id", "mode",
     "planned", "ok", "failed", "unaccounted",
-    "results", "knobs", "verdict", "created_at", "finished_at",
+    "results", "knobs", "waited", "verdict", "created_at", "finished_at",
 )
 
 #: Longest string kept verbatim in ``knobs``; a prompt or a file body is not a
@@ -80,7 +80,8 @@ def snapshot(settings: Any) -> frozenset[str]:
     return frozenset(path.name for path in directory.glob("*.json"))
 
 
-def build(store: Any, task: Any, *, ok: int, failed: int) -> dict[str, Any]:
+def build(store: Any, task: Any, *, ok: int, failed: int,
+          waited: float = 0.0) -> dict[str, Any]:
     """The receipt body for one finished task, read back from the store."""
     row = store.task_row(task.id)
     planned = int(row["planned"] or 0) if row is not None else 0
@@ -114,17 +115,20 @@ def build(store: Any, task: Any, *, ok: int, failed: int) -> dict[str, Any]:
         # that quietly copied them would stop being a summary.
         "knobs": knobs,
         "knobs_dropped": dropped,
+        # The pacing this run would have kept (dry runs do not sleep it), summed
+        # by ``pause`` in one place rather than by each page's own counter.
+        "waited": round(float(waited), 1),
         "verdict": verdict,
         "created_at": str(row["created_at"] or "") if row is not None else "",
         "finished_at": str(row["finished_at"] or "") if row is not None else "",
     }
 
 
-def write(settings: Any, store: Any, task: Any, *, ok: int,
-          failed: int) -> Path | None:
+def write(settings: Any, store: Any, task: Any, *, ok: int, failed: int,
+          waited: float = 0.0) -> Path | None:
     """Write the receipt; a failure to write one never breaks the run."""
     try:
-        body = build(store, task, ok=ok, failed=failed)
+        body = build(store, task, ok=ok, failed=failed, waited=waited)
         target = receipt_dir(settings)
         target.mkdir(parents=True, exist_ok=True)
         path = target / f"{body['feature']}-{body['task_id']}.json"
@@ -160,6 +164,7 @@ def write_run(settings: Any, feature: str, *, exit_code: int,
         "results": {"planned": 0, "sent": 0, "failed": 0},
         "knobs": {"live": live},
         "knobs_dropped": 0,
+        "waited": 0.0,
         "verdict": ("failed" if exit_code else
                     ("dry-run" if not live else "done")),
         "created_at": stamp,
@@ -190,7 +195,8 @@ def line(body: dict[str, Any]) -> str:
             f"{str(body.get('mode') or '?'):8s} "
             f"planned {int(body.get('planned') or 0):4d}  "
             f"ok {int(body.get('ok') or 0):4d}  "
-            f"failed {int(body.get('failed') or 0):4d}  {verdict}")
+            f"failed {int(body.get('failed') or 0):4d}  "
+            f"waited {float(body.get('waited') or 0):7.1f}s  {verdict}")
 
 
 #: The receipt fields a diff compares besides the knobs.
@@ -247,6 +253,9 @@ def validate(body: Any) -> list[str]:
                 problems.append(f"results.{key} is not an integer: {value!r}")
             elif value < 0:
                 problems.append(f"results.{key} is negative: {value}")
+    waited = body.get("waited")
+    if not isinstance(waited, (int, float)) or isinstance(waited, bool) or waited < 0:
+        problems.append(f"waited is not a duration: {waited!r}")
     if body.get("verdict") not in VERDICTS:
         problems.append(f"verdict {body.get('verdict')!r} not in {VERDICTS}")
     for key in ("feature", "task", "mode", "created_at", "finished_at"):

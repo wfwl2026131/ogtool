@@ -260,3 +260,30 @@ def test_diff_ignores_the_noise_and_finds_the_knob():
     assert "knobs.extra" in keys
     assert "task_id" not in keys
     assert "finished_at" not in keys
+
+
+def test_the_receipt_records_the_pacing_the_run_planned(ctx, settings):
+    """``waited`` is summed by ``pause``, so it needs no per-feature counter."""
+    from ogtool.features._common import pause
+
+    assert ctx.waited == 0.0
+    pause(ctx, 1.5)
+    pause(ctx, 0.5)
+    assert ctx.waited == pytest.approx(2.0)
+    # A dry run must not sleep its own plan away.
+    assert ctx.waited == pytest.approx(2.0)
+
+
+def test_a_run_writes_the_waited_total_it_accumulated(ctx, settings):
+    from ogtool.features.add_contact import ContactConfig
+    from ogtool.features.add_contact import run as add_run
+
+    config = ContactConfig(contacts=["@c1", "@c2"],
+                           operation_interval_min_ms=1500,
+                           operation_interval_max_ms=1500,
+                           request_interval_ms=1000)
+    assert add_run(config, ctx) == 0
+    body = json.loads(next(receipts.receipt_dir(settings)
+                           .glob("add_contact-*.json")).read_text())
+    assert body["waited"] > 0
+    assert body["waited"] == pytest.approx(ctx.waited, abs=0.1)

@@ -8,6 +8,7 @@ stays about its own subject.
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any
 
@@ -125,7 +126,8 @@ def close_task(ctx: RunContext, task: TaskRef, *, ok: int, failed: int,
     ctx.store.finish_task(task.id, sent=ok, failed=failed, status=final)
     # One receipt per run, written where every page already passes: the 25-item
     # sweep can only vouch for a feature if the run left something to read.
-    receipts.write(ctx.settings, ctx.store, task, ok=ok, failed=failed)
+    receipts.write(ctx.settings, ctx.store, task, ok=ok, failed=failed,
+                   waited=ctx.waited)
 
 
 def record(ctx: RunContext, task: TaskRef, account: str, subject: str,
@@ -196,6 +198,11 @@ def pause(ctx: RunContext, seconds: float) -> None:
     A dry run must finish instantly, so it reports the interval instead of
     sleeping it; a live run has to actually keep the pace the page set.
     """
+    if seconds and seconds > 0:
+        # A stand-in context in a test may not carry the counter; the total is
+        # accounting, never a reason for a run to die.
+        with contextlib.suppress(AttributeError):
+            ctx.waited += float(seconds)
     if ctx.live and seconds and seconds > 0:
         time.sleep(seconds)
 

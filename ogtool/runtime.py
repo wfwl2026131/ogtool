@@ -21,6 +21,11 @@ class RunContext:
     task_id: int | None = None
     script: Script = field(default_factory=Script)
     degraded: bool = False
+    #: Seconds this run is pacing itself by, accumulated by ``pause``. A dry run
+    #: reports the interval instead of sleeping it, so this is the plan's own
+    #: answer to "how long would this take" - and it is measured in one place
+    #: instead of each page keeping its own total.
+    waited: float = 0.0
     ai: object | None = field(default=None, repr=False)
     _sender: object | None = field(default=None, repr=False)
 

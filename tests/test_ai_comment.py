@@ -233,6 +233,7 @@ def test_like_only_mode_reacts_without_commenting(ctx, capsys):
     class LiveCtx:
         live = False
         task_id = None
+        waited = 0.0
 
         def __init__(self, inner):
             self.inner = inner
@@ -287,6 +288,7 @@ def test_retry_max_retries_a_failed_comment(ctx, capsys):
     class LiveCtx:
         live = False
         task_id = None
+        waited = 0.0
 
         def __init__(self, inner):
             self.inner = inner
