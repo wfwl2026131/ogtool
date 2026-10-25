@@ -266,3 +266,63 @@ def test_max_join_count_never_overrides_the_per_account_cap():
     targets = parse_many(["@g1", "@g2", "@g3"], "group")
     pairs = assign(["a", "b"], targets, 1, 0, max_join_count=3)
     assert len(pairs) == 2
+
+
+def test_each_account_joins_all_groups_is_a_cross_product():
+    """``joinMode``: the page's two modes are rotation or cross product."""
+    from ogtool.features.batch_join import every_account
+
+    targets = parse_many(["@g1", "@g2"], "group")
+    pairs = every_account(["a", "b"], targets, 0, 0, 0)
+    assert [(account, target.ref) for account, target in pairs] == [
+        ("a", "@g1"), ("a", "@g2"), ("b", "@g1"), ("b", "@g2")]
+
+
+def test_all_groups_honours_the_per_account_cap_and_exec_cap():
+    from ogtool.features.batch_join import every_account
+
+    targets = parse_many(["@g1", "@g2", "@g3"], "group")
+    assert len(every_account(["a", "b"], targets, 1, 0, 0)) == 2
+    assert len(every_account(["a", "b"], targets, 0, 3, 0)) == 3
+    assert len(every_account(["a", "b"], targets, 0, 0, 1)) == 1
+
+
+def test_join_mode_all_prints_the_cross_product(ctx, capsys):
+    from ogtool.features.batch_join import JoinConfig, run
+
+    config = JoinConfig(targets=parse_many(["@g1", "@g2"], "group"),
+                        join_mode="all", request_interval=0,
+                        account_interval=0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "join mode: each account joins all groups (4 join(s))" in output
+
+
+def test_the_per_account_interval_is_a_range():
+    """``perAccountJoinIntervalMin/Max``: a draw, not a fixed number."""
+    from ogtool.features.batch_join import gap
+    from ogtool.runner import Job
+
+    config = JoinConfig(request_interval=0, account_interval=10,
+                        per_account_interval_min=30, per_account_interval_max=60)
+    first = Job(account="a", subject="@g1")
+    same = Job(account="a", subject="@g2")
+    values = {gap(config, same, first) for _ in range(20)}
+    assert min(values) >= 30
+    assert max(values) <= 60
+    assert len(values) > 1
+
+
+def test_a_per_account_range_below_one_second_is_a_config_error():
+    import pytest
+
+    from ogtool.config import ConfigError
+    from ogtool.features.batch_join import JoinConfig
+
+    class Settings:
+        pass
+
+    with pytest.raises(ConfigError):
+        JoinConfig.from_dict({"batch_join": {
+            "targets": ["@g1"], "per_account_join_interval_min_ms": 500,
+        }}, Settings())

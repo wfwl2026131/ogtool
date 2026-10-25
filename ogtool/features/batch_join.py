@@ -8,6 +8,7 @@ perform it, with the account that would perform it.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from functools import partial
 
@@ -171,7 +172,7 @@ class JoinConfig:
     def from_dict(cls, raw: dict, settings: Settings) -> JoinConfig:
         del settings
         data = section(raw, SECTION)
-        return cls(
+        config = cls(
             account_labels=accounts_of(raw, data),
             targets=targets_of(data, kind="group"),
             request_interval=num(data, "request_interval", 5.0),
@@ -220,6 +221,39 @@ class JoinConfig:
                                    minimum=0),
             task_name=name_of(raw, data, "batch-join"),
         )
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        """The page's own configuration errors, in the page's own words."""
+        if self.per_account_interval_max and \
+                self.per_account_interval_max < self.per_account_interval_min:
+            raise ConfigError(
+                f"{SECTION}: per-account join interval max must be >= min")
+        if 0 < self.per_account_interval_min < 1:
+            raise ConfigError(
+                f"{SECTION}: per-account join interval must be at least "
+                f"1 second")
+        if 0 < self.request_timeout < 1:
+            raise ConfigError(
+                f"{SECTION}: request timeout must be at least 1 second")
+
+
+def every_account(accounts: list[str], targets: list[Target],
+                  per_account_cap: int, exec_cap: int,
+                  max_join_count: int = 0) -> list[tuple[str, Target]]:
+    """``Each account joins all groups``: the cross product, not a rotation."""
+    pairs: list[tuple[str, Target]] = []
+    for account in accounts:
+        for used, target in enumerate(targets):
+            if per_account_cap and used >= per_account_cap:
+                break
+            if exec_cap and len(pairs) >= exec_cap:
+                return pairs
+            if max_join_count and len(pairs) >= max_join_count:
+                return pairs
+            pairs.append((account, target))
+    return pairs
 
 
 def assign(accounts: list[str], targets: list[Target],
@@ -263,7 +297,14 @@ def gap(config: JoinConfig, job: Job, previous: Job | None = None,
     if leaving and config.leave_interval:
         wait = max(wait, config.leave_interval)
     if previous is not None and previous.account == job.account:
-        wait = max(wait, config.account_interval)
+        if config.per_account_interval_max:
+            # ``perAccountJoinIntervalMin/Max``: a range, not a number - the
+            # account's own gap is drawn from it so a pool does not move in
+            # lockstep.
+            wait = max(wait, random.uniform(config.per_account_interval_min,
+                                            config.per_account_interval_max))
+        else:
+            wait = max(wait, config.account_interval)
     return wait
 
 
@@ -304,8 +345,15 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
         return 2
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
-    pairs = assign(labels, targets, config.per_account_cap,
-                   config.exec_cap, config.max_join_count) if labels else []
+    mode = config.join_mode.strip().lower().replace("-", "_").replace(" ", "_")
+    all_groups = mode in ("all", "each", "each_account_all_groups",
+                          "all_groups", "every")
+    build = every_account if all_groups else assign
+    pairs = build(labels, targets, config.per_account_cap,
+                  config.exec_cap, config.max_join_count) if labels else []
+    if all_groups and len(pairs) > 1:
+        print(f"join mode: each account joins all groups ({len(pairs)} "
+              f"join(s))")
     if config.max_join_count and len(targets) > config.max_join_count:
         print(f"max_join_count: {config.max_join_count} of "
               f"{len(targets)} target(s) planned")
