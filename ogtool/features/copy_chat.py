@@ -216,6 +216,18 @@ class CopyConfig:
     account_groups: list[list[str]] = field(default_factory=list)
     messages: list[SourceMessage] = field(default_factory=list)
     ignores: dict[str, bool] = field(default_factory=dict)
+    #: ``keywordReplacementGroups``: per-target replacement sets, the same way
+    #: ``filterKeywordGroups`` gives per-target keywords.
+    replacement_groups: list[list[tuple[str, str]]] = field(
+        default_factory=list)
+    #: ``sourcesPerTarget``: how many sources feed one target in multi-to-one.
+    sources_per_target: int = 0
+    #: ``dailyTextLimitPerAccount``: a per-account cap under the task cap.
+    daily_text_limit_per_account: int = 0
+    #: ``collectionIntervalMinutes``: how often the collector polls.
+    collection_interval_minutes: int = 0
+    #: ``crossoverMessageId``: passive mode starts after this message.
+    crossover_message_id: int = 0
     ai_polish_level: int = 0
     message_speed: int = 0
     lightweight_mode: bool = False
@@ -247,8 +259,14 @@ class CopyConfig:
             daily_limit=num(data, "daily_limit", 0, kind=int, minimum=0),
             multiplier=num(data, "multiplier", 1, kind=int, minimum=1),
             polish=num(data, "polish", 0, kind=int, minimum=0),
-            interval_min=num(data, "interval_min", 5.0),
-            interval_max=num(data, "interval_max", 12.0),
+            interval_min=num(
+                data, "min_speech_interval_seconds",
+                num(data, "interval_min", 5.0)),
+            interval_max=num(
+                data, "max_speech_interval_seconds",
+                num(data, "interval_max", 12.0)),
+            replacement_groups=replacement_groups(
+                data.get("keyword_replacement_groups")),
             groups=keyword_groups(data.get("filter_keywords")),
             senders=_split(data.get("filter_senders")),
             replacements=parse_replacements(_lines(data.get("replacements"))),
@@ -257,10 +275,31 @@ class CopyConfig:
             ignores=read_ignores(data),
             ai_polish_level=num(data, "ai_polish_level", 0, kind=int,
                                 minimum=0),
+            sources_per_target=num(data, "sources_per_target", 0, kind=int,
+                                   minimum=0),
+            daily_text_limit_per_account=num(
+                data, "daily_text_limit_per_account", 0, kind=int, minimum=0),
+            collection_interval_minutes=num(
+                data, "collection_interval_minutes", 0, kind=int, minimum=0),
+            crossover_message_id=num(data, "crossover_message_id", 0, kind=int,
+                                     minimum=0),
             message_speed=num(data, "message_speed", 0, kind=int, minimum=0),
             lightweight_mode=bool(data.get("lightweight_mode")),
             task_name=name_of(raw, data, "copy-chat"),
         )
+
+
+def replacement_groups(value: object) -> list[list[tuple[str, str]]]:
+    """``keywordReplacementGroups``: one replacement list per target index."""
+    if not value:
+        return []
+    groups: list[list[tuple[str, str]]] = []
+    for block in value if isinstance(value, (list, tuple)) else [value]:
+        if isinstance(block, str):
+            groups.append(parse_replacements(block.splitlines()))
+        else:
+            groups.append(parse_replacements([str(item) for item in block]))
+    return groups
 
 
 def _lines(value: object) -> list[str]:
@@ -343,11 +382,39 @@ class TargetPlan:
     accounts: list[str]
 
 
+def sources_for_target(messages: list[SourceMessage], sources: list[str],
+                       per_target: int) -> list[SourceMessage]:
+    """``sourcesPerTarget``: split the capture so each target sees its slice.
+
+    The page's multi-to-one mode gives a target a fixed number of sources
+    instead of the whole list, which is how one target keeps a narrow theme
+    while another target of the same task copies something else.
+    """
+    if per_target <= 0 or not sources:
+        return messages
+    chunks = [sources[index:index + per_target]
+              for index in range(0, len(sources), per_target)]
+    return chunks
+
+
 def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
     """One plan per target: its rule group, its survivors, its accounts."""
-    sources = by_peer(config.messages, config.sources)
+    all_sources = by_peer(config.messages, config.sources)
+    if config.crossover_message_id:
+        # Passive mode starts after the crossover: everything up to and
+        # including it was already handled by the previous run.
+        all_sources = [message for message in all_sources
+                       if message.message_id > config.crossover_message_id]
+    chunks = sources_for_target(all_sources, config.sources,
+                                config.sources_per_target) \
+        if config.sources_per_target else None
     plans: list[TargetPlan] = []
     for index, target in enumerate(config.targets):
+        sources = all_sources
+        if chunks:
+            allowed = set(chunks[index % len(chunks)])
+            sources = [message for message in all_sources
+                       if message.peer in allowed]
         keywords = rule_for(config.groups, index)
         collected = Collected(scanned=len(sources))
         for message in sources:
@@ -355,13 +422,13 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
             if reason:
                 collected.drop(reason)
                 continue
-            if (config.replacements and message.text
-                    and not config.lightweight_mode):
+            rules = (rule_for(config.replacement_groups, index)
+                     or config.replacements)
+            if (rules and message.text and not config.lightweight_mode):
                 # Replace on a copy: the same capture feeds every target, and
                 # a second pass would apply the rules twice.
                 message = replace(
-                    message, text=replace_keywords(message.text,
-                                                   config.replacements))
+                    message, text=replace_keywords(message.text, rules))
             collected.kept.append(message)
         if index < len(config.account_groups) and config.account_groups[index]:
             accounts = config.account_groups[index]
@@ -443,6 +510,11 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         interval=f"{config.interval_min:.0f}-{config.interval_max:.0f}s",
         groups=len(config.groups),
         queue=total,
+        sources_per_target=config.sources_per_target or "-",
+        daily_text_limit=config.daily_text_limit_per_account or "-",
+        collection_interval=(f"{config.collection_interval_minutes} min"
+                             if config.collection_interval_minutes else "-"),
+        crossover=(config.crossover_message_id or "-"),
     )
     on = [name for name, value in config.ignores.items() if value]
     print("忽略开关：" + ("  ".join(on) if on else "全部关闭"))
