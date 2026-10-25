@@ -24,6 +24,7 @@ from ._common import (
     accounts_of,
     close_task,
     name_of,
+    num,
     open_task,
     out_dir,
     section,
@@ -58,6 +59,26 @@ class LoginConfig:
     logout: str = ""
     label_prefix: str = ""
     limit: int = 0
+    # --- batch_login_config.json, by the page's own key names -------------
+    #: ``qrTimeoutSec`` / ``smsTimeoutSec``: how long each code path waits.
+    qr_timeout_sec: int = 120
+    sms_timeout_sec: int = 120
+    #: ``loginBaseApi``: the panel endpoint; must be http(s), per the page.
+    login_base_api: str = ""
+    #: ``twoFactorPassword`` / ``storedLoginTokens``: secrets, never printed.
+    two_factor_password: str = ""
+    #: ``dynamicProxyEnabled`` / ``dynamicProxy``: ip:port:user:pass, with
+    #: ``{SessionKey}`` expanded per account the way the page does.
+    dynamic_proxy_enabled: bool = False
+    dynamic_proxy: str = ""
+    #: ``hideImportDialog`` / ``importSessionOnDrop`` / ``collectNestedSessionFiles``
+    hide_import_dialog: bool = False
+    import_session_on_drop: bool = True
+    collect_nested_session_files: bool = True
+    #: ``loginMethod`` / ``loginMode`` / ``maxConcurrent``.
+    login_method: str = "session"
+    login_mode: str = "silent"
+    max_concurrent: int = 1
     task_name: str = "batch-login"
 
     @classmethod
@@ -70,6 +91,22 @@ class LoginConfig:
             raise ConfigError(
                 f"{SECTION}: give --import-folder, --import-zip or --logout"
             )
+        base_api = text(data, "login_base_api")
+        if base_api and not base_api.startswith(("http://", "https://")):
+            # The page refuses this itself ("Login Base API must start with
+            # http:// or https://"), so the same sentence is the error here.
+            raise ConfigError(
+                f"{SECTION}: login_base_api must start with http:// or "
+                f"https://, is {base_api}")
+        proxy = text(data, "dynamic_proxy")
+        proxy_on = bool(data.get("dynamic_proxy_enabled", False))
+        if proxy_on and not proxy:
+            # "Dynamic proxy is enabled but empty." is the page's own wording.
+            raise ConfigError(
+                f"{SECTION}: dynamic proxy is enabled but dynamic_proxy is "
+                f"empty")
+        if proxy:
+            _check_proxy(proxy)
         return cls(
             account_labels=accounts_of(raw, data),
             import_folder=folder,
@@ -78,8 +115,74 @@ class LoginConfig:
             logout=text(data, "logout"),
             label_prefix=text(data, "label_prefix"),
             limit=num_limit(data),
+            qr_timeout_sec=num(data, "qr_timeout_sec", 120, kind=int,
+                               minimum=1),
+            sms_timeout_sec=num(data, "sms_timeout_sec", 120, kind=int,
+                                minimum=1),
+            login_base_api=base_api,
+            two_factor_password=str(data.get("two_factor_password") or ""),
+            dynamic_proxy_enabled=proxy_on,
+            dynamic_proxy=proxy,
+            hide_import_dialog=bool(data.get("hide_import_dialog", False)),
+            import_session_on_drop=bool(
+                data.get("import_session_on_drop", True)),
+            collect_nested_session_files=bool(
+                data.get("collect_nested_session_files", True)),
+            login_method=str(data.get("login_method") or "session"),
+            login_mode=str(data.get("login_mode") or "silent"),
+            max_concurrent=num(data, "max_concurrent", 1, kind=int,
+                               minimum=1),
             task_name=name_of(raw, data, "batch-login"),
         )
+
+
+PROXY_PARTS = 4
+
+
+def _check_proxy(value: str) -> None:
+    """``ip:port:username:password``, with ``{SessionKey}`` allowed anywhere.
+
+    The page's own message ("Invalid proxy format. Expected
+    ip:port:username:password.") is the error text: a proxy that silently does
+    nothing is a login that silently fails.
+    """
+    if value.count(":") < PROXY_PARTS - 1:
+        raise ConfigError(
+            f"{SECTION}: invalid proxy format, expected "
+            f"ip:port:username:password, got {value}")
+    host, port = value.split(":")[:2]
+    if not host or not port.isdigit() or not 0 < int(port) < 65536:
+        raise ConfigError(
+            f"{SECTION}: invalid proxy host or port in {value}")
+
+
+def proxy_for(config: LoginConfig, label: str) -> str:
+    """The proxy line for one account, with ``{SessionKey}`` filled in.
+
+    The page supports a dynamic proxy whose user name carries a random key
+    (``{SessionKey}`` / ``{SessionKey#12}`` / ``{SessionKey#d#12}``); the key is
+    derived from the account label so a dry run is reproducible.
+    """
+    if not config.dynamic_proxy:
+        return ""
+    import hashlib
+
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()
+    value = config.dynamic_proxy
+    if "{SessionKey#d#12}" in value:
+        value = value.replace("{SessionKey#d#12}",
+                              "".join(char for char in digest if char.isdigit())[:12])
+    if "{SessionKey#12}" in value:
+        value = value.replace("{SessionKey#12}", digest[:12])
+    if "{SessionKey}" in value:
+        value = value.replace("{SessionKey}", _alnum_key(digest[:8]))
+    return value
+
+
+def _alnum_key(source: str) -> str:
+    """Eight alphanumerics: the page's plain ``{SessionKey}`` form."""
+    alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+    return "".join(alphabet[int(char, 16)] for char in source)
 
 
 def num_limit(data: dict) -> int:
@@ -119,6 +222,19 @@ def read_metadata(session: Path) -> dict[str, str]:
 
 def run(config: LoginConfig, ctx: RunContext) -> int:
     task = open_task(ctx, config.task_name, FEATURE, {"section": SECTION}, 0)
+    print(f"login method: {config.login_method}  mode: {config.login_mode}")
+    print(f"timeouts: qr {config.qr_timeout_sec}s  sms {config.sms_timeout_sec}s")
+    if config.login_base_api:
+        print(f"login base api: {config.login_base_api}")
+    if config.dynamic_proxy_enabled:
+        # The proxy line carries a password, so only its shape is printed.
+        host, port = config.dynamic_proxy.split(":")[:2]
+        print(f"dynamic proxy: {host}:{port} "
+              f"(session key: {'yes' if '{SessionKey' in config.dynamic_proxy else 'no'})")
+    print(f"two-factor password: "
+          f"{'set' if config.two_factor_password else 'not set'}")
+    print(f"max concurrent: {config.max_concurrent}  "
+          f"nested folders: {'yes' if config.collect_nested_session_files else 'no'}")
     imported = 0
     folder = Path(config.import_folder).expanduser() if config.import_folder else None
 
