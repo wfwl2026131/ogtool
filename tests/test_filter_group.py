@@ -86,3 +86,61 @@ def test_a_dry_run_filters_without_waiting(ctx, slept):
                          global_interval_ms=500, account_interval_ms=800)
     run(config, ctx)
     assert slept == []
+
+
+class LinkSender:
+    """A resolve sender that can also export a link."""
+
+    def __init__(self, links: dict[str, str] | None = None) -> None:
+        self.links = links or {}
+
+    def resolve(self, account, target):
+        from ogtool.senders import SendResult
+
+        return SendResult(ok=True)
+
+    def invite_link(self, account, target):
+        from ogtool.senders import SendResult
+
+        link = self.links.get(target.ref)
+        if link is None:
+            return SendResult(ok=False, code="CHAT_ADMIN_REQUIRED")
+        return SendResult(ok=True, detail=link)
+
+    def chat_count(self, account):
+        from ogtool.senders import SendResult
+
+        return SendResult(ok=True)
+
+    def close(self):
+        pass
+
+
+def test_ensure_invite_link_writes_one_line_per_group(ctx, live, tmp_path, capsys):
+    """``ensureInviteLinkSnapshot``: the page's own link column."""
+    sender = LinkSender({"@g1": "https://t.me/+abc"})
+    live(sender)
+    config = GroupConfig(groups=["@g1"], threads=1, output_dir=str(tmp_path),
+                         ensure_invite_link=True)
+    assert run(config, ctx) == 0
+    written = (tmp_path / "filter_group_invite_links.txt").read_text()
+    assert "@g1\thttps://t.me/+abc" in written
+    output = capsys.readouterr().out
+    assert "1 group(s) exported" in output
+
+
+def test_a_dry_run_exports_nothing_and_says_so(ctx, tmp_path, capsys):
+    config = GroupConfig(groups=["@g1"], threads=1, output_dir=str(tmp_path),
+                         ensure_invite_link=True)
+    assert run(config, ctx) == 0
+    assert "invite links: skipped" in capsys.readouterr().out
+    assert not (tmp_path / "filter_group_invite_links.txt").exists()
+
+
+def test_a_group_without_a_link_still_gets_a_row(ctx, live, tmp_path):
+    live(LinkSender({}))
+    config = GroupConfig(groups=["@g1"], threads=1, output_dir=str(tmp_path),
+                         ensure_invite_link=True)
+    assert run(config, ctx) == 0
+    written = (tmp_path / "filter_group_invite_links.txt").read_text()
+    assert "@g1\tCHAT_ADMIN_REQUIRED" in written

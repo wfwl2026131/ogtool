@@ -561,6 +561,11 @@ class DryRunSender:
             result.detail = target.title or target.ref
         return result
 
+    def invite_link(self, account: str, target: Target) -> SendResult:
+        """A dry run writes no link: exporting one needs a real session."""
+        return self._answer("invite_link", account,
+                            f"target={target.display()}")
+
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         return self._answer("proxy", account, f"proxy={proxy or '-'}")
 
@@ -708,6 +713,34 @@ class TelethonSender:
             raise
         self._clients[account] = client
         return client
+
+    def invite_link(self, account: str, target: Target) -> SendResult:
+        """``ensureInviteLinkSnapshot``: one usable link per group.
+
+        ``ExportChatInviteRequest`` returns an existing link when the account may
+        export one, and raises when it may not - which is exactly the answer the
+        page wants to record.
+        """
+
+        def action() -> SendResult:
+            from telethon.tl.functions.messages import ExportChatInviteRequest
+
+            client = self._client(account)
+            peer = self._first_peer(account, target)
+            result = client(ExportChatInviteRequest(peer=peer))
+            answer = SendResult(ok=True)
+            answer.detail = str(getattr(result, "link", "") or "")
+            return answer
+
+        return self._guard("invite_link", account, action)
+
+    def _first_peer(self, account: str, target: Target) -> Any:
+        for variant in peer_variants(target):
+            try:
+                return self._client(account).get_input_entity(variant)
+            except Exception:  # noqa: BLE001 - try the next form
+                continue
+        raise ValueError(f"cannot resolve {target.display()}")
 
     def _guard(self, operation: str, account: str, action: Any) -> SendResult:
         try:

@@ -198,7 +198,11 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
     for line in stats.lines("Processed"):
         print(line)
 
+    links = export_links(config, ctx, sender, labels, buckets[CAN_SEND])
     base = config.output_dir or out_dir(ctx, {}, ctx.settings)
+    if links is not None:
+        write_lines(f"{base}/filter_group_invite_links.txt", links,
+                    header="invite links")
     for name in BUCKETS:
         write_lines(f"{base}/filter_group_{_slug(name)}.txt", buckets[name],
                     header=name)
@@ -209,6 +213,39 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
           f"can_send {len(buckets[CAN_SEND])}")
     close_task(ctx, task, ok=stats.ok, failed=stats.failed)
     return 0
+
+
+def export_links(config: GroupConfig, ctx: RunContext, sender: object,
+                 labels: list[str],
+                 groups: list[str]) -> list[str] | None:
+    """``ensureInviteLinkSnapshot``: one line per group, ``group<TAB>link``.
+
+    Only groups that can be posted in get asked: exporting a link is a write, and
+    ``can_send`` is the bucket this page exists to produce.
+    """
+    if not config.ensure_invite_link:
+        return None
+    if not ctx.live:
+        print("invite links: skipped (a dry run exports nothing)")
+        return None
+    if not groups:
+        print("invite links: no can_send group to export")
+        return []
+    rows: list[str] = []
+    for index, group in enumerate(groups, start=1):
+        account = labels[(index - 1) % len(labels)] if labels else "-"
+        target = parse_many([group], "group")[0]
+        result = sender.invite_link(account, target)  # type: ignore[attr-defined]
+        if result.ok and result.detail:
+            rows.append(f"{group}\t{result.detail}")
+            print(f"invite link [{index:03d}/{len(groups):03d}] {group} -> "
+                  f"{result.detail}")
+        else:
+            rows.append(f"{group}\t{result.code or 'NO_LINK'}")
+            print(f"invite link [{index:03d}/{len(groups):03d}] {group} -> "
+                  f"{result.code or 'no link'}")
+    print(f"invite links: {len(rows)} group(s) exported")
+    return rows
 
 
 def _slug(name: str) -> str:
