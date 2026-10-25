@@ -34,30 +34,23 @@ import sys
 
 #: ``feature.field`` -> why it is not wired, decided once, kept visible.
 KNOWN = {
-    "ai_clone.poll_interval":
-        "paces the reference's passive follow mode, which this run does not have",
-    "ai_comment.poll_interval": "same passive-mode cadence as ai_clone",
+
     "batch_invite.admin_account":
         "names which account acts as the group admin; the invite itself does not "
         "need it, and nothing in the dump shows the promotion step",
     "batch_join.leave_mode":
         "the leaveMode values are not in the dump; leave/mute already follow the "
         "operation_type and the two toggles",
-    "batch_rename.parallel_mode":
-        "renames are one profile edit per account; lanes would help only with "
-        "many accounts, and the page's own timing knobs already pace a pool",
+    "ai_comment.poll_interval":
+        "the passive listener's fallback polling cadence; this run is one-shot",
     "ai_chat.sticker_send_per_mille":
         "needs a sticker pool; this page carries none and Content.sticker "
         "takes a path",
-    "ai_comment.sticker_send_percent": "same sticker pool problem as ai_chat",
     "ai_clone.passive":
         "the reference's own long-running follow mode; this run is one-shot",
     "ai_clone.last_source_message_id":
         "the reference's resumable pair watermark, not a page option",
     "ai_clone.total_cloned": "a counter the reference persists, not an option",
-    "ai_clone.only_root_forwarded":
-        "the key exists but nothing in the dump shows what 'root' means here",
-    "ai_comment.only_root_forwarded": "same unproven semantics as ai_clone",
     "batch_login.account_labels":
         "consumed through accounts_of(raw, data) - a heuristic false positive",
     "batch_login.hide_import_dialog":
@@ -156,12 +149,14 @@ def main(argv: list[str] | None = None) -> int:
     root = pathlib.Path(args.path)
     total = 0
     undecided = 0
+    seen: set[str] = set()
     for path in sorted(root.glob("*.py")):
         dead = audit(path)
         if not dead:
             continue
         total += len(dead)
         stem = path.stem
+        seen.update(f"{stem}.{name}" for name in dead)
         if not args.count:
             print(f"{path.name}: {', '.join(dead)}")
             if args.known:
@@ -171,7 +166,15 @@ def main(argv: list[str] | None = None) -> int:
                         print(f"  {name}: {reason}")
         undecided += sum(1 for name in dead
                          if f"{stem}.{name}" not in KNOWN)
-    print(f"dead: {total} (undecided: {undecided})")
+    stale = sorted(set(KNOWN) - seen)
+    if stale:
+        # A decision about a knob that is gone (or now wired) is drift: the
+        # report would otherwise keep claiming today what was true last week.
+        print(f"stale: {', '.join(stale)}")
+    print(f"dead: {total} (undecided: {undecided}, stale: {len(stale)})")
+    if stale or undecided:
+        return 1
+    return 0
     return 0
 
 
