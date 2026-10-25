@@ -148,7 +148,7 @@ class MassV2Config:
         data = section(raw, SECTION)
         if not text(data, "text") and not text(data, "media"):
             raise ConfigError(f"{SECTION}: no message text or media given")
-        return cls(
+        config = cls(
             account_labels=accounts_of(raw, data),
             use_own_contacts=bool(data.get("use_own_contacts", True)),
             text=text(data, "text"),
@@ -173,6 +173,16 @@ class MassV2Config:
             simulated=parse_contacts(data.get("contact"), data),
             task_name=name_of(raw, data, "mass-send-v2"),
         )
+        config.validate()
+        return config
+
+    def validate(self) -> None:
+        """``useOwnContacts`` off means the run has no contact source at all."""
+        if not self.use_own_contacts and not self.targets \
+                and not self.simulated:
+            raise ConfigError(
+                f"{SECTION}: use_own_contacts is off and no targets given - "
+                f"there is no contact to message")
 
 
 def distribute_targets(refs: list[str], labels: list[str],
@@ -389,9 +399,16 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
     if config.targets:
         book = distribute_targets(config.targets, labels,
                                   config.allow_duplicates)
-    else:
+    elif config.use_own_contacts:
         seed_contacts(sender, config.simulated)
         book = collect_book(sender, labels, config.simulated) if labels else {}
+    else:
+        # ``useOwnContacts`` off with nothing pasted: there is no one to message.
+        # from_dict already refuses this, so reaching it means a config built in
+        # code - still an error, never a silent empty run.
+        raise ConfigError(
+            f"{SECTION}: use_own_contacts is off and no targets given - "
+            f"there is no contact to message")
     flat, duplicates = dedupe_contacts(book, config.allow_duplicates)
     already = ctx.store.sent_pairs(FEATURE) if config.resume else set()
     budgets = {label: Budget(config.daily_limit,

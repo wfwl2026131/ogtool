@@ -208,3 +208,37 @@ def test_without_a_request_interval_the_lane_gap_still_wins():
     plan = schedule(contacts, config)
     offsets = [pair.offset for pair in plan.pairs]
     assert offsets[1] - offsets[0] >= 2.0
+
+
+def test_own_contacts_off_without_targets_is_a_config_error():
+    """``useOwnContacts`` off means the run has no source; say it, don't guess."""
+    import pytest
+
+    from ogtool.config import ConfigError
+    from ogtool.features.mass_send_v2 import MassV2Config
+
+    class Settings:
+        class runtime:
+            @staticmethod
+            def clamp_threads(value):
+                return value
+
+    with pytest.raises(ConfigError):
+        MassV2Config.from_dict({"mass_send_v2": {
+            "text": "hi", "use_own_contacts": False,
+        }}, Settings())
+
+
+def test_own_contacts_on_still_parses_without_targets():
+    from ogtool.features.mass_send_v2 import MassV2Config
+
+    class Settings:
+        class runtime:
+            @staticmethod
+            def clamp_threads(value):
+                return value
+
+    config = MassV2Config.from_dict({"mass_send_v2": {"text": "hi"}},
+                                    Settings())
+    assert config.use_own_contacts is True
+    assert config.targets == []
