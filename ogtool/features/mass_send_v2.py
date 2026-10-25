@@ -133,6 +133,12 @@ class MassV2Config:
     exec_cap: int = 0
     allow_duplicates: bool = False
     resume: bool = True
+    #: ``perTargetSuccessCap``: how many messages one contact may get.
+    per_target_success_cap: int = 0
+    #: ``requestIntervalMsec``: the gap one account keeps between requests.
+    request_interval_ms: int = 1000
+    #: ``countExistingContacts``: report what every account already has.
+    count_existing: bool = False
     targets: list[str] = field(default_factory=list)
     simulated: dict[str, list[Contact]] = field(default_factory=dict)
     task_name: str = "mass-send-v2"
@@ -156,6 +162,11 @@ class MassV2Config:
             success_cap=num(data, "success_cap", 0, kind=int),
             exec_cap=num(data, "exec_cap", 0, kind=int),
             allow_duplicates=bool(data.get("allow_duplicates", False)),
+            per_target_success_cap=num(data, "per_target_success_cap", 0,
+                                       kind=int, minimum=0),
+            request_interval_ms=num(data, "request_interval_ms", 1000,
+                                    kind=int, minimum=0),
+            count_existing=bool(data.get("count_existing")),
             resume=bool(data.get("resume", True)),
             targets=[target.ref for target in collect(
                 text(data, "targets"), data.get("targets_files") or [])],
@@ -351,6 +362,21 @@ def _send_lane(sender: object, ctx: RunContext, task: object,
 _COUNT_LOCK = threading.Lock()
 
 
+def _cap_per_target(pairs: list, cap: int) -> tuple[list, int]:
+    """Keep at most *cap* messages per contact; returns (kept, dropped)."""
+    seen: dict[str, int] = {}
+    kept: list = []
+    dropped = 0
+    for pair in pairs:
+        count = seen.get(pair.target, 0)
+        if count >= cap:
+            dropped += 1
+            continue
+        seen[pair.target] = count + 1
+        kept.append(pair)
+    return kept, dropped
+
+
 def run(config: MassV2Config, ctx: RunContext) -> int:
     accounts: list[Account] = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -384,6 +410,8 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         over_budget=plan.over_budget,
         account_interval=f"{config.account_interval_min:.0f}-"
                          f"{config.account_interval_max:.0f}s",
+        request_interval=f"{config.request_interval_ms} ms",
+        per_target_cap=config.per_target_success_cap or "-",
         group_interval=f"{config.group_interval:.0f}s",
         threads=config.threads,
         daily_limit=config.daily_limit or "-",
@@ -391,6 +419,16 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         exec_cap=config.exec_cap or "-",
         queue=len(plan.pairs),
     )
+    if config.per_target_success_cap:
+        kept, cut = _cap_per_target(plan.pairs, config.per_target_success_cap)
+        plan.pairs = kept
+        print(f"per target cap {config.per_target_success_cap}: "
+              f"{cut} message(s) dropped")
+    if config.count_existing:
+        for label in labels:
+            result = sender.get_contacts(label)
+            state = f"{result.count}" if result.ok else f"unknown ({result.code})"
+            print(f"existing contacts: {label}={state}")
     if not labels:
         print("dry-run: no account bound, only the plan is produced")
 

@@ -4,6 +4,11 @@ Fields: success cap, execution cap, successes per target, request interval in
 milliseconds, operation interval range in milliseconds, threads, and the contact
 list.  The per target cap is what the page calls ``per target success cap``: the same
 number is never added twice beyond it.
+
+The contact list has three sources, as the page does (``contactsInputMode``):
+typed one per line, a text blob, or a file.  ``countExistingContacts`` asks
+every account how many contacts it already has before the run starts, because
+"added 40" means something different on an account that started at 800.
 """
 
 from __future__ import annotations
@@ -38,6 +43,11 @@ TITLE = "#16 批量联系人"
 
 FLAGS = (
     Flag("--contacts", "contacts", str, "contacts, comma separated"),
+    Flag("--contacts-text", "input_text", str,
+         "the same list as one blob, one contact per line"),
+    Flag("--count-existing", "count_existing", None,
+         "ask every account how many contacts it has before adding",
+         action="store_true"),
     Flag("--contacts-file", "files", str, "file with one contact per line",
          action="append"),
     Flag("--success-cap", "success_cap", int, "total successes"),
@@ -56,6 +66,42 @@ FLAGS = (
 )
 
 
+INPUT_MODES = ("manual", "text", "file")
+
+
+def read_contacts(data: dict) -> tuple[list[str], str]:
+    """The contact list and where it came from: the page's three input modes.
+
+    ``manual`` reads ``contacts``, ``text`` reads the ``input_text`` blob (one
+    contact per line), ``file`` reads ``files``.  With no mode given the file
+    wins, then the blob, then the typed list — the order the page fills them.
+    """
+    from ..report import read_lines
+
+    mode = str(data.get("input_mode") or "").lower()
+    if mode and mode not in INPUT_MODES:
+        raise ConfigError(
+            f"{SECTION}: input_mode must be manual, text or file, is {mode}")
+
+    files = data.get("files") or []
+    if isinstance(files, str):
+        files = [files]
+    blob = str(data.get("input_text") or "")
+    typed = lines(data, "contacts")
+
+    if not mode:
+        mode = "file" if files else ("text" if blob.strip() else "manual")
+    if mode == "file":
+        contacts = list(typed)
+        for path in files:
+            contacts.extend(read_lines(str(path)))
+    elif mode == "text":
+        contacts = typed + [row for row in blob.splitlines() if row.strip()]
+    else:
+        contacts = typed
+    return contacts, mode
+
+
 @dataclass(slots=True)
 class ContactConfig:
     account_labels: list[str] = field(default_factory=list)
@@ -68,20 +114,17 @@ class ContactConfig:
     operation_interval_max_ms: int = 1500
     threads: int = 1
     flood_cap: int = 2
+    #: ``manual`` (typed), ``text`` (one blob) or ``file`` (one file per line).
+    input_mode: str = "manual"
+    input_text: str = ""
+    count_existing: bool = False
     task_name: str = "add-contact"
 
     @classmethod
     def from_dict(cls, raw: dict, settings: Settings) -> ContactConfig:
         del settings
         data = section(raw, SECTION)
-        contacts = lines(data, "contacts")
-        files = data.get("files") or []
-        if isinstance(files, str):
-            files = [files]
-        from ..report import read_lines
-
-        for path in files:
-            contacts.extend(read_lines(str(path)))
+        contacts, mode = read_contacts(data)
         if not contacts:
             raise ConfigError(f"{SECTION}: no contacts given (--contacts)")
         return cls(
@@ -97,6 +140,9 @@ class ContactConfig:
                 data, "operation_interval_max_ms", 1500, kind=int),
             threads=num(data, "threads", 1, kind=int, minimum=1),
             flood_cap=num(data, "flood_cap", 2, kind=int),
+            input_mode=mode,
+            input_text=str(data.get("input_text") or ""),
+            count_existing=bool(data.get("count_existing")),
             task_name=name_of(raw, data, "add-contact"),
         )
 
@@ -144,6 +190,25 @@ def gap(config: ContactConfig, rng: random.Random | None = None) -> float:
                                 config.operation_interval_max_ms) / 1000.0)
 
 
+def _count_existing(config: ContactConfig, labels: list[str],
+                    ctx: RunContext) -> dict[str, int]:
+    """Ask each account for its contact count; unknown stays unknown."""
+    sender = ctx.sender()
+    counts: dict[str, int] = {}
+    for account in labels:
+        result = sender.get_contacts(account)  # type: ignore[attr-defined]
+        if result.ok:
+            counts[account] = result.count
+            print(f"existing contacts: {account}={result.count}")
+        else:
+            # A failed count is reported, not filled in with zero: the page
+            # would otherwise claim an account has no contacts at all.
+            print(f"existing contacts: {account} unknown ({result.code})")
+    total = sum(counts.values())
+    print(f"existing contacts total: {total} over {len(counts)} account(s)")
+    return counts
+
+
 def run(config: ContactConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts] or ["-"]
@@ -164,8 +229,11 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
         operation_interval=f"{config.operation_interval_min_ms} - "
                           f"{config.operation_interval_max_ms} ms",
         threads=config.threads,
+        input_mode=config.input_mode,
         queue=len(jobs),
     )
+    if config.count_existing:
+        _count_existing(config, labels, ctx)
 
     task = open_task(ctx, config.task_name, FEATURE,
                      {"contacts": config.contacts}, len(jobs))

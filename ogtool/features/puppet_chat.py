@@ -12,6 +12,7 @@ from __future__ import annotations
 import random
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import chat_pattern
@@ -33,6 +34,7 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     record,
     record_ai,
     section,
@@ -120,6 +122,10 @@ class PuppetConfig:
     polish: int = 0
     ai_polish: bool = False
     pictures: str = ""
+    #: ``scheduleDateTime``: wait for this wall clock time before line one.
+    schedule_at: str = ""
+    #: ``disableLinkPreview``: send the line without a link preview.
+    disable_link_preview: bool = False
     task_name: str = "puppet-chat"
 
     @classmethod
@@ -146,6 +152,8 @@ class PuppetConfig:
             polish=num(data, "polish", 0, kind=int, minimum=0),
             ai_polish=bool(data.get("ai_polish", False)),
             pictures=pictures,
+            schedule_at=text(data, "schedule_at"),
+            disable_link_preview=bool(data.get("disable_link_preview")),
             task_name=name_of(raw, data, "puppet-chat"),
         )
 
@@ -166,13 +174,17 @@ class PlayResult:
         return self.ok + self.failed + self.skipped
 
 
-def _content(message: ChatMessage, pictures: Path) -> Content:
+def _content(message: ChatMessage, pictures: Path,
+             disable_preview: bool = False) -> Content:
     """One script line -> the payload the sender takes."""
     image = str(pictures / message.image) if message.image else ""
     return Content(
         text=message.text,
         media=image,
         sticker=message.sticker.raw if message.sticker else "",
+        # The page's switch turns the preview off; it is carried on the payload
+        # because that is the only place the transport can see it.
+        no_preview=disable_preview,
     )
 
 
@@ -188,6 +200,11 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
     rng = random.Random()
     result = PlayResult()
     budget: dict[str, int] = {}
+
+    wait, when = schedule_wait(config, datetime.now(UTC))
+    if wait:
+        print(f"schedule: {when} (waiting {format_duration(wait)})")
+        pause(ctx, wait)
 
     total = len(config.targets) * len(messages) * config.loops * config.multiplier
     index = 0
@@ -220,7 +237,8 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                 if ctx.live:
                     time.sleep(delay)
 
-                body = _content(message, pictures)
+                body = _content(message, pictures,
+                                config.disable_link_preview)
                 if config.ai_polish and config.polish > 0 and body.text:
                     body = _polish(ctx, task, ai, account, body, config.polish)
                 floods = 0
@@ -296,6 +314,27 @@ def _describe(body: Content) -> str:
     return " ".join(parts) or "text=(empty)"
 
 
+def schedule_wait(config: PuppetConfig, now: datetime) -> tuple[float, str]:
+    """How long ``scheduleDateTime`` holds the run, and what to say about it.
+
+    ``(0.0, "now")`` when no time is set. A time already in the past is
+    reported and waited out with zero: the script runs immediately rather than
+    pretending it fired on schedule.
+    """
+    if not config.schedule_at:
+        return 0.0, "now"
+    try:
+        at = datetime.fromisoformat(config.schedule_at).replace(tzinfo=UTC)
+    except ValueError as error:
+        raise ConfigError(
+            f"{SECTION}: schedule_at is not an ISO time: "
+            f"{config.schedule_at}") from error
+    delta = (at - now).total_seconds()
+    if delta <= 0:
+        return 0.0, f"{config.schedule_at} (past, starting now)"
+    return delta, config.schedule_at
+
+
 def run(config: PuppetConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -317,6 +356,8 @@ def run(config: PuppetConfig, ctx: RunContext) -> int:
         multiplier=config.multiplier,
         daily_limit=config.daily_limit or "-",
         polish=f"{config.polish}{' + ai' if config.ai_polish else ''}",
+        schedule=config.schedule_at or "now",
+        preview="off" if config.disable_link_preview else "on",
     )
 
     total = len(config.targets) * len(messages) * config.loops * config.multiplier

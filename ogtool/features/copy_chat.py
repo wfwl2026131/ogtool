@@ -136,11 +136,45 @@ def account_groups(raw: object) -> list[list[str]]:
     return out
 
 
+#: The page's five ignore switches, in the order it lists them.
+IGNORE_SENDERS = (
+    "ignore_bot_messages",
+    "ignore_at_messages",
+    "ignore_tme_links",
+    "ignore_pinned_messages",
+    "ignore_admin_messages",
+)
+
+
+def ignore_reason(message: SourceMessage, ignores: dict[str, bool]) -> str:
+    """Why one message is dropped by the ignore switches, ``""`` when it is not.
+
+    Three of the five can be decided from the text itself; the other two need
+    knowledge only the capture has, so they read the ``flags`` the capture put
+    on the message and never guess (a message with no flags is not dropped on
+    a ground nobody observed).
+    """
+    if ignores.get("ignore_bot_messages") and "bot" in message.flags:
+        return "bot"
+    if ignores.get("ignore_at_messages") and "@" in message.text:
+        return "at"
+    if ignores.get("ignore_tme_links") and "t.me/" in message.text:
+        return "tme"
+    if ignores.get("ignore_pinned_messages") and "pinned" in message.flags:
+        return "pinned"
+    if ignores.get("ignore_admin_messages") and "admin" in message.flags:
+        return "admin"
+    return ""
+
+
 def select(message: SourceMessage, keywords: list[str],
-           senders: list[str]) -> str:
+           senders: list[str], ignores: dict[str, bool] | None = None) -> str:
     """``""`` when the message survives, else the reason it is dropped."""
     if senders and message.sender in senders:
         return "sender"
+    reason = ignore_reason(message, ignores or {})
+    if reason:
+        return reason
     if not keep(message, keywords):
         return "keyword"
     return ""
@@ -163,6 +197,10 @@ class CopyConfig:
     replacements: list[tuple[str, str]] = field(default_factory=list)
     account_groups: list[list[str]] = field(default_factory=list)
     messages: list[SourceMessage] = field(default_factory=list)
+    ignores: dict[str, bool] = field(default_factory=dict)
+    ai_polish_level: int = 0
+    message_speed: int = 0
+    lightweight_mode: bool = False
     task_name: str = "copy-chat"
 
     @classmethod
@@ -198,6 +236,11 @@ class CopyConfig:
             replacements=parse_replacements(_lines(data.get("replacements"))),
             account_groups=account_groups(data.get("account_groups")),
             messages=from_config(data),
+            ignores=read_ignores(data),
+            ai_polish_level=num(data, "ai_polish_level", 0, kind=int,
+                                minimum=0),
+            message_speed=num(data, "message_speed", 0, kind=int, minimum=0),
+            lightweight_mode=bool(data.get("lightweight_mode")),
             task_name=name_of(raw, data, "copy-chat"),
         )
 
@@ -208,6 +251,11 @@ def _lines(value: object) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item) for item in value]
     return str(value).splitlines()
+
+
+def read_ignores(data: dict) -> dict[str, bool]:
+    """The five switches, as they sit in the page's config."""
+    return {name: bool(data.get(name)) for name in IGNORE_SENDERS}
 
 
 def _split(value: object) -> list[str]:
@@ -231,11 +279,12 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
         keywords = rule_for(config.groups, index)
         collected = Collected(scanned=len(sources))
         for message in sources:
-            reason = select(message, keywords, config.senders)
+            reason = select(message, keywords, config.senders, config.ignores)
             if reason:
                 collected.drop(reason)
                 continue
-            if config.replacements and message.text:
+            if (config.replacements and message.text
+                    and not config.lightweight_mode):
                 # Replace on a copy: the same capture feeds every target, and
                 # a second pass would apply the rules twice.
                 message = replace(
@@ -323,6 +372,14 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         groups=len(config.groups),
         queue=total,
     )
+    on = [name for name, value in config.ignores.items() if value]
+    print("忽略开关：" + ("  ".join(on) if on else "全部关闭"))
+    if config.ai_polish_level:
+        print(f"ai polish level: {config.ai_polish_level}")
+    if config.message_speed:
+        print(f"message speed: {config.message_speed}/min")
+    if config.lightweight_mode:
+        print("lightweight mode: no rewrite, no replacements")
 
     task = open_task(ctx, config.task_name, FEATURE,
                      {"targets": config.targets,
@@ -349,6 +406,10 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                     continue
                 index += 1
                 delay = rng.uniform(config.interval_min, config.interval_max)
+                if config.message_speed > 0:
+                    # The page's messageSpeed is a ceiling, so it can only make
+                    # the wait longer: turning it up never floods an account.
+                    delay = max(delay, 60.0 / config.message_speed)
                 waited += delay
                 body = Content(text=message.text, media=message.media)
                 pause(ctx, delay)

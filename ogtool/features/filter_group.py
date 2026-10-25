@@ -91,6 +91,12 @@ class GroupConfig:
     account_interval_ms: int = 800
     deep: bool = False
     output_dir: str = ""
+    #: ``previewCount``: how many groups the page lists per bucket.
+    preview_count: int = 0
+    #: ``collectOwnedSessionsSnapshot``: report the sessions this run used.
+    collect_owned_sessions: bool = False
+    #: ``ensureInviteLinkSnapshot``: report every group's invite link.
+    ensure_invite_link: bool = False
     task_name: str = "filter-group"
 
     @classmethod
@@ -116,6 +122,9 @@ class GroupConfig:
             account_interval_ms=num(data, "account_interval_ms", 800, kind=int),
             deep=bool(data.get("deep", False)),
             output_dir=text(data, "output_dir"),
+            preview_count=num(data, "preview_count", 0, kind=int, minimum=0),
+            collect_owned_sessions=bool(data.get("collect_owned_sessions")),
+            ensure_invite_link=bool(data.get("ensure_invite_link")),
             task_name=name_of(raw, data, "filter-group"),
         )
 
@@ -145,8 +154,13 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
         global_interval=f"{config.global_interval_ms} ms",
         account_interval=f"{config.account_interval_ms} ms",
         deep="on" if config.deep else "off",
+        preview_count=config.preview_count or "-",
+        sessions_snapshot="on" if config.collect_owned_sessions else "off",
+        invite_links="on" if config.ensure_invite_link else "off",
         output_dir=config.output_dir or "-",
     )
+    if config.collect_owned_sessions:
+        print(f"sessions snapshot: {', '.join(labels)}")
 
     task = open_task(ctx, config.task_name, FEATURE,
                      {"groups": config.groups, "deep": config.deep},
@@ -178,6 +192,9 @@ def run(config: GroupConfig, ctx: RunContext) -> int:
     print(f"当前：{current}")
     for name in BUCKETS:
         print(f"{name}：{len(buckets[name])}")
+        if config.preview_count:
+            for group in buckets[name][:config.preview_count]:
+                print(f"  {name} 预览：{group}")
     for line in stats.lines("Processed"):
         print(line)
 

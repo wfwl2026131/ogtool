@@ -2,8 +2,24 @@
 
 Targets (private / group / client / custom), a content source (text / media /
 forward), the interval numbers, threads and the three caps the reference page
-shows.  A dry run walks the whole pipeline and prints every message it would
-send; only the transport is replaced.
+shows.  The page also carries five switches, and they are all here:
+
+``immediateStart`` / ``scheduledDateTime``
+    start now, or wait for a wall clock time that is given in the task file;
+``loadBalance``
+    hand each target to the account with the most budget left, instead of
+    round robin;
+``taskMark``
+    append the task's own marker to the text, so a sent message can be traced
+    back to the task that produced it;
+``removeSentCustomTargets``
+    after the plan, drop the targets it covered from the custom list file;
+``lastMediaDir``
+    the folder a relative media path is resolved against, the way the page
+    remembers the last media picker location.
+
+A dry run walks the whole pipeline and prints every message it would send;
+only the transport is replaced.
 """
 
 from __future__ import annotations
@@ -11,6 +27,7 @@ from __future__ import annotations
 import random
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from ..ai import AIClient
 from ..config import Settings
@@ -36,6 +53,15 @@ class MassSendConfig:
     targets: list[Target] = field(default_factory=list)
     content: ContentSpec = field(default_factory=ContentSpec)
     limits: Limits = field(default_factory=Limits)
+    #: ``immediate`` starts now; ``scheduled`` waits for ``schedule_at``.
+    start_mode: str = "immediate"
+    schedule_at: str = ""
+    load_balance: bool = False
+    task_mark_enabled: bool = True
+    task_mark: str = ""
+    remove_sent_custom_targets: bool = False
+    custom_targets_file: str = ""
+    last_media_dir: str = ""
     task_name: str = "mass-send"
     dry_run: bool = True
 
@@ -80,6 +106,15 @@ class MassSendConfig:
                 ai=bool(content_raw.get("ai", False)),
             ),
             limits=limits,
+            start_mode=str(send.get("start_mode") or "immediate").lower(),
+            schedule_at=str(send.get("schedule_at") or ""),
+            load_balance=bool(send.get("load_balance")),
+            task_mark_enabled=bool(send.get("task_mark_enabled", True)),
+            task_mark=str(send.get("task_mark") or ""),
+            remove_sent_custom_targets=bool(
+                send.get("remove_sent_custom_targets")),
+            custom_targets_file=str(send.get("custom_targets_file") or ""),
+            last_media_dir=str(send.get("last_media_dir") or ""),
             task_name=str(raw.get("task_name") or "mass-send"),
             dry_run=dry_run,
         )
@@ -173,6 +208,98 @@ def _budgets(raw_accounts: list[Account], limits: Limits,
     return budgets
 
 
+def _start_time(config: MassSendConfig, now: datetime) -> tuple[datetime, str]:
+    """When the first message goes out, and why.
+
+    ``scheduled`` with no time is a config mistake the page cannot show, so it
+    is reported instead of quietly turning into "now"; a time already in the
+    past is reported too and the run starts immediately rather than pretending
+    it fired on time.
+    """
+    if config.start_mode not in ("immediate", "scheduled"):
+        raise ValueError(f"start_mode must be immediate or scheduled, "
+                         f"is {config.start_mode}")
+    if config.start_mode == "immediate" or not config.schedule_at:
+        return now, "immediate"
+    try:
+        parsed = datetime.fromisoformat(config.schedule_at).replace(tzinfo=UTC)
+    except ValueError as error:
+        raise ValueError(
+            f"schedule_at is not an ISO time: {config.schedule_at}"
+        ) from error
+    if parsed <= now:
+        print(f"WARN: scheduled time {parsed:%Y-%m-%d %H:%M:%S} is in the past; "
+              f"starting now")
+        return now, "scheduled (late)"
+    return parsed, "scheduled"
+
+
+def _balanced(accounts: list[str], targets: list[Target], limits: Limits,
+              budgets: dict[str, Budget]) -> list[tuple[str, Target]]:
+    """Hand each target to the account with the most budget left.
+
+    Ties go to the account that was used least so far, which keeps the plan
+    from stacking on account 1 when every budget is untouched.
+    """
+    pairs: list[tuple[str, Target]] = []
+    if not accounts or not targets:
+        return pairs
+    used: dict[str, int] = {account: 0 for account in accounts}
+
+    def room(account: str) -> int:
+        budget = budgets.get(account)
+        if budget is None:
+            return 10 ** 6
+        return max(0, budget.left - used[account])
+
+    for target in targets:
+        account = max(accounts, key=lambda name: (room(name), -used[name]))
+        if room(account) <= 0:
+            break
+        pairs.append((account, target))
+        used[account] += 1
+        if limits.exec_cap and len(pairs) >= limits.exec_cap:
+            break
+    return pairs
+
+
+def _apply_task_mark(config: MassSendConfig, content: Content) -> Content:
+    """Append the task marker to the text, the way ``taskMark`` does."""
+    if not (config.task_mark_enabled and config.task_mark and content.text):
+        return content
+    mark = config.task_mark
+    text = content.text if mark in content.text else f"{content.text}\n{mark}"
+    return Content(text=text, media=content.media,
+                   forward_from=content.forward_from, sticker=content.sticker,
+                   reply_to=content.reply_to)
+
+
+def _remove_sent(config: MassSendConfig, planned: list[Planned]) -> int:
+    """Rewrite the custom list file without the targets the plan covered."""
+    if not (config.remove_sent_custom_targets and config.custom_targets_file):
+        return 0
+    path = Path(config.custom_targets_file).expanduser()
+    if not path.is_file():
+        print(f"WARN: custom target file not found: {path}")
+        return 0
+    sent = {item.target.ref for item in planned}
+    kept = [line for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip() and line.strip() not in sent]
+    removed = len(path.read_text(encoding="utf-8").splitlines()) - len(kept)
+    path.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8")
+    return max(0, removed)
+
+
+def _resolve_media(config: MassSendConfig) -> None:
+    """A relative media path is resolved against the remembered folder."""
+    media = config.content.media
+    if not media or not config.last_media_dir or Path(media).is_absolute():
+        return
+    candidate = Path(config.last_media_dir).expanduser() / media
+    if candidate.exists():
+        config.content.media = str(candidate)
+
+
 def run(config: MassSendConfig, ctx: RunContext) -> int:
     if not config.targets:
         ctx.note("no targets given", "error")
@@ -183,21 +310,35 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     if not accounts:
         ctx.note("no account bound, the plan is printed without one", "warn")
 
+    _resolve_media(config)
     content, source = build_content(
         config.content, AIClient(ctx.settings.ai, ctx.settings.ai.timeout)
     )
 
-    budgets = _budgets(accounts, config.limits, ctx)
-    pairs = _interleave([a.label for a in accounts], config.targets,
-                        config.limits, random.Random(config.limits.threads))
-    planned = schedule(pairs, config.limits, accounts=[a.label for a in accounts],
-                       budgets=budgets)
-    start = datetime.now(UTC).replace(microsecond=0)
-    contents = {account.label: content for account in accounts}
+    budget_of = _budgets(accounts, config.limits, ctx)
+    labels = [a.label for a in accounts]
+    if config.load_balance:
+        pairs = _balanced(labels, config.targets, config.limits, budget_of)
+        order = "load_balance"
+    else:
+        pairs = _interleave(labels, config.targets, config.limits,
+                            random.Random(config.limits.threads))
+        order = "round_robin"
+    planned = schedule(pairs, config.limits, accounts=labels, budgets=budget_of)
+    now = datetime.now(UTC).replace(microsecond=0)
+    start, start_reason = _start_time(config, now)
+    contents = {account.label: _apply_task_mark(config, content)
+                for account in accounts}
 
     print(f"task: {config.task_name}")
     print(f"accounts: {len(accounts)}  targets: {len(config.targets)}  "
           f"threads: {config.limits.threads}  content source: {source}")
+    print(f"start: {start:%Y-%m-%d %H:%M:%S} ({start_reason})  order: {order}")
+    if config.task_mark_enabled and config.task_mark:
+        print(f"task mark: {config.task_mark}")
+    dropped = _remove_sent(config, planned)
+    if dropped:
+        print(f"removed {dropped} sent target(s) from {config.custom_targets_file}")
     for line in render(planned, contents, start):
         print(line)
 

@@ -125,6 +125,9 @@ class Content:
     sticker: str = ""
     #: Answer inside one thread (a channel post id), instead of a plain post.
     reply_to: int = 0
+    #: The page's "disable link preview": the text goes out as it is, a URL in
+    #: it stays a URL and is not expanded into a card.
+    no_preview: bool = False
 
     def describe(self) -> str:
         parts = []
@@ -506,6 +509,15 @@ class DryRunSender:
         return self._answer("profile", account,
                             f"first={first or '-'} last={last or '-'}")
 
+    def update_about(self, account: str, text: str) -> SendResult:
+        return self._answer("about", account, f"about={text or '-'}")
+
+    def update_username(self, account: str, username: str) -> SendResult:
+        return self._answer("username", account, f"username={username or '-'}")
+
+    def update_avatar(self, account: str, path: str) -> SendResult:
+        return self._answer("avatar", account, f"path={path or '-'}")
+
     def add_contact(self, account: str, target: Target,
                     first: str = "") -> SendResult:
         return self._answer("contact", account,
@@ -817,6 +829,41 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("profile", account, action)
+
+    def update_about(self, account: str, text: str) -> SendResult:
+        def action() -> SendResult:
+            from telethon.tl.functions.account import UpdateProfileRequest
+
+            client = self._client(account)
+            # ``about`` rides on UpdateProfileRequest since layer 118; the bio
+            # is the same field the reference's "bio" strings mean.
+            client(UpdateProfileRequest(about=text or None))
+            return SendResult(ok=True)
+
+        return self._guard("about", account, action)
+
+    def update_username(self, account: str, username: str) -> SendResult:
+        def action() -> SendResult:
+            from telethon.tl.functions.account import UpdateUsernameRequest
+
+            client = self._client(account)
+            client(UpdateUsernameRequest(username=username or ""))
+            return SendResult(ok=True)
+
+        return self._guard("username", account, action)
+
+    def update_avatar(self, account: str, path: str) -> SendResult:
+        def action() -> SendResult:
+            from telethon.tl.functions.photos import (
+                UploadProfilePhotoRequest,
+            )
+
+            client = self._client(account)
+            uploaded = client.upload_file(path)
+            client(UploadProfilePhotoRequest(file=uploaded))
+            return SendResult(ok=True)
+
+        return self._guard("avatar", account, action)
 
     def add_contact(self, account: str, target: Target,
                     first: str = "") -> SendResult:

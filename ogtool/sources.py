@@ -31,6 +31,10 @@ class SourceMessage:
     text: str
     media: str = ""
     message_id: int = 0
+    #: What the capture knew about the message that its text does not say:
+    #: ``bot``, ``pinned``, ``admin``. Empty means "not known", which the
+    #: filters treat as "do not drop on this ground".
+    flags: tuple[str, ...] = ()
 
     def display(self) -> str:
         return f"{self.sender}: {self.text or self.media or '(empty)'}"
@@ -48,9 +52,18 @@ def parse_entry(entry: str) -> SourceMessage:
         )
     peer, sender, body = (part.strip() for part in parts[:3])
     media = parts[3].strip() if len(parts) > 3 else ""
+    flags: tuple[str, ...] = ()
+    if len(parts) > 4:
+        # The fifth segment is the flag list: ``flags=bot,pinned``.
+        tail = parts[4].strip()
+        if tail.startswith("flags="):
+            flags = tuple(part.strip().lower()
+                          for part in tail[len("flags="):].split(",")
+                          if part.strip())
     if not peer:
         raise ConfigError(f"source message without a peer: {entry!r}")
-    return SourceMessage(peer=peer, sender=sender, text=body, media=media)
+    return SourceMessage(peer=peer, sender=sender, text=body, media=media,
+                         flags=flags)
 
 
 def parse_many(entries: list[str] | tuple[str, ...]) -> list[SourceMessage]:

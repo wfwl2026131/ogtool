@@ -9,6 +9,7 @@ because nothing is rewritten on this page.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import chat_pattern
@@ -24,11 +25,17 @@ from ._common import (
     name_of,
     num,
     open_task,
+    pause,
     section,
     targets_of,
     text,
 )
-from .puppet_chat import PuppetConfig, play, resolve_pattern
+from .puppet_chat import (
+    PuppetConfig,
+    play,
+    resolve_pattern,
+    schedule_wait,
+)
 
 FEATURE = "puppet_chat_v2"
 SECTION = "puppet_chat_v2"
@@ -65,6 +72,10 @@ class PuppetV2Config:
     multiplier: int = 1
     daily_limit: int = 0
     pictures: str = ""
+    #: ``scheduleDateTime``: hold the run until this wall clock time.
+    schedule_at: str = ""
+    #: ``disableLinkPreview``: no link card on the lines that carry a URL.
+    disable_link_preview: bool = False
     task_name: str = "puppet-chat-v2"
 
     @classmethod
@@ -90,6 +101,8 @@ class PuppetV2Config:
             multiplier=num(data, "multiplier", 1, kind=int, minimum=1),
             daily_limit=num(data, "daily_limit", 0, kind=int, minimum=0),
             pictures=pictures,
+            schedule_at=text(data, "schedule_at"),
+            disable_link_preview=bool(data.get("disable_link_preview")),
             task_name=name_of(raw, data, "puppet-chat-v2"),
         )
 
@@ -120,7 +133,14 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
         loops=config.loops,
         multiplier=config.multiplier,
         daily_limit=config.daily_limit or "-",
+        schedule=config.schedule_at or "now",
+        preview="off" if config.disable_link_preview else "on",
     )
+    wait, when = schedule_wait(
+        PuppetConfig(schedule_at=config.schedule_at), datetime.now(UTC))
+    if wait:
+        print(f"schedule: {when} (waiting {format_duration(wait)})")
+        pause(ctx, wait)
 
     total = len(config.targets) * len(messages) * config.loops * config.multiplier
     task = open_task(ctx, config.task_name, FEATURE,
@@ -138,6 +158,7 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
         polish=0,
         ai_polish=False,
         pictures=config.pictures,
+        disable_link_preview=config.disable_link_preview,
         task_name=config.task_name,
     )
     outcome = play(ctx, task, messages, playback, labels,

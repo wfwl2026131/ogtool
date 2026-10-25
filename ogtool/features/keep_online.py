@@ -16,7 +16,9 @@ FEATURE = "keep_online"
 class KeepOnlineConfig:
     """The right pane of #21: account choice plus on / off."""
 
+    #: ``usageAccountIds`` in the page's config: which accounts hold the line.
     account_labels: list[str] = field(default_factory=list)
+    #: ``pingDelayMs`` in the page's config, kept here in seconds.
     interval: float = 300.0
     loops: int = 0                  # 0 = until interrupted
     jitter: float = 0.1
@@ -25,9 +27,15 @@ class KeepOnlineConfig:
     @classmethod
     def from_dict(cls, raw: dict) -> KeepOnlineConfig:
         online = raw.get("keep_online") or {}
+        # The page stores ``pingDelayMs``; a task file may use either name, and
+        # ``usage_accounts`` is the same list as ``accounts``.
+        ping_ms = online.get("ping_delay_ms")
+        interval = (float(ping_ms) / 1000.0 if ping_ms is not None
+                    else float(online.get("interval", 300)))
+        labels = online.get("usage_accounts") or raw.get("accounts") or []
         return cls(
-            account_labels=list(raw.get("accounts") or []),
-            interval=float(online.get("interval", 300)),
+            account_labels=[str(item) for item in labels],
+            interval=interval,
             loops=int(online.get("loops", 0)),
             jitter=float(online.get("jitter", 0.1)),
             task_name=str(raw.get("task_name") or "keep-online"),
