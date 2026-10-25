@@ -386,8 +386,13 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         queue=stats.total,
     )
 
+    # The seed belongs in the task config: without it a run whose plan was
+    # random cannot be compared with the next one, and the receipt would have no
+    # way to say which draw it used.
     task = open_task(ctx, config.task_name, FEATURE,
-                     {"targets": config.targets}, stats.total)
+                     {"targets": config.targets, "seed": config.seed,
+                      "sticker_percent": config.sticker_send_percent},
+                     stats.total)
     sender = ctx.sender()
     ai = ai_client(ctx)
     posts = {target: {post.message_id: post

@@ -1,9 +1,16 @@
-"""Run every feature once in dry-run mode and report what broke.
+"""Run every feature twice in dry-run mode and report what broke.
 
 The old copy of this lived in /tmp and vanished with it; a sweep that cannot be
 re-run is not evidence. Each feature is invoked in its own process (the CLI's own
 path, not a direct call), so a crash in one cannot hide another, and the report is
-a single line: ``runs: N  problems: M``.
+a single line:
+``runs: N  receipts: M  problems: K  twice: A/N identical``.
+
+The second run is not padding. Two runs of the same page with the same fixture
+must leave the same receipt; when they do not, the page is making a decision the
+configuration does not explain (a hidden random draw, a leftover from the first
+run, a counter that only grows). That is worth knowing before trusting any
+"it worked" claim, and it is only visible by doing it twice.
 """
 
 from __future__ import annotations
@@ -23,7 +30,10 @@ FIXTURES: dict[str, list[str]] = {
     "add_contact": ["--contacts", "+10000000001"],
     "ai_chat": ["--targets", "@sweep"],
     "ai_clone": ["--targets", "@sweep", "--sources", "@source"],
-    "ai_comment": ["--targets", "@sweep"],
+    # ai_comment draws which posts get a comment, a like or a sticker, so it is
+    # randomised by design; its own --seed is what makes two runs comparable, and
+    # a seed is part of the configuration, not a way around the check.
+    "ai_comment": ["--targets", "@sweep", "--seed", "1"],
     "batch_invite": ["--groups", "@sweep", "--members", "@sweepmember"],
     "batch_invite_v2": ["--targets", "@sweep"],
     "batch_join": ["--targets", "@sweep"],
@@ -50,18 +60,15 @@ def features() -> list[str]:
     return names()
 
 
-LOG_DIR: list[Path] = []
-
-
-def scratch_config() -> Path:
-    """A config whose logs, db and sessions live in this sweep's own directory.
+def scratch_config(prefix: str = "ogsweep-cfg-") -> tuple[Path, Path]:
+    """A config whose logs, db and sessions live in its own directory.
 
     Without it every run would write its receipt into the project's ``logs/``,
     where the previous run's receipts are still sitting - and "a receipt exists"
-    would be true before the feature even started.
+    would be true before the feature even started. Returns the config path and the
+    directory its receipts land in.
     """
-    scratch = Path(tempfile.mkdtemp(prefix="ogsweep-cfg-"))
-    LOG_DIR.append(scratch / "logs")
+    scratch = Path(tempfile.mkdtemp(prefix=prefix))
     path = scratch / "config.yaml"
     path.write_text(
         "api_id: 1\napi_hash: sweep\n"
@@ -70,20 +77,19 @@ def scratch_config() -> Path:
         f"db: {scratch / 'og.sqlite'}\n"
         f"logs: {scratch / 'logs'}\n",
         encoding="utf-8")
-    return path
+    return path, scratch / "logs" / "receipts"
 
 
-def check_receipts() -> tuple[int, list[str]]:
-    """Every feature this sweep ran must have left one valid receipt."""
+def receipts_here(directory: Path) -> tuple[list[dict], list[str]]:
+    """The receipts in one run's directory, plus anything already wrong with them."""
     sys.path.insert(0, str(ROOT))
     from ogtool import receipts as receipts_module
 
-    directory = LOG_DIR[0] / "receipts"
     bodies, problems = receipts_module.read_all(directory)
     for body in bodies:
         for problem in receipts_module.validate(body):
             problems.append(f"{body.get('feature', '?')}: {problem}")
-    return len(bodies), problems
+    return bodies, problems
 
 
 def fixtures() -> dict[str, list[str]]:
@@ -95,27 +101,55 @@ def fixtures() -> dict[str, list[str]]:
             for name, args in FIXTURES.items()}
 
 
+def dry_run(name: str, table: dict[str, list[str]]) -> tuple[int, str, list[dict]]:
+    """One feature, one throwaway config, and whatever receipt it left."""
+    config, receipts_dir = scratch_config()
+    run = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
+        [sys.executable, "-m", "ogtool", "--config", str(config),
+         name, "--dry-run", *table.get(name, [])],
+        cwd=ROOT, capture_output=True, text=True, timeout=120)
+    bodies, _problems = receipts_here(receipts_dir)
+    return run.returncode, run.stdout + run.stderr, bodies
+
+
 def main(argv: list[str]) -> int:
     wanted = argv[1:] or features()
     table = fixtures()
+    sys.path.insert(0, str(ROOT))
+    from ogtool import receipts as receipts_module
+
     problems: list[str] = []
-    config = scratch_config()
+    identical = 0
     for name in wanted:
-        run = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
-            [sys.executable, "-m", "ogtool", "--config", str(config),
-             name, "--dry-run", *table.get(name, [])],
-            cwd=ROOT, capture_output=True, text=True, timeout=120)
-        output = run.stdout + run.stderr
-        if run.returncode != 0:
-            problems.append(f"{name}: exit {run.returncode}\n{output[-600:]}")
-        elif "Traceback" in output:
-            problems.append(f"{name}: traceback\n{output[-600:]}")
-        print(f"{name:16s} {'ok' if run.returncode == 0 else 'FAIL'}")
-    count, receipt_problems = check_receipts()
-    problems.extend(receipt_problems)
-    if count != len(wanted):
-        problems.append(f"receipts: {count} for {len(wanted)} run(s)")
-    print(f"runs: {len(wanted)}  receipts: {count}  problems: {len(problems)}")
+        first_code, first_out, first = dry_run(name, table)
+        second_code, second_out, second = dry_run(name, table)
+        if first_code != 0:
+            problems.append(f"{name}: exit {first_code}\n{first_out[-600:]}")
+        elif "Traceback" in first_out:
+            problems.append(f"{name}: traceback\n{first_out[-600:]}")
+        if second_code != 0:
+            problems.append(f"{name}: second run exit {second_code}"
+                            f"\n{second_out[-600:]}")
+        if len(first) != 1 or len(second) != 1:
+            problems.append(f"{name}: {len(first)} and {len(second)} receipt(s), "
+                            "expected one each")
+            print(f"{name:16s} FAIL")
+            continue
+        for body in first + second:
+            problems.extend(f"{name}: {problem}"
+                            for problem in receipts_module.validate(body))
+        changes = receipts_module.diff(first[0], second[0])
+        if changes:
+            detail = ", ".join(key for key, _old, _new in changes)
+            problems.append(f"{name}: two runs of the same config differ "
+                            f"({detail})")
+            print(f"{name:16s} DIFF")
+        else:
+            identical += 1
+            print(f"{name:16s} {'ok' if first_code == 0 else 'FAIL'}")
+    print(f"runs: {len(wanted)}  receipts: {len(wanted)}  "
+          f"problems: {len(problems)}  "
+          f"twice: {identical}/{len(wanted)} identical")
     for problem in problems:
         print("-" * 60)
         print(problem)

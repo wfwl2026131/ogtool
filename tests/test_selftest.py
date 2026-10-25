@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ogtool import cli, receipts, selftest
 
 
@@ -64,3 +66,45 @@ def test_the_receipt_check_names_every_bad_field(settings):
 def test_no_check_at_all_still_reports(settings, capsys):
     assert selftest.run(settings, only=["receipts"]) == 0
     assert "selftest: 1 check(s), 0 problem(s)" in capsys.readouterr().out
+
+
+def test_docs_check_passes_when_the_claim_matches(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("# note\n\n<!-- current: pytest → 42 passed -->\n",
+                    encoding="utf-8")
+    line, problems = selftest.check_docs(paths=(note,), expected=42)
+    assert problems == []
+    assert "1 note(s) checked against 42" in line
+
+
+def test_docs_check_catches_a_stale_number(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("# note\n\n<!-- current: pytest → 41 passed -->\n",
+                    encoding="utf-8")
+    _line, problems = selftest.check_docs(paths=(note,), expected=42)
+    assert any("claims 41 passed, pytest collects 42" in item
+               for item in problems)
+
+
+def test_docs_check_wants_the_marker(tmp_path):
+    note = tmp_path / "note.md"
+    note.write_text("# note\nno marker here\n", encoding="utf-8")
+    _line, problems = selftest.check_docs(paths=(note,), expected=1)
+    assert any("no '<!-- current: pytest -> N -->' marker" in item
+               for item in problems)
+
+
+def test_docs_check_skips_a_note_that_is_not_on_this_machine(tmp_path, capsys):
+    line, problems = selftest.check_docs(
+        paths=(tmp_path / "gone.md",), expected=1)
+    assert problems == []
+    assert "0 note(s) checked" in line
+    assert "not on this machine" in capsys.readouterr().out
+
+
+def test_the_real_checkout_has_no_stale_test_count():
+    """The two project notes must agree with the tests this tree collects."""
+    line, problems = selftest.check_docs()
+    if "0 note(s) checked" in line:
+        pytest.skip("notes are not on this machine")
+    assert problems == []
