@@ -314,3 +314,55 @@ def test_retry_max_retries_a_failed_comment(ctx, capsys):
     output = capsys.readouterr().out
     assert "retry 1/2" in output
     assert "retries=1" in output
+
+
+def test_only_root_forwarded_keeps_channel_forwards_only(capsys):
+    """``onlyRootForwardedFromChannel`` = 'Only comment channel-forwarded roots'."""
+    from ogtool.features.ai_comment import CommentConfig, plan
+    from ogtool.sources import SourceMessage
+
+    config = CommentConfig(
+        targets=["@c1"], per_post_min=1, per_post_max=1,
+        only_root_forwarded=True,
+        messages=[
+            SourceMessage(peer="@c1", sender="", text="typed", message_id=1),
+            SourceMessage(peer="@c1", sender="", text="forwarded", message_id=2,
+                          flags=("forwarded", "forwarded_channel")),
+        ])
+    stats = plan(config, ["acc1"])
+    assert stats.total == 1
+    assert all(spec.post_id == 2 for spec in stats.specs)
+    assert "root filter: only channel-forwarded posts (1 kept, 1 dropped)" \
+        in capsys.readouterr().out
+
+
+def test_only_root_forwarded_with_nothing_marked_comments_on_nothing(capsys):
+    from ogtool.features.ai_comment import CommentConfig, plan
+    from ogtool.sources import SourceMessage
+
+    config = CommentConfig(targets=["@c1"], only_root_forwarded=True,
+                           messages=[SourceMessage(peer="@c1", sender="",
+                                                   text="plain",
+                                                   message_id=1)])
+    stats = plan(config, ["acc1"])
+    assert stats.total == 0
+    assert "0 kept, 1 dropped" in capsys.readouterr().out
+
+
+def test_forward_flags_come_from_the_forward_header():
+    """The capture marks what the header says, not what the text looks like."""
+    from ogtool.senders import _forward_flags
+
+    class Header:
+        channel_post = 7
+        from_id = None
+
+    class ForwardedFromChannel:
+        fwd_from = Header()
+
+    class Typed:
+        fwd_from = None
+
+    assert _forward_flags(ForwardedFromChannel()) == ("forwarded",
+                                                      "forwarded_channel")
+    assert _forward_flags(Typed()) == ()

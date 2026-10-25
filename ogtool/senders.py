@@ -113,6 +113,10 @@ class SendResult:
     #: A page that has to answer *in* a post (ai_comment) needs the id, and the
     #: string form above deliberately carries no id so a task file can feed it.
     posts: list[tuple[int, str]] = field(default_factory=list)
+    #: Per-post flags the capture could see: ``forwarded`` when the post carries
+    #: a forward header at all, ``forwarded_channel`` when that header points at
+    #: a channel (the reference's "channel-forwarded root").
+    post_flags: dict[int, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -644,6 +648,25 @@ def _save_media(message: Any, folder: str) -> str:
     except Exception:  # noqa: BLE001 - the text still gets copied
         return ""
     return str(path or "")
+
+
+def _forward_flags(message: Any) -> tuple[str, ...]:
+    """``forwarded`` / ``forwarded_channel`` for one post, from its fwd header.
+
+    The reference's ai_comment page has a switch labelled "Only comment
+    channel-forwarded root messages", so the capture has to be able to say
+    whether a post came from a channel at all - the text of a forwarded post is
+    identical to a typed one, and guessing from the text would be a lie.
+    """
+    header = getattr(message, "fwd_from", None)
+    if header is None:
+        return ()
+    if getattr(header, "channel_post", None) is not None:
+        return ("forwarded", "forwarded_channel")
+    author = getattr(header, "from_id", None)
+    if type(author).__name__ == "PeerChannel":
+        return ("forwarded", "forwarded_channel")
+    return ("forwarded",)
 
 
 def _sender_ref(message: Any) -> str:
@@ -1242,7 +1265,7 @@ class TelethonSender:
             cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)
                       if minutes > 0 else None)
             scanned = 0
-            captured: list[tuple[int, str, str, str]] = []
+            captured: list[tuple[int, str, str, str, tuple[str, ...]]] = []
             for message in client.iter_messages(peer, limit=limit or None):
                 stamp = getattr(message, "date", None)
                 if cutoff is not None and stamp is not None:
@@ -1256,16 +1279,22 @@ class TelethonSender:
                 saved = ""
                 if media_dir and getattr(message, "media", None) is not None:
                     saved = _save_media(message, media_dir)
+                flags = _forward_flags(message)
                 if body or saved:
                     captured.append((int(message.id), _sender_ref(message),
-                                     body, saved))
+                                     body, saved, flags))
             captured.reverse()  # Telethon yields newest first
             return SendResult(
                 ok=True, count=scanned,
                 items=[f"{target.ref}|{sender}|{body}"
                        + (f"|{saved}" if saved else "")
-                       for _mid, sender, body, saved in captured],
-                posts=[(mid, body) for mid, _sender, body, _saved in captured],
+                       + (f"|flags={','.join(flags)}" if flags else "")
+                       for _mid, sender, body, saved, flags in captured],
+                posts=[(mid, body) for mid, _sender, body, _saved, _f
+                       in captured],
+                post_flags={mid: flags
+                            for mid, _sender, _body, _saved, flags in captured
+                            if flags},
             )
 
         return self._on_target(account, target, "history", call)

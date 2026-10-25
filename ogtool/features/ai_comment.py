@@ -221,6 +221,25 @@ class PlanStats:
         return 0.0 if not self.total else value * 100.0 / self.total
 
 
+def forwarded_roots(config: CommentConfig,
+                    posts: list[SourceMessage]) -> tuple[list[SourceMessage],
+                                                         int]:
+    """``onlyRootForwardedFromChannel``: keep channel-forwarded roots only.
+
+    The page's switch is "Only comment channel-forwarded root messages", so a
+    post without a channel forward header is not a candidate at all.  In a plan
+    the flag is written on the message line (``flags=forwarded_channel``); when
+    nothing is marked the filter is a no-op *only* if the switch is off - with
+    it on and nothing marked, the honest answer is "no candidate", reported,
+    not a silent fallback to commenting on everything.
+    """
+    if not config.only_root_forwarded:
+        return posts, 0
+    kept = [post for post in posts
+            if "forwarded_channel" in post.flags or "forwarded" in post.flags]
+    return kept, len(posts) - len(kept)
+
+
 def posts_for(config: CommentConfig, target: str) -> list[SourceMessage]:
     """The posts to comment on: the supplied ones, else synthetic stand ins."""
     chosen = [message for message in config.messages
@@ -244,6 +263,11 @@ def plan(config: CommentConfig, labels: list[str],
 
     for target in config.targets:
         posts = posts_for(config, target)
+        posts, dropped = forwarded_roots(config, posts)
+        if config.only_root_forwarded:
+            print(f"root filter: only channel-forwarded posts "
+                  f"({len(posts)} kept, {dropped} dropped) "
+                  f"target={target}")
         for post in posts:
             count = generator.randint(low, high)
             for _ in range(count):
@@ -295,8 +319,9 @@ def capture_posts(sender: object, account: str, targets: list[str],
             print(f"target={target} capture failed: {result.code}")
             continue
         for post_id, body in result.posts:
-            captured.append(SourceMessage(peer=target, sender="", text=body,
-                                          message_id=post_id))
+            captured.append(SourceMessage(
+                peer=target, sender="", text=body, message_id=post_id,
+                flags=result.post_flags.get(post_id, ())))
         print(f"target={target} captured {len(result.posts)}/{result.count} "
               f"limit={limit}")
     return captured
