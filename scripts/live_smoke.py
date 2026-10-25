@@ -63,6 +63,11 @@ CASES: tuple[Case, ...] = (
     Case("online", ("keep_online", "--live", "--accounts", "{account}",
                     "--loops", "1", "--interval", "1"), None, "keep_online",
          "DONE:"),
+    # One number nobody owns: the page has to reach Telegram's resolve call and
+    # classify the answer, without messaging anyone.
+    Case("phones", ("filter_phone", "--live", "--accounts", "{account}",
+                    "--numbers", "+10000000000"), None, "filter_phone",
+         "UNKNOWN"),
     Case("listen", ("auto_reply", "--live", "--accounts", "{account}",
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
