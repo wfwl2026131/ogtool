@@ -143,3 +143,12 @@ def test_a_heartbeat_does_not_spend_the_sending_budget(tmp_path):
     assert store.count_sent_today("acc") == 3
     assert store.count_sent_today("acc", features=("mass_send",)) == 1
     assert store.count_sent_today("acc", features=("export_accounts",)) == 1
+
+
+def test_the_plan_can_be_set_after_the_listing(tmp_path):
+    """A listing learns its size by listing; the receipt must still add up."""
+    store = Store(tmp_path / "og.sqlite")
+    task = store.create_task("dialogs", "accounts", {"limit": 5}, "live")
+    assert store.task_row(task.id)["planned"] == 0
+    store.set_task_planned(task.id, 5)
+    assert store.task_row(task.id)["planned"] == 5

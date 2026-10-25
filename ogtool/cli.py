@@ -17,6 +17,7 @@ from . import __version__, receipts, selftest
 from .accounts import AccountError
 from .config import ConfigError, Settings, load_task, merge
 from .features import get, load_defaults, module, names
+from .features._common import close_task, open_task, record
 from .flags import section
 from .loggers import task_logger
 from .runtime import RunContext
@@ -894,14 +895,40 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
                   f"Success: {done}/{len(rows)}")
             return 0 if done == len(rows) else 1
         if args.action == "dialogs":
-            rows = pool.dialogs(args.accounts, live=bool(args.live),
-                                limit=args.limit)
+            # Listing is the only read here, and the list itself is the result:
+            # one row per dialog, so the receipt names what the account could see
+            # instead of only that the command exited. That matters because this
+            # listing is how the live checks find a real chat to point at.
+            ctx = RunContext(settings=settings, store=store,
+                             log=task_logger(settings.log_dir, "accounts-dialogs"),
+                             live=bool(args.live))
+            task = open_task(ctx, "dialogs", "accounts",
+                             {"limit": args.limit, "kind": args.kind}, planned=0)
+            try:
+                rows = pool.dialogs(args.accounts, live=bool(args.live),
+                                    limit=args.limit)
+            finally:
+                ctx.close()
             wanted = (args.kind or "").strip().lower()
             shown = [row for row in rows if not wanted or row[1] == wanted]
             for label, kind, ref, title in shown:
                 name, _, rest = title.partition("\t")
                 print(f"{kind:8s} {ref:20s} {name}  ({label}) {rest}")
+                if not args.live:
+                    continue
+                # A row with no ref is the account failing, not a dialog: the
+                # error name is in the detail because that is where the pool put
+                # it. A dialog with no username still has an id, which is a ref.
+                ok = bool(ref)
+                record(ctx, task, label, ref or "-", ok,
+                       "" if ok else (rest.split(":")[0] or "UNKNOWN"),
+                       f"{kind} {name}".strip())
             print(f"total: {len(shown)} of {len(rows)}")
+            # planned is unknown before the list arrives, so it is set here: a
+            # receipt whose plan is 0 while rows exist would report every row as
+            # unaccounted.
+            store.set_task_planned(task.id, len(shown) if args.live else 0)
+            close_task(ctx, task, derive=True)
             return 0
         if args.action == "spambot":
             rows = pool.spambot(args.accounts, live=bool(args.live),

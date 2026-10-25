@@ -80,6 +80,10 @@ CASES: tuple[Case, ...] = (
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
          LISTEN_SECONDS, "auto_reply", "DONE:"),
+    # The dialog listing is how a real chat reference is found at all, so it is
+    # worth proving that the call still works and still reports unread counts.
+    Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
+                     "--limit", "5"), None, "", "total:"),
     # The speed test is the proxy page's only real action: a TCP connect and a
     # latency. A local listener gives it a genuine ok without touching anyone.
     Case("proxy", ("proxy", "--live", "--add", "socks5://127.0.0.1:{port}",

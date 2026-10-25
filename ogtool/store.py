@@ -508,6 +508,18 @@ class Store:
 
     # results / logs ---------------------------------------------------
 
+    def set_task_planned(self, task_id: int, planned: int) -> None:
+        """Record the plan once it is known.
+
+        Most pages know how much they will do before they start. A listing does
+        not: the dialogs arrive one at a time, and a receipt that said planned 0
+        with rows in it would report every row as unaccounted.
+        """
+        with self._lock:
+            self._conn.execute("UPDATE tasks SET planned = ? WHERE id = ?",
+                               (int(planned), int(task_id)))
+            self._conn.commit()
+
     def add_result(self, task_id: int | None, account: str, target: str,
                    status: str, error_code: str = "", detail: str = "") -> None:
         with self._lock:
