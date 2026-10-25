@@ -191,6 +191,20 @@ def _fallback(line: Line) -> str:
     return " ".join(part for part in (line.topic, line.news) if part)
 
 
+def refreshed(config: AiChatConfig, labels: list[str],
+              count: int) -> list[Line]:
+    """Exactly ``count`` fresh lines, for the pattern-refresh swap.
+
+    ``plan`` returns one batch (every target, ``count`` messages each); the swap
+    needs the same number of lines as the tail it replaces, so a short batch is
+    padded from itself rather than leaving holes in the schedule.
+    """
+    batch = plan(config, labels)
+    if not batch or count <= 0:
+        return []
+    return [batch[index % len(batch)] for index in range(count)]
+
+
 def run(config: AiChatConfig, ctx: RunContext) -> int:
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
@@ -226,8 +240,20 @@ def run(config: AiChatConfig, ctx: RunContext) -> int:
     ai = ai_client(ctx)
     ok = failed = 0
     waited = 0.0
+    # ``patternRefreshSeconds``: the reference re-asks for a wording pattern on a
+    # timer ("topic prompt changed, refresh pattern"), so a long run does not
+    # keep sending the batch that was planned at the start.
+    refresh = config.pattern_refresh_seconds
+    next_refresh = float(refresh) if refresh else 0.0
 
     for index, line in enumerate(lines, start=1):
+        if refresh and waited >= next_refresh and index < len(lines):
+            tail = len(lines) - index + 1
+            lines[index - 1:] = refreshed(config, labels, tail)
+            next_refresh = waited + refresh
+            print(f"refresh: topic prompt changed after {waited:.0f}s, "
+                  f"{tail} line(s) replanned")
+            line = lines[index - 1]
         target: Target = parse_many([line.target], "custom")[0]
         generated = ai.generate(_prompt(ctx, line),
                                 fallback=_fallback(line))

@@ -111,3 +111,40 @@ def test_topic_min_count_stops_sticking_too_early():
                         topic_stickiness=100, topic_min_count=3)
     lines = plan(config, ["acc1"], random.Random(3))
     assert [line.topic for line in lines] == ["one", "two", "three", "three"]
+
+
+def test_pattern_refresh_batch_has_the_requested_length():
+    from ogtool.features.ai_chat import refreshed
+
+    config = config_for(targets=["@g1"], count=3, topics=["a", "b"])
+    batch = refreshed(config, ["acc1"], 5)
+    assert len(batch) == 5
+    assert all(line.target == "@g1" for line in batch)
+
+
+def test_the_plan_refreshes_the_pattern_on_the_timer(ctx, capsys):
+    """``patternRefreshSeconds`` re-asks for the wording on a timer.
+
+    The refresh is decided on the plan's own clock (``waited``), so a dry run
+    shows exactly where a live run would re-plan - which is the point of a dry
+    run for a timing knob.
+    """
+    from ogtool.features.ai_chat import AiChatConfig, run
+
+    config = AiChatConfig(targets=["@g1"], count=3, topics=["a", "b"],
+                          interval_min=2.0, interval_max=2.0,
+                          pattern_refresh_seconds=1)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "refresh: topic prompt changed after 2s, 2 line(s) replanned" in output
+
+
+def test_without_a_refresh_interval_nothing_is_replanned(ctx, capsys):
+    from ogtool.features.ai_chat import AiChatConfig, run
+
+    config = AiChatConfig(targets=["@g1"], count=3, topics=["a", "b"],
+                          interval_min=2.0, interval_max=2.0)
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "topic prompt changed" not in output
+    assert "refresh: -" in output
