@@ -59,7 +59,8 @@ FLAGS = (
     Flag("--request-interval", "request_interval", float,
          "minimum seconds between two requests"),
     Flag("--threads", "threads", int,
-         "planning only; use batch_invite_v2 for one lane per account"),
+         "concurrent lanes, one handler account each (real wiring via "
+         "lanes_by)"),
     Flag("--target-success-cap", "target_success_cap", int,
          "invites one target group accepts"),
     Flag("--handler-success-cap", "handler_success_cap", int,
@@ -68,7 +69,6 @@ FLAGS = (
          "attempts one handler may spend"),
     Flag("--invite-interval", "invite_interval", float,
          "minimum seconds between two invites"),
-    Flag("--admin-account", "admin_account", str, "the admin account"),
     Flag("--member-flood-cap", "member_flood_cap", int,
          "PEER_FLOOD retries per invitee"),
     Flag("--handler-flood-cap", "handler_flood_cap", int,
@@ -78,6 +78,8 @@ FLAGS = (
     Flag("--export-missing", "export_missing", str,
          "where the MISSING list goes"),
     Flag("--export-flood", "export_flood", str, "where the FLOOD list goes"),
+    Flag("--output-dir", "output_dir", str,
+         "directory for exports and the report (default: exports under logs)"),
     Flag("--report", "report", None, "write the run report", action="store_true"),
 )
 
@@ -94,12 +96,12 @@ class InviteConfig:
     handler_success_cap: int = 0
     handler_exec_cap: int = 0
     invite_interval: float = 10.0
-    admin_account: str = ""
     member_flood_cap: int = 2
     handler_flood_cap: int = 3
     add_contact_wait: float = 5.0
     export_missing: str = ""
     export_flood: str = ""
+    output_dir: str = ""
     report: bool = False
     task_name: str = "batch-invite"
 
@@ -126,12 +128,12 @@ class InviteConfig:
             handler_success_cap=num(data, "handler_success_cap", 0, kind=int),
             handler_exec_cap=num(data, "handler_exec_cap", 0, kind=int),
             invite_interval=num(data, "invite_interval", 10.0),
-            admin_account=text(data, "admin_account"),
             member_flood_cap=num(data, "member_flood_cap", 2, kind=int),
             handler_flood_cap=num(data, "handler_flood_cap", 3, kind=int),
             add_contact_wait=num(data, "add_contact_wait", 5.0),
             export_missing=text(data, "export_missing"),
             export_flood=text(data, "export_flood"),
+            output_dir=text(data, "output_dir"),
             report=bool(data.get("report", False)),
             task_name=name_of(raw, data, "batch-invite"),
         )
@@ -297,7 +299,6 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
         target_success_cap=config.target_success_cap or "-",
         handler_flood_cap=config.handler_flood_cap,
         member_flood_cap=config.member_flood_cap,
-        admin=config.admin_account or "-",
         add_contact_wait=f"{config.add_contact_wait:.0f}s",
         queue=len(jobs),
     )
@@ -346,7 +347,7 @@ def run(config: InviteConfig, ctx: RunContext) -> int:
     print(f"PLAN: {len(jobs)} invites, {len(handlers)} handlers, "
           f"MISSING {len(missing)}, FLOOD {len(flood)}")
 
-    base = out_dir(ctx, {"output_dir": ""}, ctx.settings)
+    base = out_dir(ctx, {"output_dir": config.output_dir}, ctx.settings)
     export(config.export_missing or f"{base}/batch_invite_missing.txt",
            missing, "MISSING")
     export(config.export_flood or f"{base}/batch_invite_flood.txt",

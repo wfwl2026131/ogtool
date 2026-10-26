@@ -85,6 +85,8 @@ FLAGS = (
     Flag("--flood-cap", "flood_cap", int, "PEER_FLOOD retries per handler"),
     Flag("--invitee-flood-cap", "invitee_flood_cap", int,
          "PEER_FLOOD retries per invitee"),
+    Flag("--output-dir", "output_dir", str,
+         "directory for exports (default: exports under logs)"),
     Flag("--export-flood-timeout", "export_flood_timeout", str,
          "where the PEER_FLOOD and TIMEOUT record goes"),
 )
@@ -115,6 +117,7 @@ class InviteV2Config:
     flood_cap: int = 3
     invitee_flood_cap: int = 2
     export_flood_timeout: str = ""
+    output_dir: str = ""
     # --- the page's config, by its own names ---------------------------
     #: ``memberInputMode`` / ``memberFilePath``: 手动 / 文本 / 文件 三选一。
     member_input_mode: str = "manual"
@@ -183,6 +186,7 @@ class InviteV2Config:
             flood_cap=num(data, "flood_cap", 3, kind=int),
             invitee_flood_cap=num(data, "invitee_flood_cap", 2, kind=int),
             export_flood_timeout=text(data, "export_flood_timeout"),
+            output_dir=text(data, "output_dir"),
             member_input_mode=mode,
             member_file=text(data, "member_file"),
             continue_members_across_targets=bool(
@@ -427,7 +431,7 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
     print(f"PLAN: {len(jobs)} invites, {len(handlers)} handlers, "
           f"exec {ok + failed}")
 
-    base = out_dir(ctx, {"output_dir": ""}, ctx.settings)
+    base = out_dir(ctx, {"output_dir": config.output_dir}, ctx.settings)
     path = config.export_flood_timeout or f"{base}/batch_invite_v2_flood.txt"
     # A key that was typed is meant to be used; the page's separate "enabled"
     # switch only matters when a key comes from a stored config.

@@ -126,3 +126,31 @@ def test_handler_flood_cap_rests_a_handler(ctx, scripted, capsys):
     run(config, ctx)
     output = capsys.readouterr().out
     assert "handler rested: " in output
+
+
+def test_admin_account_is_gone_and_output_dir_reaches_the_exports():
+    """``--admin-account`` was header-only: the invite never consults who the
+    admin is, so the flag is gone. ``--output-dir`` now decides where the
+    MISSING/FLOOD exports land, like every other page's exports."""
+    from ogtool.features._common import out_dir
+    from ogtool.features.batch_invite import FLAGS
+
+    assert all(flag.dest != "admin_account" for flag in FLAGS)
+    assert any(flag.dest == "output_dir" for flag in FLAGS)
+
+    config = InviteConfig.from_dict(
+        {"batch_invite": {"groups": "@g", "members": "123",
+                          "output_dir": "/tmp/ogexp-test"}},
+        _settings())
+    assert config.output_dir == "/tmp/ogexp-test"
+
+    class _S:
+        log_dir = Path("/tmp/ogexp-fallback")
+
+    assert out_dir(None, {"output_dir": config.output_dir}, _S()) \
+        == "/tmp/ogexp-test"
+
+
+def _settings():
+    return type("S", (), {"runtime": type("R", (), {
+        "clamp_threads": staticmethod(lambda value: value)})()})()

@@ -21,10 +21,11 @@ Exit code is 0 either way; the list is the deliverable.
 ``KNOWN`` records the fields this project has looked at and decided about, with
 the reason. They stay in the report - a knob that is deliberately unwired is
 different from one nobody noticed - but they no longer need re-litigating every
-run. A knob deleted outright leaves the table too: ``--leave-mode`` (batch_join)
-and ``--poll-interval`` (ai_comment) were removed in phase five - leaving is
-chosen by ``operation_type`` and the sender's per-chat request, and the one-shot
-run has no poll loop - so there is no field left to decide about.
+run. A knob deleted outright leaves the table too: ``--leave-mode`` (batch_join),
+``--poll-interval`` (ai_comment) and ``--admin-account`` (batch_invite) were
+removed in phase five - leaving is chosen by ``operation_type`` and the
+sender's per-chat request, the one-shot run has no poll loop, and the invite
+never consults who the admin is - so there is no field left to decide about.
 """
 
 from __future__ import annotations
@@ -38,9 +39,6 @@ import sys
 #: ``feature.field`` -> why it is not wired, decided once, kept visible.
 KNOWN = {
 
-    "batch_invite.admin_account":
-        "names which account acts as the group admin; the invite itself does not "
-        "need it, and nothing in the dump shows the promotion step",
     "ai_clone.passive":
         "the reference's own long-running follow mode; this run is one-shot",
     "batch_login.account_labels":
