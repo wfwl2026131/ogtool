@@ -53,6 +53,10 @@ class Case:
     #: an exit code of 0 with a task that recorded nothing proves less than it
     #: looks, and the two listening pages are exactly that case.
     min_rows: int = 0
+    #: A nonzero exit the case treats as the expected outcome. The negative
+    #: paths (a group with no call to join) end the page with the failure
+    #: counted in its PLAN line and exit 1 - that IS the proof.
+    allow_exit: int = 0
     #: Whether the six checks should run it. A case that copies a chat into the
     #: same chat is a real proof but repeats its whole output every run, so it
     #: is registered and run by name instead of on every check.
@@ -158,6 +162,29 @@ CASES: tuple[Case, ...] = (
                   "--capture-minutes", "60", "--copy-mode", "copy"),
          None, "copy_chat", "ok:", cli_write=True, min_rows=1,
          in_suite=False),
+    # Cloning the account's own broadcast channel into its own fixture group,
+    # with the watermark set to the id this run's capture tops out at: the
+    # resume filter drops every candidate, so the case proves the live
+    # plumbing (capture, resolve, receipt) without posting anything new.
+    # The full copy itself is proven live (ai_clone-2786 receipt, 2 posts).
+    Case("clone", ("ai_clone", "--live", "--accounts", "{account}",
+                   "--sources", "https://t.me/c/4365539795",
+                   "--targets", "https://t.me/c/3965371671",
+                   "--last-source-message-id", "999",
+                   "--mode", "copy"),
+         None, "ai_clone", "ok: 0", cli_write=True, min_rows=0,
+         in_suite=False),
+    # The call resolve path, live: the fixture group has no group call, so
+    # "speak" resolves the chat, finds none and reports GROUP_CALL_NOT_FOUND -
+    # the same path a real call would ride, without needing one. Proven once
+    # by hand (video_manage live, join ok as already-participant, speak
+    # GROUP_CALL_NOT_FOUND); kept out of the six checks because it needs the
+    # real session for a result that is stable but negative.
+    Case("video", ("video_manage", "--live", "--accounts", "{account}",
+                   "--link", "https://t.me/c/3965371671",
+                   "--action", "speak", "--interval-ms", "300"),
+         None, "video_manage", "GROUP_CALL_NOT_FOUND", cli_write=True,
+         min_rows=1, in_suite=False, allow_exit=1),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
@@ -346,7 +373,7 @@ def run_case(case: Case, config: Path, account: str, who: str,
                 started.kill()
                 output = started.communicate()[0]
                 problems.append(f"{case.name}: did not stop after Ctrl+C")
-    if started.returncode != 0:
+    if started.returncode != 0 and started.returncode != case.allow_exit:
         problems.append(f"{case.name}: exit {started.returncode}\n"
                         f"{output[-600:]}")
     if "Traceback" in output:

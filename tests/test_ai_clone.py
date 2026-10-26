@@ -8,7 +8,7 @@ import pytest
 
 from ogtool.ai import AIError
 from ogtool.config import ConfigError
-from ogtool.features.ai_clone import CloneConfig, parse_mapping, plan, run
+from ogtool.features.ai_clone import CloneConfig, capture, parse_mapping, plan, run
 from ogtool.sources import SourceMessage, parse_entry
 
 
@@ -282,3 +282,40 @@ def test_the_two_file_flags_feed_their_own_list(tmp_path, ctx, capsys):
         ctx.settings)
     assert config.sources == ["@src_chan"]
     assert config.targets == ["@dst_chan"]
+
+
+def test_capture_carries_the_real_post_ids(ctx, live, monkeypatch, capsys):
+    """history() returns items and posts in the same order; capture() must
+    hand the real Telegram ids to the messages. parse_many numbers the
+    entries 1..N on its own, and a watermark of 2 against a chat that keeps
+    growing would skip the newest posts of the next run forever."""
+    from dataclasses import replace
+
+    from ogtool.senders import SendResult
+
+    class HistorySender:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def history(self, account, target, minutes=0, limit=0):
+            return SendResult(ok=True, count=2,
+                              items=["@s1|someone|first post",
+                                     "@s1|someone|second post"],
+                              posts=[(41, "first post"), (42, "second post")])
+
+        def close(self) -> None:
+            self.closed = True
+
+    sender = HistorySender()
+    live(sender)
+    config = CloneConfig(sources=["@s1"], targets=["@t1"],
+                         mapping={"@s1": "@t1"})
+    messages, failures = capture(sender, "t1", ["@s1"], 2)
+    assert failures == []
+    assert [m.message_id for m in messages] == [41, 42]
+    assert [m.text for m in messages] == ["first post", "second post"]
+    # and the resume filter now works against those ids
+    config = replace(config, messages=messages, last_source_message_id=41)
+    items, collected = plan(config, ["acc1"])
+    assert [item.source.message_id for item in items] == [42]
+    assert collected.reasons == {"resume": 1}

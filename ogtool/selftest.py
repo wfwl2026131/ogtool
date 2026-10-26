@@ -238,7 +238,35 @@ def check_live(base: Path | None = None,
     here = base or root()
     config = here / "config.yaml"
     if not config.exists():
-        return "live: no config.yaml, skipped", []
+        # A skip is fine; a dead end is not. Say what a working live check
+        # needs, in one line a stranger can act on.
+        return ("live: no config.yaml, skipped - copy config.example.yaml to "
+                "config.yaml, fill api_id/api_hash and an accounts: entry, "
+                "then rerun selftest"), []
+    # A pool with no account, or an account with no session on disk, is the
+    # next dead end: name the exact fix instead of letting live_smoke fail on
+    # it case by case.
+    from .config import Settings
+    from .store import Store
+
+    settings = Settings.load(config)
+    store = Store(settings.db_path)
+    accounts = store.list_accounts()
+    store.close()
+    # A missing live_smoke.py is a broken install and outranks the pool: let
+    # the run report it as before.
+    if not (here / "scripts/live_smoke.py").exists():
+        pass
+    elif not accounts:
+        return ("live: the account pool is empty - run "
+                "`ogtool accounts add <label>` (or `accounts login <label>`), "
+                "then rerun selftest"), []
+    missing = [account.label for account in accounts
+               if not settings.session_path(account.label).exists()]
+    if missing:
+        joined = ", ".join(missing)
+        return (f"live: no session file for {joined} - run "
+                f"`ogtool accounts login {missing[0]}` first"), []
     run_smoke = subprocess.run(  # noqa: S603 - our own script, fixed arguments
         [sys.executable, str(here / "scripts/live_smoke.py")],
         cwd=here, capture_output=True, text=True, timeout=timeout,

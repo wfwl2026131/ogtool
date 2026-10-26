@@ -55,9 +55,13 @@ def test_speak_joins_unmuted(ctx, capsys):
     assert "muted=0" in output
 
 
-def test_the_group_call_slug_is_cached_once_per_group(ctx, capsys):
+def test_the_call_cache_lives_on_the_sender(ctx, capsys):
+    """The page used to keep a synthesized "slug" nobody consumed; the real
+    cache is on the TelethonSender now (one GetFullChannel per target, the
+    next action reuses the stored call - pinned in test_video_manage.py).
+    The page itself carries no cache and prints nothing about slugs."""
     config = VideoConfig(link="@g1", action=SPEAK, interval_ms=0)
-    run(config, ctx)
+    assert run(config, ctx) == 0
     output = capsys.readouterr().out
-    assert output.count("group call slug cached") == 1
-    assert config.slug_cache == {"@g1": "call:g1"}
+    assert "slug" not in output
+    assert not hasattr(config, "slug_cache")

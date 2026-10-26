@@ -5,8 +5,8 @@ an "(in call)" state, a "[Muted]" marker and "success cached group call slug"
 next to the config keys ``operation`` and ``intervalMs`` in
 ``video_manage_config.json``. So this is group-call automation, not video
 upload: an account joins the call, can be switched to speaking or muted, and
-the group call slug is cached so a second action on the same group does not
-resolve it again.
+the resolved group call is cached on the sender so a second action on the same
+group does not resolve it again.
 """
 
 from __future__ import annotations
@@ -57,9 +57,6 @@ class VideoConfig:
     link: str = ""
     interval_ms: int = 1000
     action: str = JOIN
-    #: ``success cached group call slug``: the slug kept between actions so a
-    #: second call action on the same group reuses it.
-    slug_cache: dict[str, str] = field(default_factory=dict)
     task_name: str = "video-manage"
 
     @classmethod
@@ -125,13 +122,8 @@ def run(config: VideoConfig, ctx: RunContext) -> int:
             result = (sender.join(account, target) if config.action == JOIN
                       else sender.leave(account, target))
         else:
-            # Speak / mic-off are call actions: the same group call is reused
-            # across accounts, which is what the page's cached slug is for.
-            if target.ref not in config.slug_cache:
-                config.slug_cache[target.ref] = (f"call:"
-                                                 f"{target.ref.lstrip('@')}")
-                print(f"group call slug cached: "
-                      f"{config.slug_cache[target.ref]}")
+            # Speak / mic-off are call actions: the sender resolves the group
+            # call once and keeps it, so the next account reuses it.
             result = sender.join_call(account, target,
                                       muted=config.action == MIC_OFF)
         if result.ok:

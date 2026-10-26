@@ -435,3 +435,26 @@ def test_a_sticker_is_sent_from_the_enabled_set(ctx, live, capsys):
     assert sender.stickers == 2
     assert sender.texts == 0
     assert "stickers: 2" in output
+
+
+def test_the_seed_reaches_the_emoji_and_the_reaction(ctx, live, fake_ai,
+                                                     monkeypatch):
+    """--seed promised "a reproducible plan" but only the plan was seeded.
+
+    The body emoji and the reaction emoji drew from the module random, so
+    two runs with the same seed disagreed with each other and with the plan.
+    """
+    from ogtool.features import _common
+
+    monkeypatch.setattr(_common.time, "sleep", lambda seconds: None)
+    ctx.ai = fake_ai(lambda prompt, system, config: ("nice post", 3))
+    bodies = []
+    for _ in range(2):
+        sender = CapturingSender(posts=[(5, "a post")])
+        live(sender)
+        assert run(config_for(posts=1, poll_recent=1, per_post_min=1,
+                              per_post_max=1, emoji_probability=100,
+                              likes_min=1, likes_max=1, seed=11), ctx) == 0
+        bodies.append(sender.sent[0][1].text)
+        assert len(sender.reacted) == 1
+    assert bodies[0] == bodies[1]

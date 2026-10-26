@@ -358,7 +358,11 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         print("ERROR: neither comment_required nor like_required is on, "
               "the run would do nothing")
         return 2
-    stats = plan(config, labels)
+    # One generator for the whole run: --seed promised a reproducible plan,
+    # but the emoji on the body and the reaction emoji drew from the module
+    # random, so two identical runs did not agree with their own plan.
+    rng = random.Random(config.seed)
+    stats = plan(config, labels, rng)
 
     header(
         config.task_name,
@@ -459,7 +463,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
         if spec.emoji and body:
             with lock:
                 counters["emoji"] += 1
-            body = f"{body} {random.choice(BODY_EMOJI)}".strip()
+            body = f"{body} {rng.choice(BODY_EMOJI)}".strip()
         outcome = None
         attempts = 0
         if config.require_comment:
@@ -489,7 +493,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
             for like in range(max(0, spec.likes)):
                 if like >= len(labels):
                     break  # an account may leave only one reaction per post
-                reaction = (random.choice(config.like_emojis)
+                reaction = (rng.choice(config.like_emojis)
                             if config.like_emojis else DEFAULT_REACTION)
                 one = sender.react(labels[like], target, spec.post_id,
                                    reaction)

@@ -739,6 +739,11 @@ class TelethonSender:
     live: bool = True
     _clients: dict[str, Any] = field(default_factory=dict)
     _client_lock: Any = field(default_factory=threading.RLock, repr=False)
+    #: Resolved group calls, per (account, target ref). ``JoinGroupCallRequest``
+    #: needs the call itself, and the page's actions repeat on the same group;
+    #: caching here is what "success cached group call slug" actually meant -
+    #: the page used to keep a synthesized string nobody consumed.
+    _calls: dict[tuple[str, str], Any] = field(default_factory=dict)
 
     def _client(self, account: str) -> Any:
         # Two lanes may reach for their first client at the same moment; the
@@ -1044,19 +1049,12 @@ class TelethonSender:
 
             client = self._client(account)
             chat = chat_entity(client, target)
-            call: PhoneCall | None = None
-            try:
-                from telethon.tl.functions.channels import (
-                    GetFullChannelRequest,
-                )
-
-                resolved = client(GetFullChannelRequest(chat))
-                call_holder = getattr(
-                    getattr(resolved, "full_chat", None), "call", None)
-                if call_holder is not None:
-                    call = getattr(call_holder, "call", None) or call_holder
-            except Exception:  # noqa: BLE001 - the call may simply not exist
-                call = None
+            key = (account, target.ref)
+            call: PhoneCall | None = self._calls.get(key)
+            if call is None:
+                call = self._resolve_call(client, chat)
+                if call is not None:
+                    self._calls[key] = call
             if call is None:
                 return SendResult(ok=False, code="GROUP_CALL_NOT_FOUND",
                                   detail="no group call on this chat")
@@ -1070,6 +1068,20 @@ class TelethonSender:
             return SendResult(ok=True)
 
         return self._guard("call", account, action)
+
+    def _resolve_call(self, client: Any, chat: Any) -> Any:
+        """The group call behind a chat, or ``None`` when it has none."""
+        from telethon.tl.functions.channels import GetFullChannelRequest
+
+        try:
+            resolved = client(GetFullChannelRequest(chat))
+        except Exception:  # noqa: BLE001 - the call may simply not exist
+            return None
+        call_holder = getattr(getattr(resolved, "full_chat", None), "call",
+                              None)
+        if call_holder is None:
+            return None
+        return getattr(call_holder, "call", None) or call_holder
 
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
         """Add one user to a group, joining a private link first if needed."""

@@ -213,4 +213,19 @@ def test_a_case_can_stay_out_of_the_suite_but_still_be_runnable(smoke):
     assert names["copy"].cli_write is True
     assert names["copy"].min_rows == 1
     # Everything else still runs in the suite.
-    assert sorted(name for name, case in names.items() if not case.in_suite)         == ["copy", "rename"]
+    assert sorted(name for name, case in names.items() if not case.in_suite)         == ["clone", "copy", "rename", "video"]
+
+
+def test_a_negative_path_may_exit_nonzero(smoke, tmp_path):
+    """The write gate exits 2 on purpose; a case that expects that refusal
+    (the negative-path pattern, like video_manage's no-call probe) declares
+    the expected exit instead of failing its own check."""
+    config = tmp_path / "c.yaml"
+    config.write_text("accounts:\n  t1: {}\n")
+    refused = ("mass_send", "--live", "--accounts", "t1")
+    case = smoke.Case("x", refused, None, "", "", allow_exit=2)
+    assert smoke.Case("y", refused, None, "", "").allow_exit == 0
+    assert smoke.run_case(case, config, "t1", "") == []
+    problems = smoke.run_case(
+        smoke.Case("y", refused, None, "", ""), config, "t1", "")
+    assert any("exit 2" in line for line in problems)

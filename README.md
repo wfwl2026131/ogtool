@@ -320,6 +320,31 @@ steps:
 解析失败会指名文件与步号，例如
 `scripts/x.yaml: steps[2]: unknown action 'teleport' (have: ...)`。
 
+## live 运行前提（selftest 的 live 检会替你逐条核）
+
+`selftest` 的 live 检不是"有 config 就跑"：它在开跑前把死胡同一条条点名，
+每条都带下一步动作。
+
+| 前提 | 缺了时 selftest 说的话 |
+|---|---|
+| `config.yaml` 存在 | `no config.yaml, skipped - copy config.example.yaml to config.yaml, fill api_id/api_hash and an accounts: entry` |
+| 账号池非空（库里有账号） | `the account pool is empty - run \`ogtool accounts add <label>\` (or \`accounts login <label>\`)` |
+| 每个账号有 session 文件 | `no session file for <label> - run \`ogtool accounts login <label>\` first` |
+| `scripts/live_smoke.py` 在位 | 这条排在账号检之前：脚本缺失按安装损坏报，不被账号空池挡住 |
+
+真跑（`--live --allow-write`）另有两条铁律：
+
+1. **只对自己**：发消息只发自己（`@自己` / Saved Messages）与自建测试夹具；
+   自检冒烟的每个写用例都构造在"自己 + 自建群/频道"上。
+2. **预算不继承**：冒烟发送用例带 `--daily-limit 0`，保证冒烟通过与否不取决于
+   当天前面用例烧掉了多少预算；日常页面的默认 50 条/天不变。
+
+live 用例全部登记在 `scripts/live_smoke.py`（`Case` 表）。套件用例每轮必跑；
+`in_suite=False` 的用例（copy / clone / rename / video）用
+`python scripts/live_smoke.py --config config.yaml --only <名字>` 按名跑——
+其中 video 是**负路径**证明（fixture 群没有群通话，`--action speak` 应当 live
+落一行 `GROUP_CALL_NOT_FOUND` 并退出 1），所以它声明 `allow_exit=1`。
+
 ## 非交互 live 登录
 
 给自动化准备的登录路径：进程不读 stdin、不弹任何提示，外部把验证码写进

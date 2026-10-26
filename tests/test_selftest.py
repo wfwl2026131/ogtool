@@ -117,6 +117,8 @@ def test_live_is_skipped_without_a_config(tmp_path):
 
 
 def test_live_reports_a_missing_script(tmp_path):
+    """The pool gate sits after the run: a checkout with an empty pool and a
+    missing script hears about the missing script, not about the pool."""
     (tmp_path / "config.yaml").write_text("logs: l\n", encoding="utf-8")
     line, problems = selftest.check_live(base=tmp_path)
     assert problems
@@ -177,3 +179,19 @@ def test_the_live_check_runs_before_the_docs_check():
     # receipts: live has to run first, then the blocks are rewritten, then docs
     # has something true to read.
     assert module.CHECKS.index("live") < module.CHECKS.index("docs")
+
+
+def test_the_live_dead_ends_name_the_fix(tmp_path):
+    """No config, no pool, no session: each skip says what to do next, in one
+    line a stranger can act on - not just "skipped"."""
+    line, problems = selftest.check_live(base=tmp_path)
+    assert problems == []
+    assert "config.example.yaml" in line
+
+    (tmp_path / "config.yaml").write_text("logs: l\n", encoding="utf-8")
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts/live_smoke.py").write_text("# placeholder\n",
+                                                    encoding="utf-8")
+    line, problems = selftest.check_live(base=tmp_path)
+    assert problems == []
+    assert "account pool is empty" in line and "accounts login" in line

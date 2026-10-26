@@ -59,6 +59,8 @@ FLAGS = (
     Flag("--mode", "mode", str, "copy, rewrite or ai"),
     Flag("--mapping", "mapping", str, "source=target lines"),
     Flag("--max-items", "max_items", int, "how many posts one run carries"),
+    Flag("--last-source-message-id", "last_source_message_id", int,
+         "resume: skip posts at or below this source id"),
     Flag("--post-interval-min", "post_interval_min", float,
          "minimum seconds between two posts"),
     Flag("--post-interval-max", "post_interval_max", float,
@@ -295,7 +297,17 @@ def capture(sender: object, account: str,
         entries.extend(result.items)
         print(f"source={source} captured {len(result.items)}/{result.count} "
               f"limit={limit}")
-    return parse_source_messages(entries), failures
+    messages = parse_source_messages(entries)
+    # ``posts`` carries the real Telegram ids in the same order as ``items``:
+    # both are built from one capture. Without them the watermark would be a
+    # position in the newest-first list, and on a chat that keeps growing the
+    # next run would skip its two newest posts forever - resume that never
+    # resumes anything.
+    for message, (mid, _body) in zip(messages, result.posts or [],
+                                     strict=False):
+        if mid:
+            message.message_id = mid
+    return messages, failures
 
 
 def run(config: CloneConfig, ctx: RunContext) -> int:
