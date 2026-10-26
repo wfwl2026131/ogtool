@@ -212,6 +212,34 @@ CASES: tuple[Case, ...] = (
                     "--stop-after", "1"),
          None, "mix_market", "ok: 1", cli_write=True, min_rows=1,
          in_suite=False),
+    # batch_invite live: the handler invites its own user id into its own
+    # fixture group. Telegram treats re-inviting an existing member as a
+    # no-op success, so the real InviteToChannelRequest rides through and
+    # the row records the pair (batch_invite-2921, sent=1). Zero third
+    # parties.
+    Case("invite", ("batch_invite", "--live", "--accounts", "{account}",
+                    "--groups", "https://t.me/c/3965371671",
+                    "--members", "6805350975", "--request-interval", "1"),
+         None, "batch_invite", "成功: 1", cli_write=True, min_rows=1,
+         in_suite=False),
+    # batch_invite_v2 live: the same self-target through the v2 page (own
+    # contact into own group; receipt 2925, sent=1). Same no-op-success
+    # shape as "invite".
+    Case("invite2", ("batch_invite_v2", "--live", "--accounts", "{account}",
+                     "--targets", "https://t.me/c/3965371671",
+                     "--contacts", "6805350975", "--request-interval", "1"),
+         None, "batch_invite_v2", "ok: 1", cli_write=True, min_rows=1,
+         in_suite=False),
+    # batch_login live, offline path: an empty import folder means zero
+    # Telegram traffic, the pool audit still runs against the real session
+    # (t1 ok, the broken account a errors) and the export lands. The real
+    # proof of a login itself still needs the operator's code, so this
+    # pins only the no-import wiring.
+    Case("login", ("batch_login", "--live", "--allow-write",
+                   "--import-folder", "/tmp/ogempty-import",
+                   "--export-ids", "-"),
+         None, "batch_login", "PLAN: 0 imported", cli_write=True,
+         min_rows=0, in_suite=False),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
