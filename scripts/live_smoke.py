@@ -35,7 +35,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 #: Seconds a listening page is allowed to stay up before Ctrl+C is sent.
-LISTEN_SECONDS = 8
+#: Retired as a routine mechanism: the listen pages self-limit with
+#: --run-seconds, so no case ships an interrupt_after any more. The slot
+#: stays for emergencies - a hung case can still be killed by hand-edited
+#: extra cases (live_cases.yaml).
 
 
 @dataclass(frozen=True)
@@ -86,9 +89,11 @@ CASES: tuple[Case, ...] = (
          min_rows=1),
     # watch_chat relays, so the CLI treats it as a write page; this case relays
     # into the account's own chat (Saved Messages) and nowhere else.
+    # --run-seconds lets the page close its own receipt on its own plan;
+    # the interrupt_after slot stays None because nothing needs to be killed.
     Case("watch", ("watch_chat", "--live", "--accounts", "{account}",
-                   "--targets", "{self}"), LISTEN_SECONDS, "watch_chat", "DONE:",
-         cli_write=True),
+                   "--targets", "{self}", "--run-seconds", "3"),
+         None, "watch_chat", "DONE:", cli_write=True),
     # The positive half of the write gate, on a real account: the CLI runs this
     # page only because the case carries --allow-write, and the row it writes
     # goes into the account's own chat, never to a third party.
@@ -110,8 +115,8 @@ CASES: tuple[Case, ...] = (
          "UNKNOWN", min_rows=1),
     Case("listen", ("auto_reply", "--live", "--accounts", "{account}",
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
-                    "--duplicate-seconds", "30"),
-         LISTEN_SECONDS, "auto_reply", "DONE:", cli_write=True),
+                    "--duplicate-seconds", "30", "--run-seconds", "3"),
+         None, "auto_reply", "DONE:", cli_write=True),
     # The smallest write that goes into Telegram and cannot reach a stranger:
     # adding the account itself to its own contact list. It is gated, so the
     # case has to pass --allow-write like any other write page.

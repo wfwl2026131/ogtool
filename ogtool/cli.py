@@ -486,6 +486,9 @@ def _auto_reply_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--rule", action="append", default=[],
                         help="keyword=>reply (repeatable)")
     parser.add_argument("--duplicate-seconds", type=int, default=None)
+    parser.add_argument("--run-seconds", type=int, default=None,
+                        help="stop listening after this many seconds (0: "
+                             "until interrupted)")
     parser.add_argument("--simulate", action="append", default=[],
                         help="peer|sender|text (repeatable)")
     parser.add_argument("--disabled", action="store_true")
@@ -575,6 +578,8 @@ def _auto_reply_overrides(args: argparse.Namespace) -> dict[str, Any]:
         section_values["rules"] = list(args.rule)
     if args.duplicate_seconds is not None:
         section_values["duplicate_seconds"] = args.duplicate_seconds
+    if getattr(args, "run_seconds", None) is not None:
+        section_values["run_seconds"] = args.run_seconds
     if args.disabled:
         section_values["enabled"] = False
     if section_values:

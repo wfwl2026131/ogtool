@@ -43,6 +43,9 @@ class AutoReplyConfig:
     rules: list[Rule] = field(default_factory=list)
     simulate: list[str] = field(default_factory=list)
     task_name: str = "auto-reply"
+    #: Stop listening after this many seconds and close the receipt. 0 means
+    #: until interrupted - the operator's Ctrl+C is still the default.
+    run_seconds: int = 0
 
     @classmethod
     def from_dict(cls, raw: dict) -> AutoReplyConfig:
@@ -66,6 +69,7 @@ class AutoReplyConfig:
             account_labels=list(raw.get("accounts") or []),
             enabled=bool(section.get("enabled", True)),
             duplicate_seconds=int(section.get("duplicate_seconds", 60)),
+            run_seconds=int(section.get("run_seconds", 0)),
             rules=rules,
             simulate=list(raw.get("simulate") or []),
             task_name=str(raw.get("task_name") or "auto-reply"),
@@ -214,11 +218,22 @@ def _run_live(config: AutoReplyConfig, ctx: RunContext, task) -> int:
 
     for client in clients:  # pragma: no cover - live only
         client.add_event_handler(handler)
-    print(f"live: watching {len(clients)} account(s), Ctrl+C to stop")
+    stop_note = (f"stopping after {config.run_seconds}s"
+                 if config.run_seconds else "Ctrl+C to stop")
+    print(f"live: watching {len(clients)} account(s), {stop_note}")
     try:  # pragma: no cover - live only
         import asyncio
 
-        asyncio.get_event_loop().run_forever()
+        loop = asyncio.get_event_loop()
+        if config.run_seconds:
+            # A self-limiting listen: the receipt closes through the same
+            # finally as an interrupt, but the exit is the run's own plan,
+            # not a signal someone had to send.
+            loop.call_later(config.run_seconds,
+                            lambda: loop.call_soon_threadsafe(loop.stop))
+            loop.run_forever()
+        else:
+            loop.run_forever()
     except KeyboardInterrupt:
         ctx.note("interrupted by the operator", "warn")
     finally:

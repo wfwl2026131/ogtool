@@ -104,3 +104,40 @@ def test_string_rules_are_accepted():
     )
     assert config.rules[0].keywords == ["hi"]
     assert config.rules[0].reply == "hello"
+
+
+def test_run_seconds_stops_the_loop_without_a_signal(monkeypatch, ctx,
+                                                     capsys):
+    """--run-seconds N: the live loop schedules its own stop, the receipt
+    closes through the same finally as an interrupt, DONE is printed and
+    the exit code is 0 - no external signal needed."""
+    import asyncio
+
+    from ogtool.features.auto_reply import AutoReplyConfig, run
+
+    class StopLoop:
+        def __init__(self):
+            self.scheduled = False
+
+        def call_later(self, delay, callback):
+            assert delay == 2
+            self.scheduled = True
+
+        def call_soon_threadsafe(self, callback):
+            pass
+
+        def run_forever(self):
+            assert self.scheduled, "the self-stop was not scheduled"
+
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: StopLoop())
+    # The live branch is where the loop lives: flip the context live with the
+    # scripted sender kept in place (same trick as the puppet stagger test).
+    ctx.script.codes = ["ok"] * 4
+    ctx._sender = ctx.sender()
+    ctx.live = True
+    config = AutoReplyConfig(rules=[], run_seconds=2)
+    code = run(config, ctx)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "stopping after 2s" in out
+    assert "DONE: replies=0" in out

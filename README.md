@@ -339,11 +339,14 @@ steps:
 2. **预算不继承**：冒烟发送用例带 `--daily-limit 0`，保证冒烟通过与否不取决于
    当天前面用例烧掉了多少预算；日常页面的默认 50 条/天不变。
 
-live 用例全部登记在 `scripts/live_smoke.py`（`Case` 表）。套件用例每轮必跑；
-`in_suite=False` 的用例（copy / clone / rename / video）用
-`python scripts/live_smoke.py --config config.yaml --only <名字>` 按名跑——
-其中 video 是**负路径**证明（fixture 群没有群通话，`--action speak` 应当 live
-落一行 `GROUP_CALL_NOT_FOUND` 并退出 1），所以它声明 `allow_exit=1`。
+live 用例全部登记在 `scripts/live_smoke.py`（`Case` 表），**全部 25 个都在
+套件里**（`in_suite` 皆为 true），每轮六检必跑；外加 `live_cases.yaml` 里的
+机器本地用例。听型两页（auto_reply / watch_chat）用 `--run-seconds` 自限时，
+到点自己闭账出回执，不需要外部信号。
+
+两页的"落行"有结构性前提：**要有第二个对话方向该账号发消息**。自己的
+fixture 群里没有第二成员，所以短跑的回执是干净的 0 行（live-silent）——
+这不是缺口，与 puppet_chat v1、账号真码同属"第二账号"阻塞类。
 
 ## 非交互 live 登录
 

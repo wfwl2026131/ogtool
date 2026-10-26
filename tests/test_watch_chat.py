@@ -229,3 +229,39 @@ def test_a_skipped_message_is_not_a_failure(ctx, capsys):
     assert body["failed"] == 0
     assert body["ok"] == body["results"]["total"] == 1
     assert receipts.validate(body) == []
+
+
+def test_run_seconds_stops_the_watch_loop_without_a_signal(monkeypatch, ctx,
+                                                           capsys, settings):
+    """watch_chat --run-seconds N: the watch loop schedules its own stop and
+    the receipt closes in the same finally as an interrupt."""
+    import asyncio
+
+    from ogtool.features.watch_chat import WatchConfig, run
+
+    class StopLoop:
+        def __init__(self):
+            self.scheduled = False
+
+        def call_later(self, delay, callback):
+            assert delay == 3
+            self.scheduled = True
+
+        def call_soon_threadsafe(self, callback):
+            pass
+
+        def run_forever(self):
+            assert self.scheduled, "the self-stop was not scheduled"
+
+    monkeypatch.setattr(asyncio, "get_event_loop", lambda: StopLoop())
+    # A live context needs an openable client per bound account: the fake
+    # sender hands one out, the same stand-in the page's own live tests use.
+    ctx._sender = FakeSender({"acc1": FakeClient(), "acc2": FakeClient()})
+    ctx.live = True
+    config = WatchConfig.from_dict(
+        {"watch_chat": {"targets": "@g1", "run_seconds": 3}}, settings)
+    code = run(config, ctx)
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "stopping after 3s" in out
+    assert "DONE:" in out

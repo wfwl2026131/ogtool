@@ -26,6 +26,7 @@ from ._common import (
     header,
     lines,
     name_of,
+    num,
     open_task,
     record,
     section,
@@ -51,6 +52,8 @@ FLAGS = (
     Flag("--include", "include", str, "included keywords, comma separated"),
     Flag("--watch-mode", "watch_mode", str, "all, or keyword filtering"),
     Flag("--relay", "relay", str, "relay group link"),
+    Flag("--run-seconds", "run_seconds", int,
+         "stop listening after this many seconds (0: until interrupted)"),
     Flag("--simulate", "simulate", str, "peer|sender|text (repeatable)",
          action="append"),
 )
@@ -82,6 +85,9 @@ class WatchConfig:
     relay: str = ""
     incoming: list[Incoming] = field(default_factory=list)
     task_name: str = "watch-chat"
+    #: Stop listening after this many seconds and close the receipt. 0 means
+    #: until interrupted - the operator's Ctrl+C is still the default.
+    run_seconds: int = 0
 
     @classmethod
     def from_dict(cls, raw: dict, settings: Settings) -> WatchConfig:
@@ -99,6 +105,7 @@ class WatchConfig:
             relay=text(data, "relay"),
             incoming=parse_incoming(
                 data.get("messages") or data.get("simulate") or []),
+            run_seconds=num(data, "run_seconds", 0, kind=int, minimum=0),
             task_name=name_of(raw, data, "watch-chat"),
         )
 
@@ -301,12 +308,22 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
 
     for _label, client in clients:
         client.add_event_handler(handler)
+    stop_note = (f"stopping after {config.run_seconds}s"
+                 if config.run_seconds else "Ctrl+C to stop")
     print(f"live: {len(clients)} account(s) watching {len(peers)} chat(s) "
-          f"-> {config.relay or '-'}, Ctrl+C to stop")
+          f"-> {config.relay or '-'}, {stop_note}")
     try:
         import asyncio
 
-        asyncio.get_event_loop().run_forever()
+        loop = asyncio.get_event_loop()
+        if config.run_seconds:
+            # Same shape as auto_reply: the receipt closes through the same
+            # finally as an interrupt, but the exit is the run's own plan.
+            loop.call_later(config.run_seconds,
+                            lambda: loop.call_soon_threadsafe(loop.stop))
+            loop.run_forever()
+        else:
+            loop.run_forever()
     except KeyboardInterrupt:  # pragma: no cover - interactive
         ctx.note("interrupted by the operator", "warn")
     finally:
