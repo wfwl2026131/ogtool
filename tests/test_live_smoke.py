@@ -213,8 +213,7 @@ def test_a_case_can_stay_out_of_the_suite_but_still_be_runnable(smoke):
     assert names["copy"].cli_write is True
     assert names["copy"].min_rows == 1
     # Everything else still runs in the suite.
-    assert sorted(name for name, case in names.items() if not case.in_suite)         == ["clone", "copy", "invite", "invite2", "join", "login", "puppet",
-        "rename", "script", "stage1", "video"]
+    assert sorted(name for name, case in names.items() if not case.in_suite)         == ["copy"]
 
 
 def test_a_negative_path_may_exit_nonzero(smoke, tmp_path):

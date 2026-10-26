@@ -141,10 +141,13 @@ CASES: tuple[Case, ...] = (
     # Renaming the account's own profile: the four list form of the page, one
     # name, applied and then put back. Out of the suite because every run would
     # rewrite the profile; --only rename runs it deliberately.
+    # Renaming the account's own profile to a fixed name: idempotent (the
+    # same first/last every run), no third party, the name file is a tracked
+    # fixture, so the case runs in the suite.
     Case("rename", ("batch_rename", "--live", "--accounts", "{account}",
-                    "--file", "/tmp/ogtool-names.txt", "--interval-ms", "500"),
-         None, "batch_rename", "renames", cli_write=True, min_rows=1,
-         in_suite=False),
+                    "--file", "scripts/fixtures/rename_names.txt",
+                    "--interval-ms", "500"),
+         None, "batch_rename", "renames", cli_write=True, min_rows=1),
     # One AI turn into the account's own chat: the page plans a topic, asks the
     # model for a line and sends it. The interval is pinned to a second so the
     # default pacing does not make the check slow.
@@ -172,8 +175,7 @@ CASES: tuple[Case, ...] = (
                    "--targets", "https://t.me/c/3965371671",
                    "--last-source-message-id", "999",
                    "--mode", "copy"),
-         None, "ai_clone", "ok: 0", cli_write=True, min_rows=0,
-         in_suite=False),
+         None, "ai_clone", "ok: 0", cli_write=True, min_rows=0),
     # The call resolve path, live: the fixture group has no group call, so
     # "speak" resolves the chat, finds none and reports GROUP_CALL_NOT_FOUND -
     # the same path a real call would ride, without needing one. Proven once
@@ -184,15 +186,14 @@ CASES: tuple[Case, ...] = (
                    "--link", "https://t.me/c/3965371671",
                    "--action", "speak", "--interval-ms", "300"),
          None, "video_manage", "GROUP_CALL_NOT_FOUND", cli_write=True,
-         min_rows=1, in_suite=False, allow_exit=1),
+         min_rows=1, allow_exit=1),
     # auto_script live: one send_text step from the shipped self_ping script
     # into the account's own fixture group. Proves the script engine, the
     # step send and the derived receipt counters (auto_script-2847 was the
     # first run with ok=1 actually recorded). One message per --only run.
     Case("script", ("auto_script", "--live", "--accounts", "{account}",
                     "--script", "self_ping"),
-         None, "auto_script", "-> ok", cli_write=True, min_rows=1,
-         in_suite=False),
+         None, "auto_script", "-> ok", cli_write=True, min_rows=1),
     # batch_join live: the account is already a member of its own fixture
     # group, so the real ImportChatInviteRequest rides the
     # already-participant mapping and lands ok (batch_join-2852 receipt,
@@ -200,8 +201,7 @@ CASES: tuple[Case, ...] = (
     Case("join", ("batch_join", "--live", "--accounts", "{account}",
                   "--targets", "https://t.me/+ciW3P2jwBuAwZGRl",
                   "--request-interval", "1"),
-         None, "batch_join", "-> ok", cli_write=True, min_rows=1,
-         in_suite=False),
+         None, "batch_join", "-> ok", cli_write=True, min_rows=1),
     # mix_market live, stage 1 only: the orchestrator re-runs the proven
     # self add_contact (t1 adds t1) with --stop-after 1. The first live run
     # exposed the empty-envelope bug (PLAN said ok=1, receipt total=0); the
@@ -210,8 +210,7 @@ CASES: tuple[Case, ...] = (
                     "--contact", "t1|6805350975",
                     "--targets", "https://t.me/c/3965371671",
                     "--stop-after", "1"),
-         None, "mix_market", "ok: 1", cli_write=True, min_rows=1,
-         in_suite=False),
+         None, "mix_market", "ok: 1", cli_write=True, min_rows=1),
     # batch_invite live: the handler invites its own user id into its own
     # fixture group. Telegram treats re-inviting an existing member as a
     # no-op success, so the real InviteToChannelRequest rides through and
@@ -220,16 +219,14 @@ CASES: tuple[Case, ...] = (
     Case("invite", ("batch_invite", "--live", "--accounts", "{account}",
                     "--groups", "https://t.me/c/3965371671",
                     "--members", "6805350975", "--request-interval", "1"),
-         None, "batch_invite", "成功: 1", cli_write=True, min_rows=1,
-         in_suite=False),
+         None, "batch_invite", "成功: 1", cli_write=True, min_rows=1),
     # batch_invite_v2 live: the same self-target through the v2 page (own
     # contact into own group; receipt 2925, sent=1). Same no-op-success
     # shape as "invite".
     Case("invite2", ("batch_invite_v2", "--live", "--accounts", "{account}",
                      "--targets", "https://t.me/c/3965371671",
                      "--contacts", "6805350975", "--request-interval", "1"),
-         None, "batch_invite_v2", "ok: 1", cli_write=True, min_rows=1,
-         in_suite=False),
+         None, "batch_invite_v2", "ok: 1", cli_write=True, min_rows=1),
     # batch_login live, offline path: an empty import folder means zero
     # Telegram traffic, the pool audit still runs against the real session
     # (t1 ok, the broken account a errors) and the export lands. The real
@@ -239,7 +236,7 @@ CASES: tuple[Case, ...] = (
                    "--import-folder", "/tmp/ogempty-import",
                    "--export-ids", "-"),
          None, "batch_login", "PLAN: 0 imported", cli_write=True,
-         min_rows=0, in_suite=False),
+         min_rows=0),
     # puppet_chat_v2 live: one pattern line (A1|L0|D0) played once at my own
     # fixture group - exactly one self message, the run's only budgeted
     # probe. The message physically lands (group id 15 read back "ogtool
@@ -250,7 +247,7 @@ CASES: tuple[Case, ...] = (
                     "--loops", "1", "--daily-limit", "1",
                     "--startup-interval", "0"),
          None, "puppet_chat_v2", "PLAN: 1 messages", cli_write=True,
-         min_rows=1, in_suite=False),
+         min_rows=1),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
