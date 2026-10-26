@@ -116,6 +116,20 @@ CASES: tuple[Case, ...] = (
                      "--targets", "{self}", "--text", "ogtool smoke",
                      "--no-resume"), None, "mass_send_v2", "ok: 1",
          cli_write=True, min_rows=1),
+    # Renaming the account's own profile: the four list form of the page, one
+    # name, applied and then put back. Out of the suite because every run would
+    # rewrite the profile; --only rename runs it deliberately.
+    Case("rename", ("batch_rename", "--live", "--accounts", "{account}",
+                    "--file", "/tmp/ogtool-names.txt", "--interval-ms", "500"),
+         None, "batch_rename", "renames", cli_write=True, min_rows=1,
+         in_suite=False),
+    # One AI turn into the account's own chat: the page plans a topic, asks the
+    # model for a line and sends it. The interval is pinned to a second so the
+    # default pacing does not make the check slow.
+    Case("ai", ("ai_chat", "--live", "--accounts", "{account}",
+                "--targets", "{self}", "--count", "1",
+                "--interval-min", "1", "--interval-max", "1"),
+         None, "ai_chat", "ok: 1", cli_write=True, min_rows=1),
     # Copying a chat into itself: capture from the account's own Saved
     # Messages and send it back there. Proven once with 15 messages
     # (copy_chat-2567 receipt); kept out of the six checks because every run
