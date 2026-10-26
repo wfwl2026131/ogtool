@@ -240,6 +240,17 @@ CASES: tuple[Case, ...] = (
                    "--export-ids", "-"),
          None, "batch_login", "PLAN: 0 imported", cli_write=True,
          min_rows=0, in_suite=False),
+    # puppet_chat_v2 live: one pattern line (A1|L0|D0) played once at my own
+    # fixture group - exactly one self message, the run's only budgeted
+    # probe. The message physically lands (group id 15 read back "ogtool
+    # puppet probe"); receipts 2964/2965 read sent=1.
+    Case("puppet", ("puppet_chat_v2", "--live", "--accounts", "{account}",
+                    "--targets", "https://t.me/c/3965371671",
+                    "--pattern", "data/patterns/puppet_one.txt",
+                    "--loops", "1", "--daily-limit", "1",
+                    "--startup-interval", "0"),
+         None, "puppet_chat_v2", "PLAN: 1 messages", cli_write=True,
+         min_rows=1, in_suite=False),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
