@@ -274,9 +274,11 @@ def test_the_feasibility_table_agrees_with_the_receipts():
     """A page that has live evidence cannot be filed as local or data-bound."""
     from ogtool.evidence import LIVE_FEASIBILITY
 
-    proves = {"live", "live-silent"}
+    # A page with live receipts cannot be filed as one that never touches the
+    # network, or as one blocked on data it does not need. It can be a write
+    # page: mass_send is, and it has been proven against the account itself.
     for feature in ("export_accounts", "filter_phone", "keep_online",
-                    "mass_send", "proxy", "filter_group"):
-        assert LIVE_FEASIBILITY[feature] in proves, feature
+                    "mass_send", "add_contact", "proxy", "filter_group"):
+        assert LIVE_FEASIBILITY[feature] not in {"local", "needs-data"}, feature
     for feature in ("settings", "batch_login"):
         assert LIVE_FEASIBILITY[feature] == "local", feature

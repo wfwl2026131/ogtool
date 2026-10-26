@@ -30,9 +30,10 @@ LEVELS = ("live", "dry", "unit", "none")
 #: table says "dry" and leaves the reader to guess whether that is a gap in the
 #: proof or the shape of the page.
 #:
-#: live        - proven live, and the run leaves rows
-#: live-silent - proven live, but a short run may legitimately record nothing
-#: write       - writes into Telegram; needs --allow-write and a real target
+#: live        - read-only, and proven live with rows
+#: live-silent - read-only and proven live, but a short run may record nothing
+#: write       - writes into Telegram; needs --allow-write and a real target,
+#:               whether or not it has been proven that way already
 #: needs-data  - needs a real group, link or peer the account already has
 #: local       - touches no network at all
 LIVE_FEASIBILITY: dict[str, str] = {
@@ -52,7 +53,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "filter_group": "live",
     "filter_phone": "live",
     "keep_online": "live",
-    "mass_send": "live",
+    "mass_send": "write",
     "mass_send_v2": "write",
     "mix_market": "write",
     "proxy": "live",

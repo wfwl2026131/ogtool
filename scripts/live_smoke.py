@@ -99,6 +99,12 @@ CASES: tuple[Case, ...] = (
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
          LISTEN_SECONDS, "auto_reply", "DONE:", cli_write=True),
+    # The smallest write that goes into Telegram and cannot reach a stranger:
+    # adding the account itself to its own contact list. It is gated, so the
+    # case has to pass --allow-write like any other write page.
+    Case("contact", ("add_contact", "--live", "--accounts", "{account}",
+                     "--contacts", "{self}"), None, "add_contact", "ok 1",
+         cli_write=True, min_rows=1),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
