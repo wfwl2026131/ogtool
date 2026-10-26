@@ -86,8 +86,11 @@ CASES: tuple[Case, ...] = (
     # The positive half of the write gate, on a real account: the CLI runs this
     # page only because the case carries --allow-write, and the row it writes
     # goes into the account's own chat, never to a third party.
+    # --daily-limit 0: same reason as send_v2 - the smoke page's own budget
+    # must not depend on how many other cases ran before it today.
     Case("send", ("mass_send", "--live", "--accounts", "{account}",
-                  "--targets", "{self}", "--text", "ogtool smoke"),
+                  "--targets", "{self}", "--text", "ogtool smoke",
+                  "--daily-limit", "0"),
          None, "mass_send", "DONE: sent=1", cli_write=True, min_rows=1),
     # One heartbeat round: it changes nothing but the account's online flag, and
     # a single round is enough to prove the page can reach Telegram and wait.
@@ -112,10 +115,14 @@ CASES: tuple[Case, ...] = (
     # The same self-message through the second sending page, which keeps its
     # own contact book and its own queue. --no-resume because the first run
     # already delivered this pair and resume would correctly skip it.
+    # --no-resume because the pair is genuinely delivered once and resume
+    # would skip it; --daily-limit 0 so the case does not inherit the day's
+    # other smoke traffic (12 send receipts + copy + ai ...). The 50-message
+    # default stays the default everywhere else.
     Case("send_v2", ("mass_send_v2", "--live", "--accounts", "{account}",
                      "--targets", "{self}", "--text", "ogtool smoke",
-                     "--no-resume"), None, "mass_send_v2", "ok: 1",
-         cli_write=True, min_rows=1),
+                     "--no-resume", "--daily-limit", "0"),
+         None, "mass_send_v2", "ok: 1", cli_write=True, min_rows=1),
     # One comment on my own fixture post: the channel and the discussion
     # group are both owned by the account, so the only text that moves is
     # written by the AI into my own thread. A private post link
