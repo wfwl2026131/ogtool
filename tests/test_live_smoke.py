@@ -149,3 +149,33 @@ def test_a_local_listener_is_open_and_has_a_port(smoke):
         assert server.fileno() >= 0
     finally:
         server.close()
+
+
+def test_every_write_page_in_the_cases_carries_the_flag(smoke):
+    """A case naming a write page must be marked, or the CLI stops the suite.
+
+    That is what happened when the gate went in: the ``listen`` case ran
+    auto_reply and the whole run died on the refusal. The mark is not a bypass -
+    it is the claim that this particular case cannot write, or writes only into
+    the account's own chat.
+    """
+    from ogtool.features import WRITE_FEATURES, load_defaults
+
+    load_defaults()
+    for case in smoke.CASES:
+        page = case.args[0]
+        if page not in WRITE_FEATURES:
+            continue
+        assert case.cli_write or case.write, (
+            f"{case.name} runs the write page {page} without being marked")
+        assert case.args.count("--allow-write") == 0, (
+            f"{case.name} hardcodes --allow-write; run_case inserts it")
+
+
+def test_the_positive_half_of_the_gate_writes_to_self(smoke):
+    """The one case that proves --allow-write on a real machine writes no third
+    party: its target is ``{self}``."""
+    case = next(c for c in smoke.CASES if c.name == "send")
+    assert case.cli_write
+    assert "{self}" in case.args
+    assert case.receipt_for == "mass_send"

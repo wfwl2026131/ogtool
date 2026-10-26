@@ -74,6 +74,12 @@ CASES: tuple[Case, ...] = (
     Case("watch", ("watch_chat", "--live", "--accounts", "{account}",
                    "--targets", "{self}"), LISTEN_SECONDS, "watch_chat", "DONE:",
          cli_write=True),
+    # The positive half of the write gate, on a real account: the CLI runs this
+    # page only because the case carries --allow-write, and the row it writes
+    # goes into the account's own chat, never to a third party.
+    Case("send", ("mass_send", "--live", "--accounts", "{account}",
+                  "--targets", "{self}", "--text", "ogtool smoke"),
+         None, "mass_send", "DONE: sent=1", cli_write=True),
     # One heartbeat round: it changes nothing but the account's online flag, and
     # a single round is enough to prove the page can reach Telegram and wait.
     Case("online", ("keep_online", "--live", "--accounts", "{account}",
