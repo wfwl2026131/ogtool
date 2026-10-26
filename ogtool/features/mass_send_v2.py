@@ -467,7 +467,7 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         print("dry-run: nothing was sent")
         for pair in plan.pairs:
             ctx.store.add_result(task.id, pair.account, pair.target, "planned")
-        close_task(ctx, task, ok=0, failed=0)
+        close_task(ctx, task, ok=len(plan.pairs), failed=0)
         return 0
 
     lanes = lanes_for(plan.pairs, config.threads)

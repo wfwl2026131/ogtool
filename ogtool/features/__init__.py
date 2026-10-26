@@ -14,6 +14,32 @@ Feature = Callable[[dict, RunContext], int]
 #: no task to close. They write a fallback receipt through
 #: ``receipts.write_run`` (one row: this run, and how it ended), and this list
 #: is what a test holds them to - a page may not quietly stop leaving evidence.
+#: Pages that write into Telegram when run with ``--live``: they send messages,
+#: invite, join, rename, comment, or relay. The CLI refuses these without
+#: ``--allow-write``, because "I typed --live" and "I meant to message a hundred
+#: strangers" are not the same sentence - and the sweep, the smoke suite and a
+#: half-remembered script are all one keystroke apart.
+WRITE_FEATURES: frozenset[str] = frozenset({
+    "add_contact",
+    "ai_chat",
+    "ai_clone",
+    "ai_comment",
+    "auto_reply",
+    "auto_script",
+    "batch_invite",
+    "batch_invite_v2",
+    "batch_join",
+    "batch_rename",
+    "copy_chat",
+    "mass_send",
+    "mass_send_v2",
+    "mix_market",
+    "puppet_chat",
+    "puppet_chat_v2",
+    "video_manage",
+    "watch_chat",
+})
+
 FALLBACK_PAGES: dict[str, str] = {}
 
 _REGISTRY: dict[str, Feature] = {}

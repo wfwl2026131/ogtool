@@ -459,6 +459,8 @@ def _common(parser: argparse.ArgumentParser) -> None:
                         help="plan only, send nothing (the default)")
     parser.add_argument("--live", action="store_true",
                         help="really talk to Telegram (default: dry-run)")
+    parser.add_argument("--allow-write", action="store_true",
+                        help="needed for a page that writes into Telegram")
     parser.add_argument("--verbose", action="store_true")
 
 
@@ -607,6 +609,11 @@ def run(argv: list[str] | None = None) -> int:
         print("ERROR: --dry-run and --live are mutually exclusive")
         return 2
 
+    refusal = _write_refusal(args)
+    if refusal:
+        print(refusal)
+        return 2
+
     if args.command == "accounts":
         return _accounts(args, settings)
     if args.command == "runs":
@@ -694,6 +701,39 @@ def run(argv: list[str] | None = None) -> int:
                                live=ctx.live)
         ctx.close()
         store.close()
+
+
+#: ``accounts`` actions that change something on Telegram rather than reading it.
+WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset({"logout", "password",
+                                                   "spambot"})
+
+#: Commands outside the feature registry that still write: ``bot_links`` opens
+#: bot links with the account, which starts whatever that bot does.
+WRITE_COMMANDS: frozenset[str] = frozenset({"bot_links"})
+
+
+def _write_refusal(args: argparse.Namespace) -> str:
+    """The sentence a write page prints instead of running, or "".
+
+    A dry run never reaches Telegram, so it is never refused - the gate is about
+    what actually leaves this machine. Nothing is opened before this point: no
+    task, no receipt, no client.
+    """
+    from .features import WRITE_FEATURES
+
+    if not getattr(args, "live", False) or getattr(args, "allow_write", False):
+        return ""
+    command = getattr(args, "command", "")
+    if command == "accounts":
+        action = getattr(args, "action", "")
+        if action in WRITE_ACCOUNT_ACTIONS:
+            return (f"ERROR: accounts {action} writes into Telegram; add "
+                    f"--allow-write to run it live")
+        return ""
+    if command in WRITE_FEATURES or command in WRITE_COMMANDS:
+        return (f"ERROR: {command} writes into Telegram; add --allow-write to "
+                f"run it, or drop --live for a plan only")
+    return ""
 
 
 def _pattern(args: argparse.Namespace, ctx: RunContext) -> int:

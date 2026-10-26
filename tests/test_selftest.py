@@ -158,8 +158,8 @@ def test_the_gate_check_also_proves_the_flag_runs_the_case(tmp_path):
 
     here = Path(__file__).resolve().parents[1]
     cases = Path(tmp_path) / "one.yaml"
-    cases.write_text("cases:\n  - name: gate-canary\n    args: [runs, list]\n"
-                     "    write: true\n", encoding="utf-8")
+    cases.write_text("cases:\n  - name: gate-canary\n    args: [auto_reply, "
+                     "--dry-run]\n    write: true\n", encoding="utf-8")
     refused = module._smoke(here, cases, ["--only", "gate-canary"])
     assert refused.returncode == 2
     assert "refusing" in (refused.stdout + refused.stderr)

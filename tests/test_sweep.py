@@ -59,3 +59,32 @@ def test_each_run_gets_its_own_receipt_directory(sweep):
     _code2, _out2, second = sweep.dry_run("proxy", table)
     assert len(first) == 1 and len(second) == 1
     assert first[0]["task_id"] == second[0]["task_id"] == 0
+
+
+def test_the_scratch_config_binds_an_account(sweep):
+    """A page with no account plans nothing, and an empty receipt proves it."""
+    from ogtool.config import Settings
+    from ogtool.store import Store
+
+    config, _receipts = sweep.scratch_config()
+    store = Store(Settings.load(config).db_path)
+    try:
+        labels = [account.label for account in store.list_accounts()]
+    finally:
+        store.close()
+    assert labels == ["sweep"]
+
+
+def test_a_planned_row_is_counted_as_ok(sweep):
+    """mass_send closed a dry run with ok=0 while its rows said 1.
+
+    The sweep could not see it because the scratch pool was empty: the plan was
+    empty too, so the counts agreed by both being nothing.
+    """
+    table = sweep.fixtures()
+    code, out, bodies = sweep.dry_run("mass_send", table)
+    assert code == 0, out
+    body = bodies[0]
+    assert body["planned"] == 1
+    assert body["ok"] == 1, body["results"]
+    assert body["unaccounted"] == 0

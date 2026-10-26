@@ -261,12 +261,12 @@ def gate_problems(here: Path) -> list[str]:
     with tempfile.TemporaryDirectory(prefix="og-gate-") as scratch:
         refused_file = Path(scratch) / "refuse.yaml"
         refused_file.write_text(
-            "cases:\n  - name: gate-canary\n    args: [runs, list]\n"
-            "    write: true\n", encoding="utf-8")
+            "cases:\n  - name: gate-canary\n    args: [auto_reply, "
+            "--dry-run]\n    write: true\n", encoding="utf-8")
         allowed_file = Path(scratch) / "allow.yaml"
         allowed_file.write_text(
-            "cases:\n  - name: gate-allow\n    args: [runs, list]\n"
-            "    write: true\n", encoding="utf-8")
+            "cases:\n  - name: gate-allow\n    args: [auto_reply, "
+            "--dry-run]\n    write: true\n", encoding="utf-8")
         refused = _smoke(here, refused_file, ["--only", "gate-canary"])
         allowed = _smoke(here, allowed_file,
                          ["--allow-write", "--only", "gate-allow"])
@@ -286,6 +286,20 @@ def gate_problems(here: Path) -> list[str]:
         problems.append(f"the flag ran without running the case\n"
                         f"{said[-400:]}")
     return problems
+
+
+def _sync_blocks() -> None:
+    """Rewrite the note's generated blocks; a failure to do so is not fatal."""
+    here = Path(__file__).resolve().parent.parent
+    script = here / "scripts/sync_evidence.py"
+    if not script.exists():
+        return
+    run = subprocess.run(  # noqa: S603 - our own script
+        [sys.executable, str(script)], cwd=here, capture_output=True,
+        text=True, timeout=120, check=False,
+        env={**_env(), "PYTHONPATH": str(here)})
+    for line in (run.stdout or "").splitlines()[-2:]:
+        print(f"  {line}")
 
 
 def _smoke(here: Path, cases: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -333,8 +347,13 @@ def run(settings: Any, only: list[str] | None = None,
         from . import receipts as receipts_module
 
         if receipts_module.snapshot(settings) != before:
-            print("note: the live check added receipts; the generated blocks in "
-                  "the note are now stale (run scripts/sync_evidence.py)")
+            # The live check wrote receipts, so the table it was checked against
+            # is now out of date. Rewrite it here: telling the reader to run a
+            # script they did not ask for leaves the note stale by default, which
+            # is how a generated block stops being trusted.
+            print("note: the live check added receipts; rewriting the "
+                  "generated blocks")
+            _sync_blocks()
     print(f"selftest: {len(wanted)} check(s), {len(problems)} problem(s)")
     for problem in problems:
         print(f"  {problem}")

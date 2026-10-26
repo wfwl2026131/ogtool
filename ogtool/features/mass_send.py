@@ -408,7 +408,7 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
             ctx.store.add_result(task.id, item.account, item.target.ref,
                                  "planned")
         print("dry-run: nothing was sent")
-        close_task(ctx, task, ok=0, failed=0, status="dry-run")
+        close_task(ctx, task, ok=len(planned), failed=0, status="dry-run")
         return 0
 
     sender = ctx.sender()

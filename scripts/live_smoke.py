@@ -51,6 +51,10 @@ class Case:
     expect: str = ""
     #: This case writes into somebody's chat. Refused unless ``--allow-write``.
     write: bool = False
+    #: The page is one of the CLI's write pages, so the CLI demands the flag even
+    #: though this particular case cannot write (auto_reply is pointed at a rule
+    #: that matches nothing). Safe by construction, not by hope.
+    cli_write: bool = False
     #: Open a listener on this machine and pass it in as ``{port}``. A proxy
     #: probe needs somewhere to connect, and the only honest target is a socket
     #: this machine owns - pointing it at a stranger would be someone else's
@@ -65,8 +69,11 @@ CASES: tuple[Case, ...] = (
     Case("probe", ("accounts", "test", "--live", "--accounts", "{account}"),
          None, "", "ok "),
     Case("export", ("export_accounts", "--live"), None, "export_accounts", ""),
+    # watch_chat relays, so the CLI treats it as a write page; this case relays
+    # into the account's own chat (Saved Messages) and nowhere else.
     Case("watch", ("watch_chat", "--live", "--accounts", "{account}",
-                   "--targets", "{self}"), LISTEN_SECONDS, "watch_chat", "DONE:"),
+                   "--targets", "{self}"), LISTEN_SECONDS, "watch_chat", "DONE:",
+         cli_write=True),
     # One heartbeat round: it changes nothing but the account's online flag, and
     # a single round is enough to prove the page can reach Telegram and wait.
     Case("online", ("keep_online", "--live", "--accounts", "{account}",
@@ -80,7 +87,7 @@ CASES: tuple[Case, ...] = (
     Case("listen", ("auto_reply", "--live", "--accounts", "{account}",
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
-         LISTEN_SECONDS, "auto_reply", "DONE:"),
+         LISTEN_SECONDS, "auto_reply", "DONE:", cli_write=True),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
@@ -217,13 +224,19 @@ def local_listener() -> tuple[socket.socket, int]:
     return server, int(server.getsockname()[1])
 
 
-def run_case(case: Case, config: Path, account: str, who: str) -> list[str]:
+def run_case(case: Case, config: Path, account: str, who: str,
+             allow_write: bool = False) -> list[str]:
     """One case; returns the problems it produced (empty means good)."""
     server = None
     port = 0
     if case.local_port:
         server, port = local_listener()
-    argv = [sys.executable, "-m", "ogtool", "--config", str(config), *case.args]
+    args = list(case.args)
+    if case.cli_write or (allow_write and (case.write or case.name in WRITE_CASES)):
+        # The CLI has its own gate now, so the flag has to reach it or an
+        # allowed write case would be refused at the next layer down.
+        args.insert(1, "--allow-write")
+    argv = [sys.executable, "-m", "ogtool", "--config", str(config), *args]
     argv = [item.format(account=account, self=who, port=port) for item in argv]
     started = subprocess.Popen(  # noqa: S603 - our own CLI
         argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -325,7 +338,7 @@ def main(argv: list[str]) -> int:
         print(f"no case named {only!r}")
         return 2
     for case in every:
-        problems.extend(run_case(case, config, account, who))
+        problems.extend(run_case(case, config, account, who, allow_write))
     print(f"live: {len(every)} case(s), {len(problems)} problem(s)")
     for problem in problems:
         print("-" * 60)

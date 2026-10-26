@@ -78,7 +78,36 @@ def scratch_config(prefix: str = "ogsweep-cfg-") -> tuple[Path, Path]:
         f"db: {scratch / 'og.sqlite'}\n"
         f"logs: {scratch / 'logs'}\n",
         encoding="utf-8")
+    _seed_account(scratch, path)
     return path, scratch / "logs" / "receipts"
+
+
+def _seed_account(scratch: Path, config: Path) -> None:
+    """Give the scratch run one account, so pages actually plan something.
+
+    Without it every page planned zero rows, and a receipt whose counts and rows
+    agree by both being empty proves very little: mass_send closed a dry run with
+    ok=0 while its rows said 1, and the sweep could not see it because there was
+    no row to disagree with. The session file is a one-byte stand-in; a dry run
+    never opens it.
+    """
+    sys.path.insert(0, str(ROOT))
+    from ogtool.accounts import Account
+    from ogtool.config import Settings
+    from ogtool.store import Store
+
+    sessions = scratch / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    session = sessions / "sweep.session"
+    session.write_bytes(b"x")
+    settings = Settings.load(config)
+    store = Store(settings.db_path)
+    try:
+        store.add_account(Account(label="sweep", phone="+10000000000",
+                                  session=str(session), proxy="",
+                                  status="imported"))
+    finally:
+        store.close()
 
 
 def receipts_here(directory: Path) -> tuple[list[dict], list[str]]:
