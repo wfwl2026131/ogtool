@@ -51,10 +51,10 @@ TITLE = "#4 AI搬运频道"
 
 FLAGS = (
     Flag("--sources", "sources", str, "source channels, comma separated"),
-    Flag("--sources-file", "files", str, "file with one source per line",
-         action="append"),
+    Flag("--sources-file", "source_files", str,
+         "file with one source per line", action="append"),
     Flag("--targets", "targets", str, "target channels, comma separated"),
-    Flag("--targets-file", "targets_files", str,
+    Flag("--targets-file", "target_files", str,
          "file with one target per line", action="append"),
     Flag("--mode", "mode", str, "copy, rewrite or ai"),
     Flag("--mapping", "mapping", str, "source=target lines"),
@@ -104,11 +104,15 @@ class CloneConfig:
     def from_dict(cls, raw: dict, settings: Settings) -> CloneConfig:
         del settings
         data = section(raw, SECTION)
-        targets = [target.ref for target in targets_of(data)]
+        targets = [target.ref for target in
+                   targets_of({"targets": data.get("targets"),
+                               "files": data.get("target_files") or []})]
         if not targets:
             raise ConfigError(f"{SECTION}: no target given (--targets)")
-        sources = [target.ref for target in targets_of(data, "sources",
-                                                       kind="channel")]
+        sources = [target.ref for target in
+                   targets_of({"targets": data.get("sources"),
+                               "files": data.get("source_files") or []},
+                              kind="channel")]
         return cls(
             account_labels=accounts_of(raw, data),
             sources=sources,

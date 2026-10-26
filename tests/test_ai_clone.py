@@ -264,3 +264,21 @@ def test_the_run_prints_the_next_watermark_and_the_total(ctx, capsys):
     output = capsys.readouterr().out
     assert "resume: next run continues after 12" in output
     assert "total cloned: 42 (this run +2)" in output
+
+
+def test_the_two_file_flags_feed_their_own_list(tmp_path, ctx, capsys):
+    """--sources-file used to land in data["files"], which the target
+    collector also read, so a sources file was parsed as targets and
+    --targets-file did nothing at all."""
+    src = tmp_path / "src.txt"
+    dst = tmp_path / "dst.txt"
+    src.write_text("@src_chan\n")
+    dst.write_text("@dst_chan\n")
+    config = CloneConfig.from_dict(
+        {"accounts": ["acc1"],
+         "ai_clone": {"source_files": [str(src)],
+                      "target_files": [str(dst)],
+                      "messages": ["@src_chan|someone|hello"]}},
+        ctx.settings)
+    assert config.sources == ["@src_chan"]
+    assert config.targets == ["@dst_chan"]

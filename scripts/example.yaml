@@ -10,6 +10,7 @@ steps:
   - action: join
     target: "@demo_chat"
   - action: send_text
+    target: "@demo_chat"
     text: "{{greeting}}"
   - action: loop
     times: 2
@@ -17,6 +18,7 @@ steps:
       - action: wait
         seconds: 30
       - action: send_text
+        target: "@demo_chat"
         text: "still here, anything new?"
   - action: log
     message: "done, ok={{ok}}"

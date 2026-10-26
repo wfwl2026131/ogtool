@@ -18,9 +18,10 @@ from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..runtime import RunContext
 from ..senders import Content
+from ..store import TaskRef
 from ..targets import TargetError, parse_many
 from . import register
-from ._common import close_task, header, name_of, open_task, section, text
+from ._common import close_task, header, name_of, open_task, record, section, text
 
 FEATURE = "auto_script"
 SECTION = "auto_script"
@@ -103,7 +104,7 @@ def _target_of(config: ScriptConfig, step: scriptdsl.Step) -> str:
 
 
 def execute(config: ScriptConfig, ctx: RunContext,
-            script: scriptdsl.Script) -> int:
+            script: scriptdsl.Script, task: TaskRef | None = None) -> int:
     plan = scriptdsl.expand(script.steps)
     variables = dict(config.variables)
     sender = ctx.sender()
@@ -125,6 +126,12 @@ def execute(config: ScriptConfig, ctx: RunContext,
             counters["ok"] += 1
         else:
             counters["failed"] += 1
+        if task is not None:
+            # One row per performed step: a receipt that always said ok=0
+            # could not tell a clean plan from a silent failure.
+            record(ctx, task, label,
+                   _target_of(config, step) or step.action, ok,
+                   code=step.action, detail=detail)
         print(f"[{index:03d}/{len(plan):03d}] step={step.action} "
               f"account={label} {detail} -> {'ok' if ok else 'failed'}")
         if not ok and policy == "stop":
@@ -229,8 +236,8 @@ def run(config: ScriptConfig, ctx: RunContext) -> int:
     task = open_task(ctx, config.task_name, FEATURE,
                      {"script": script.path, "steps": len(plan)}, len(plan))
     ctx.task_id = task.id
-    code = execute(config, ctx, script)
-    close_task(ctx, task, ok=0, failed=0)
+    code = execute(config, ctx, script, task)
+    close_task(ctx, task, derive=True)
     return code
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -326,3 +327,47 @@ def test_a_wait_step_only_counts_in_a_dry_run(tmp_path, ctx, monkeypatch,
     execute(config_for(tmp_path, script_name="pause"), ctx, dsl)
     assert slept == []
     assert "would wait 2s" in capsys.readouterr().out
+
+
+def test_the_receipt_rows_match_what_the_steps_did(tmp_path, ctx, capsys):
+    """A receipt that always said ok=0/failed=0 hid real failures.
+
+    Every performed step lands a row (planned on a dry run, sent live), and
+    close_task derives its counters from those rows instead of hardcoding
+    zeros - the stop-at case leaves the never-run steps unaccounted, which is
+    exactly what unaccounted exists to say.
+    """
+    from ogtool import receipts
+
+    write_script(tmp_path, """\
+name: two_steps
+steps:
+  - action: log
+    message: hello
+  - action: send_text
+    target: "@peer"
+    text: hi
+""", name="two_steps.yaml")
+    dsl = scriptdsl.load(tmp_path / "two_steps.yaml")
+    config = config_for(tmp_path, target="")
+    task = ctx_task(ctx)
+    assert execute(config, ctx, dsl, task) == 0
+    close_task(ctx, task, derive=True)
+    body = json.loads(next(receipts.receipt_dir(ctx.settings)
+                           .glob("auto_script-*.json")).read_text())
+    assert body["results"]["total"] == 2
+    assert body["ok"] == 2 and body["failed"] == 0
+    assert receipts.validate(body) == []
+    # The receipt keeps counts, the database keeps the rows themselves.
+    rows = ctx.store.results_for(task.id)
+    assert sorted(row["target"] for row in rows) == ["@peer", "log"]
+    assert all(row["status"] == "planned" for row in rows)
+
+
+def ctx_task(ctx):
+    from ogtool.features._common import open_task
+
+    return open_task(ctx, "rows test", "auto_script", {"steps": 2}, 2)
+
+
+close_task = auto_script.close_task
