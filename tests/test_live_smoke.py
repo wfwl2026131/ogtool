@@ -179,3 +179,24 @@ def test_the_positive_half_of_the_gate_writes_to_self(smoke):
     assert case.cli_write
     assert "{self}" in case.args
     assert case.receipt_for == "mass_send"
+
+
+def test_a_live_case_needs_a_live_task_with_rows(smoke):
+    """Exit 0 with a task that recorded nothing proves less than it looks."""
+    case = smoke.Case("x", ("keep_online",), None, "keep_online", "",
+                      min_rows=1)
+    dry = {"mode": "dry-run", "task_id": 9, "results": {"total": 1}}
+    empty = {"mode": "live", "task_id": 9, "results": {"total": 0}}
+    good = {"mode": "live", "task_id": 9, "results": {"total": 2}}
+    assert smoke.shallow_receipt(case, dry) == [
+        "x: receipt is dry-run task=9, expected a live task"]
+    assert smoke.shallow_receipt(case, empty) == [
+        "x: receipt holds 0 row(s), expected at least 1"]
+    assert smoke.shallow_receipt(case, good) == []
+
+
+def test_a_listening_case_does_not_demand_rows(smoke):
+    """watch_chat and auto_reply may legitimately see nothing in eight seconds."""
+    case = smoke.Case("listen", ("auto_reply",), None, "auto_reply", "")
+    assert smoke.shallow_receipt(case, {"mode": "live", "task_id": 1,
+                                        "results": {"total": 0}}) == []

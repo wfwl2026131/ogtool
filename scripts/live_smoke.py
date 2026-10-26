@@ -49,6 +49,10 @@ class Case:
     receipt_for: str = ""
     #: Text the output must contain for the case to count as good.
     expect: str = ""
+    #: How many result rows the receipt must hold. Zero means "do not check";
+    #: an exit code of 0 with a task that recorded nothing proves less than it
+    #: looks, and the two listening pages are exactly that case.
+    min_rows: int = 0
     #: This case writes into somebody's chat. Refused unless ``--allow-write``.
     write: bool = False
     #: The page is one of the CLI's write pages, so the CLI demands the flag even
@@ -68,7 +72,8 @@ CASES: tuple[Case, ...] = (
     # every row, so a dead label still shows up in the output.
     Case("probe", ("accounts", "test", "--live", "--accounts", "{account}"),
          None, "", "ok "),
-    Case("export", ("export_accounts", "--live"), None, "export_accounts", ""),
+    Case("export", ("export_accounts", "--live"), None, "export_accounts", "",
+         min_rows=1),
     # watch_chat relays, so the CLI treats it as a write page; this case relays
     # into the account's own chat (Saved Messages) and nowhere else.
     Case("watch", ("watch_chat", "--live", "--accounts", "{account}",
@@ -79,17 +84,17 @@ CASES: tuple[Case, ...] = (
     # goes into the account's own chat, never to a third party.
     Case("send", ("mass_send", "--live", "--accounts", "{account}",
                   "--targets", "{self}", "--text", "ogtool smoke"),
-         None, "mass_send", "DONE: sent=1", cli_write=True),
+         None, "mass_send", "DONE: sent=1", cli_write=True, min_rows=1),
     # One heartbeat round: it changes nothing but the account's online flag, and
     # a single round is enough to prove the page can reach Telegram and wait.
     Case("online", ("keep_online", "--live", "--accounts", "{account}",
                     "--loops", "1", "--interval", "1"), None, "keep_online",
-         "DONE:"),
+         "DONE:", min_rows=1),
     # One number nobody owns: the page has to reach Telegram's resolve call and
     # classify the answer, without messaging anyone.
     Case("phones", ("filter_phone", "--live", "--accounts", "{account}",
                     "--numbers", "+10000000000"), None, "filter_phone",
-         "UNKNOWN"),
+         "UNKNOWN", min_rows=1),
     Case("listen", ("auto_reply", "--live", "--accounts", "{account}",
                     "--rule", "ogtool-live-smoke-cannot-match=>smoke",
                     "--duplicate-seconds", "30"),
@@ -230,6 +235,25 @@ def local_listener() -> tuple[socket.socket, int]:
     return server, int(server.getsockname()[1])
 
 
+def shallow_receipt(case: Case, body: dict) -> list[str]:
+    """Does this receipt prove the page reached Telegram and recorded work?
+
+    Exit 0 only says the process ended well. A live task that recorded no rows
+    is the shape a broken page leaves, so the cases that should produce rows say
+    how many they need.
+    """
+    if not case.min_rows:
+        return []
+    rows = (body.get("results") or {}).get("total", 0)
+    if body.get("mode") != "live" or body.get("task_id", 0) <= 0:
+        return [f"{case.name}: receipt is {body.get('mode')} "
+                f"task={body.get('task_id')}, expected a live task"]
+    if rows < case.min_rows:
+        return [f"{case.name}: receipt holds {rows} row(s), "
+                f"expected at least {case.min_rows}"]
+    return []
+
+
 def run_case(case: Case, config: Path, account: str, who: str,
              allow_write: bool = False) -> list[str]:
     """One case; returns the problems it produced (empty means good)."""
@@ -285,6 +309,7 @@ def run_case(case: Case, config: Path, account: str, who: str,
 
             problems.extend(f"{case.name}: {item}"
                             for item in receipts_module.validate(body))
+            problems.extend(shallow_receipt(case, body))
     print(f"{case.name:10s} {'ok' if not problems else 'FAIL'}  "
           f"{output.strip().splitlines()[-1][:70] if output.strip() else '-'}")
     return problems
