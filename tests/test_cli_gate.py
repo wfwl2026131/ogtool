@@ -5,6 +5,11 @@ was enough to message strangers. These tests are about the sentence a person see
 and the exit code that follows it.
 """
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from ogtool import cli
@@ -89,3 +94,42 @@ def test_reading_a_dialog_list_is_not_gated():
 def test_bot_links_is_gated_too():
     args = cli.build_parser().parse_args(["bot_links", "--live"])
     assert "--allow-write" in cli._write_refusal(args)
+
+
+def _cli(argv, config):
+    """Run the real entrypoint in a child process: argparse order is the point."""
+    return subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
+        [sys.executable, "-m", "ogtool", "--config", str(config), *argv],
+        capture_output=True, text=True, timeout=120, check=False,
+        cwd=str(config.parent),
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)})
+
+
+def test_every_write_page_refuses_at_the_process_level(config):
+    """Function-level tests can miss a page that argparse never reaches.
+
+    The gate runs after ``parse_args``, so a page whose flags are validated first
+    would exit 2 for the wrong reason - and the test that only looked at the exit
+    code would call that a pass. Here the sentence itself has to be in the
+    output, for every page in the set, through the real command line.
+    """
+    load_defaults()
+    wrong = []
+    for name in sorted(WRITE_FEATURES):
+        result = _cli([name, "--live"], config)
+        text = result.stdout + result.stderr
+        if result.returncode != 2 or f"ERROR: {name} writes into Telegram" not in text:
+            wrong.append(f"{name}: rc={result.returncode} {text.strip()[:120]}")
+    assert wrong == [], "\n".join(wrong)
+
+
+def test_no_write_page_is_refused_when_it_only_plans(config):
+    """A plan writes nothing, so the gate must not fire on --dry-run."""
+    load_defaults()
+    wrong = []
+    for name in sorted(WRITE_FEATURES):
+        result = _cli([name, "--dry-run"], config)
+        text = result.stdout + result.stderr
+        if "writes into Telegram; add --allow-write" in text:
+            wrong.append(f"{name}: refused a dry run")
+    assert wrong == [], "\n".join(wrong)

@@ -204,6 +204,7 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
             continue
         if not relay:
             counts.dropped += 1
+            record(ctx, task, account, target.ref, True, "no-relay")
             print(f"[{index:03d}] peer={target.ref} -> SKIP no relay group")
             continue
         content = Content(text=message.text)
@@ -222,7 +223,11 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
           f"relayed: {counts.relayed}  dropped: {counts.dropped}")
     print(f"PLAN: {len(config.incoming)} messages, {len(accounts)} accounts, "
           f"relayed {counts.relayed}")
-    close_task(ctx, task, ok=counts.relayed, failed=counts.dropped)
+    # ``dropped`` is a filter decision, not a failure: counting it as failed
+    # produced "failed is 1 but the rows say 0". The rows are the record, so the
+    # totals are derived from them - a skip is a planned row, a relay is sent,
+    # a relay that failed is failed.
+    close_task(ctx, task, derive=True)
     return 0
 
 
@@ -308,7 +313,7 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
         for _label, client in clients:
             with contextlib.suppress(Exception):
                 client.remove_event_handler(handler)
-        close_task(ctx, task, ok=counts.relayed, failed=0)
+        close_task(ctx, task, derive=True)
         print(f"DONE: targets={len(config.targets)} watched={counts.watched} "
               f"relayed={counts.relayed} dropped={counts.dropped}")
     return 0

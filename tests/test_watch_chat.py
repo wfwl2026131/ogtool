@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ogtool.config import ConfigError
@@ -212,3 +214,18 @@ def test_watch_all_ignores_the_include_box(ctx, capsys):
     assert "SKIP no include keyword" not in output
     assert "relayed to @relay" in output
     assert "watch all" in output
+
+
+def test_a_skipped_message_is_not_a_failure(ctx, capsys):
+    """dropped counted as failed, so the receipt said "failed 1" with no row."""
+    from ogtool import receipts
+
+    config = WatchConfig(targets=parse_many(["@peer"], "custom"),
+                         incoming=[Incoming("@peer", "@sender", "hello")])
+    assert run(config, ctx) == 0
+    capsys.readouterr()
+    body = json.loads(next(receipts.receipt_dir(ctx.settings)
+                           .glob("watch_chat-*.json")).read_text())
+    assert body["failed"] == 0
+    assert body["ok"] == body["results"]["total"] == 1
+    assert receipts.validate(body) == []

@@ -163,3 +163,25 @@ def test_a_live_logout_really_calls_the_client(ctx, live):
     assert sender.calls == ["acc1", "acc2"], "the logouts were only printed"
     statuses = {account.label: account.status for account in ctx.store.list_accounts()}
     assert statuses["acc1"] == "logged-out"
+
+
+def test_an_import_task_is_opened_with_the_rows_it_will_write(ctx, tmp_path: Path):
+    """The task used to open with planned 0 and then record a row per session.
+
+    The schema calls that "more rows than planned", and nothing caught it before:
+    the sweep's fixture logged out instead of importing, so it imported nothing.
+    """
+    from ogtool import receipts
+
+    folder = tmp_path / "incoming"
+    folder.mkdir()
+    (folder / "one.session").write_bytes(b"x")
+    (folder / "two.session").write_bytes(b"x")
+    config = LoginConfig(import_folder=str(folder))
+    assert run(config, ctx) == 0
+    body = json.loads(next(receipts.receipt_dir(ctx.settings)
+                           .glob("batch_login-*.json")).read_text())
+    assert body["planned"] == body["results"]["total"] == 2
+    assert body["ok"] == 2
+    assert body["unaccounted"] == 0
+    assert receipts.validate(body) == []

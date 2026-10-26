@@ -43,7 +43,7 @@ FIXTURES: dict[str, list[str]] = {
     "auto_reply": ["--rule", "hello=>hi", "--simulate",
                    "@peer|Sender|hello there"],
     "batch_join": ["--targets", "@sweep"],
-    "batch_login": ["--logout", "frozen"],
+    "batch_login": ["--import-folder", "{tmp}/sessions"],
     "batch_rename": ["--file", "{tmp}/names.txt"],
     # copy_chat has nothing to copy in a dry run unless a message was captured
     # beforehand, and the capture needs a peer that is actually in --sources.
@@ -138,6 +138,11 @@ def fixtures() -> dict[str, list[str]]:
     scratch = Path(tempfile.mkdtemp(prefix="ogsweep-"))
     (scratch / "names.txt").write_text("Sweep One\nSweep Two\n")
     (scratch / "lines.txt").write_text("A0|L0|D0|hello\n")
+    # batch_login imports session files; the dry run reports them instead of
+    # copying them, so a one-byte stand-in is all the fixture needs.
+    sessions = scratch / "sessions"
+    sessions.mkdir()
+    (sessions / "one.session").write_bytes(b"x")
     return {name: [item.format(tmp=scratch) for item in args]
             for name, args in FIXTURES.items()}
 

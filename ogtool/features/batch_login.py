@@ -19,6 +19,7 @@ from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..report import export, write_lines
 from ..runtime import RunContext
+from ..store import TaskRef
 from . import register
 from ._common import (
     accounts_of,
@@ -27,6 +28,7 @@ from ._common import (
     num,
     open_task,
     out_dir,
+    record,
     section,
     text,
 )
@@ -221,7 +223,20 @@ def read_metadata(session: Path) -> dict[str, str]:
 
 
 def run(config: LoginConfig, ctx: RunContext) -> int:
-    task = open_task(ctx, config.task_name, FEATURE, {"section": SECTION}, 0)
+    # The task is opened with the size of the plan, so the receipt's row count
+    # and its "planned" agree. Opening with 0 and importing one session later
+    # produced unaccounted -1 - "more rows than planned" - which the schema
+    # reports and the sweep could never see, because its fixture imported none.
+    folder = Path(config.import_folder).expanduser() if config.import_folder else None
+    archive = Path(config.import_zip).expanduser() if config.import_zip else None
+    if archive is not None and not archive.exists():
+        print(f"ERROR: zip not found: {archive}")
+        return 2
+    planned = _planned_imports(folder, archive, config, ctx)
+    if config.logout:
+        planned += len(_logout_targets(config.logout, ctx)[0])
+    task = open_task(ctx, config.task_name, FEATURE, {"section": SECTION},
+                     planned)
     print(f"login method: {config.login_method}  mode: {config.login_mode}")
     print(f"timeouts: qr {config.qr_timeout_sec}s  sms {config.sms_timeout_sec}s")
     if config.login_base_api:
@@ -236,20 +251,14 @@ def run(config: LoginConfig, ctx: RunContext) -> int:
     print(f"max concurrent: {config.max_concurrent}  "
           f"nested folders: {'yes' if config.collect_nested_session_files else 'no'}")
     imported = 0
-    folder = Path(config.import_folder).expanduser() if config.import_folder else None
-
-    if config.import_zip:
-        archive = Path(config.import_zip).expanduser()
-        if not archive.exists():
-            print(f"ERROR: zip not found: {archive}")
-            return 2
+    if archive is not None:
         with tempfile.TemporaryDirectory() as workspace:
             with zipfile.ZipFile(archive) as bundle:
                 bundle.extractall(workspace)
             folder = Path(workspace)
-            imported += _import(folder, config, ctx)
+            imported += _import(folder, config, ctx, task)
     elif folder is not None:
-        imported += _import(folder, config, ctx)
+        imported += _import(folder, config, ctx, task)
 
     accounts = ctx.store.list_accounts()
     print(f"账号数：{len(accounts)}")
@@ -270,7 +279,7 @@ def run(config: LoginConfig, ctx: RunContext) -> int:
         export(f"{base}/accounts_count.txt", [str(len(accounts))], "accounts")
 
     if config.logout:
-        code = _logout(config.logout, ctx)
+        code = _logout(config.logout, ctx, task)
         close_task(ctx, task, ok=code, failed=0)
         return 0 if code >= 0 else 2
 
@@ -279,7 +288,25 @@ def run(config: LoginConfig, ctx: RunContext) -> int:
     return 0
 
 
-def _import(folder: Path, config: LoginConfig, ctx: RunContext) -> int:
+def _planned_imports(folder: Path | None, archive: Path | None,
+                     config: LoginConfig, ctx: RunContext) -> int:
+    """How many sessions this run would import, without importing any.
+
+    A folder is listed as it will be imported; a zip is read for its member
+    names rather than extracted, so the plan is known before the task exists.
+    """
+    if folder is not None:
+        sessions = find_sessions(folder)
+        return len(sessions[: config.limit]) if config.limit else len(sessions)
+    if archive is not None:
+        with zipfile.ZipFile(archive) as bundle:
+            names = [name for name in bundle.namelist()
+                     if name.lower().endswith(".session")]
+        return len(names[: config.limit]) if config.limit else len(names)
+    return 0
+
+
+def _import(folder: Path, config: LoginConfig, ctx: RunContext, task: TaskRef) -> int:
     sessions = find_sessions(folder)
     if config.limit:
         sessions = sessions[:config.limit]
@@ -291,11 +318,15 @@ def _import(folder: Path, config: LoginConfig, ctx: RunContext) -> int:
     for session in sessions:
         label = f"{config.label_prefix}{session.stem}"
         meta = read_metadata(session)
+        # Importing is local work, not a message: the page does it in a dry run
+        # too, which is how a person previews what the folder holds. The row is
+        # recorded either way, and the task was opened with this count.
         account = pool.add_session(session, label)
         if meta.get("phone"):
             account.phone = meta["phone"]
             ctx.store.add_account(account)
         imported += 1
+        record(ctx, task, label, str(session), ok=True)
         print(f"imported {label} phone={account.phone or '-'} "
               f"meta={'yes' if meta else 'no'}")
     return imported
@@ -306,7 +337,19 @@ def _import(folder: Path, config: LoginConfig, ctx: RunContext) -> int:
 MODE_KIND = {LOGOUT_FROZEN: "frozen", LOGOUT_BOTH: "two_way"}
 
 
-def _logout(mode: str, ctx: RunContext) -> int:
+def _logout_targets(mode: str, ctx: RunContext) -> tuple[list[str], list[str]]:
+    """Which labels this mode logs out, and which it skips as another kind."""
+    accounts = ctx.store.list_accounts()
+    if mode not in (LOGOUT_FROZEN, LOGOUT_ALL, LOGOUT_BOTH):
+        return [], []
+    wanted = MODE_KIND.get(mode)
+    if wanted:
+        return ([a.label for a in accounts if a.kind == wanted],
+                [a.label for a in accounts if a.kind != wanted])
+    return [a.label for a in accounts], []
+
+
+def _logout(mode: str, ctx: RunContext, task: TaskRef) -> int:
     """The three bulk logouts: printed in a dry run, performed when live.
 
     ``frozen`` and ``both`` pick accounts whose recorded kind matches; an
@@ -345,6 +388,7 @@ def _logout(mode: str, ctx: RunContext) -> int:
     if not ctx.live:
         for label in labels:
             print(f"logout {mode} {label}")
+            record(ctx, task, label, mode, ok=True)
         print("dry-run: nothing was logged out")
         return len(labels)
 
@@ -355,8 +399,11 @@ def _logout(mode: str, ctx: RunContext) -> int:
         if result.ok:
             done += 1
             ctx.store.set_account_status(label, "logged-out")
+            record(ctx, task, label, mode, ok=True)
             print(f"logout {mode} {label} -> ok")
         else:
+            record(ctx, task, label, mode, ok=False, code=result.code,
+                   detail=result.detail)
             print(f"logout {mode} {label} -> {result.code} {result.detail}")
     print(f"logged out: {done}/{len(labels)}")
     return done
