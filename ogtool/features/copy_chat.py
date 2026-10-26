@@ -68,6 +68,8 @@ FLAGS = (
     Flag("--sources-file", "source_files", str,
          "file with one source per line", action="append"),
     Flag("--copy-mode", "copy_mode", str, "copy, rewrite or ai"),
+    Flag("--capture-limit", "capture_limit", int,
+         "how many messages one source gives up (default 200)"),
     Flag("--capture-minutes", "capture_minutes", int,
          "how far back the capture goes"),
     Flag("--daily-limit", "daily_limit", int,
@@ -208,6 +210,7 @@ class CopyConfig:
     #: ``Copy Mode`` in the page's pairing sense (see PAIRING_MODES).
     pairing: str = "mixed"
     capture_minutes: int = 60
+    capture_limit: int = 0
     daily_limit: int = 0
     multiplier: int = 1
     polish: int = 0
@@ -260,6 +263,7 @@ class CopyConfig:
             sources=sources,
             copy_mode=text(data, "copy_mode", "copy"),
             pairing=pairing_of(data),
+            capture_limit=num(data, "capture_limit", 0, kind=int, minimum=0),
             capture_minutes=num(data, "capture_minutes", 60, kind=int,
                                 minimum=0),
             daily_limit=num(data, "daily_limit", 0, kind=int, minimum=0),
@@ -676,6 +680,8 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     if ctx.live and not config.messages and config.sources and accounts:
         messages, failures = capture(sender, labels[0], config.sources,
                                      config.capture_minutes,
+                                     limit=config.capture_limit
+                                     or CAPTURE_LIMIT,
                                      interval=config.collection_interval_minutes)
         config = replace(config, messages=messages)
         if not messages and failures:
@@ -695,6 +701,7 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         copy_mode=config.copy_mode,
         pairing=config.pairing,
         capture_minutes=config.capture_minutes,
+        capture_limit=config.capture_limit or CAPTURE_LIMIT,
         multiplier=config.multiplier,
         polish=config.polish,
         interval=f"{config.interval_min:.0f}-{config.interval_max:.0f}s",

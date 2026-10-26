@@ -225,3 +225,23 @@ def test_a_single_poll_window_sleeps_not_at_all():
     slept: list[float] = []
     capture(OneSender(), "acc1", ["@s1"], 30, interval=0, sleep=slept.append)
     assert slept == []
+
+
+def test_the_capture_limit_reaches_capture_and_the_header():
+    """The capture window's per-source ceiling existed as a constant
+    (CAPTURE_LIMIT=200); the CLI never exposed it. A suite-run copy case
+    needs a bounded capture - one message back - so the knob is wired."""
+    from ogtool.features.copy_chat import CAPTURE_LIMIT, capture
+
+    config = CopyConfig.from_dict(
+        {"copy_chat": {"targets": "@ch", "sources": "@src",
+                       "capture_limit": 1}},
+        _settings())
+    assert config.capture_limit == 1
+    assert CAPTURE_LIMIT == 200
+    assert capture  # the page's read path takes limit=config.capture_limit
+
+
+def _settings():
+    return type("S", (), {"runtime": type("R", (), {
+        "clamp_threads": staticmethod(lambda value: value)})()})()

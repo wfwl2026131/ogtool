@@ -203,17 +203,15 @@ def test_a_listening_case_does_not_demand_rows(smoke):
 
 
 def test_a_case_can_stay_out_of_the_suite_but_still_be_runnable(smoke):
-    """copy_chat repeats its whole copy on every run: real proof, bad habit.
-
-    The case is registered and runs by name (--only copy); the six checks do
-    not pay for it.
-    """
+    """The bench flag survives even with every case promoted: copy_chat's
+    bounded form (--capture-limit 1, one message in, one out) made it a
+    suite case, and no current case needs benching - the flag stays so the
+    next expensive case can be registered and run by name first."""
     names = {case.name: case for case in smoke.CASES}
-    assert names["copy"].in_suite is False
+    assert names["copy"].in_suite is True
     assert names["copy"].cli_write is True
     assert names["copy"].min_rows == 1
-    # Everything else still runs in the suite.
-    assert sorted(name for name, case in names.items() if not case.in_suite)         == ["copy"]
+    assert sorted(name for name, case in names.items() if not case.in_suite) == []
 
 
 def test_a_negative_path_may_exit_nonzero(smoke, tmp_path):

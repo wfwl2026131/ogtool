@@ -57,9 +57,11 @@ class Case:
     #: paths (a group with no call to join) end the page with the failure
     #: counted in its PLAN line and exit 1 - that IS the proof.
     allow_exit: int = 0
-    #: Whether the six checks should run it. A case that copies a chat into the
-    #: same chat is a real proof but repeats its whole output every run, so it
-    #: is registered and run by name instead of on every check.
+    #: Whether the six checks should run it. Every registered case is in the
+    #: suite since phase five's copy promotion: a bounded capture
+    #: (--capture-limit 1) made the copy case one message in, one out, like
+    #: the other budgeted self-messages. The flag stays so a case can still
+    #: be benched by name without unregistering it.
     in_suite: bool = True
     #: This case writes into somebody's chat. Refused unless ``--allow-write``.
     write: bool = False
@@ -156,15 +158,16 @@ CASES: tuple[Case, ...] = (
                 "--interval-min", "1", "--interval-max", "1"),
          None, "ai_chat", "ok: 1", cli_write=True, min_rows=1),
     # Copying a chat into itself: capture from the account's own Saved
-    # Messages and send it back there. Proven once with 15 messages
-    # (copy_chat-2567 receipt); kept out of the six checks because every run
-    # would repeat that whole copy, and the point is that the page works, not
-    # that this machine has a tidy chat.
+    # Messages and send it back there. With --capture-limit 1 the capture
+    # takes the newest message only - one message in, one out, the same cost
+    # class the script and puppet cases already pay (copy_chat-3436 read
+    # sent=1). The whole 15-message copy was proven once (copy_chat-2567).
     Case("copy", ("copy_chat", "--live", "--accounts", "{account}",
                   "--sources", "{self}", "--targets", "{self}",
-                  "--capture-minutes", "60", "--copy-mode", "copy"),
-         None, "copy_chat", "ok:", cli_write=True, min_rows=1,
-         in_suite=False),
+                  "--capture-minutes", "1440", "--capture-limit", "1",
+                  "--daily-limit", "1", "--interval-min", "1",
+                  "--interval-max", "1", "--copy-mode", "copy"),
+         None, "copy_chat", "ok:", cli_write=True, min_rows=1),
     # Cloning the account's own broadcast channel into its own fixture group,
     # with the watermark set to the id this run's capture tops out at: the
     # resume filter drops every candidate, so the case proves the live
@@ -250,6 +253,12 @@ CASES: tuple[Case, ...] = (
          min_rows=1),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
+    # filter_group live: sorts the fixture group into its bucket - a
+    # read-only page (no --allow-write), one receipt row, zero side effects.
+    # Receipts 2843/3440 read live ok=1 can_send=1.
+    Case("fgroup", ("filter_group", "--live", "--accounts", "{account}",
+                    "--groups", "https://t.me/c/3965371671"),
+         None, "filter_group", "ok: 1", min_rows=1),
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
                      "--limit", "5"), None, "", "total:"),
     # The speed test is the proxy page's only real action: a TCP connect and a
