@@ -105,6 +105,13 @@ CASES: tuple[Case, ...] = (
     Case("contact", ("add_contact", "--live", "--accounts", "{account}",
                      "--contacts", "{self}"), None, "add_contact", "ok 1",
          cli_write=True, min_rows=1),
+    # The same self-message through the second sending page, which keeps its
+    # own contact book and its own queue. --no-resume because the first run
+    # already delivered this pair and resume would correctly skip it.
+    Case("send_v2", ("mass_send_v2", "--live", "--accounts", "{account}",
+                     "--targets", "{self}", "--text", "ogtool smoke",
+                     "--no-resume"), None, "mass_send_v2", "ok: 1",
+         cli_write=True, min_rows=1),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",

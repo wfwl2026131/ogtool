@@ -470,6 +470,15 @@ def run(config: MassV2Config, ctx: RunContext) -> int:
         close_task(ctx, task, ok=len(plan.pairs), failed=0)
         return 0
 
+    if not plan.pairs:
+        # Everything was already delivered by an earlier run, or the daily
+        # budget is spent. Reaching the lanes with nothing in them crashed on
+        # ``lanes[0]``; an empty queue is a normal, finished run.
+        print(f"nothing to send: {plan.resumed} already delivered, "
+              f"{plan.over_budget} over budget")
+        close_task(ctx, task, ok=0, failed=0)
+        return 0
+
     lanes = lanes_for(plan.pairs, config.threads)
     counters = {"ok": 0, "failed": 0}
     if len(lanes) <= 1:

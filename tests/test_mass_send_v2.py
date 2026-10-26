@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from ogtool.config import ConfigError
@@ -242,3 +244,29 @@ def test_own_contacts_on_still_parses_without_targets():
                                     Settings())
     assert config.use_own_contacts is True
     assert config.targets == []
+
+
+def test_a_live_run_with_an_empty_queue_finishes_instead_of_crashing(ctx,
+                                                                     monkeypatch,
+                                                                     capsys):
+    """--live with every pair already delivered used to raise IndexError.
+
+    The header had already printed "queue: 0", so the run looked like it had
+    started; the crash came one step later, on lanes[0].
+    """
+    from ogtool import receipts
+    from ogtool.features.mass_send_v2 import MassV2Config, run
+
+    monkeypatch.setattr(ctx.store, "sent_pairs", lambda *a, **k: {("acc1", "me")})
+    # The live branch is the one that crashed; the sender is never reached,
+    # because an empty queue has nothing to hand it.
+    monkeypatch.setattr(ctx, "live", True, raising=False)
+    monkeypatch.setattr(type(ctx), "sender", lambda self: None)
+    config = MassV2Config(targets=["me"], text="hi")
+    assert run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "nothing to send" in out
+    body = json.loads(next(receipts.receipt_dir(ctx.settings)
+                           .glob("mass_send_v2-*.json")).read_text())
+    assert body["results"]["total"] == 0
+    assert receipts.validate(body) == []
