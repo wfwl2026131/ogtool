@@ -26,6 +26,48 @@ from typing import Any
 LEVELS = ("live", "dry", "unit", "none")
 
 
+#: What it would take to prove each page on a real account. Without this the
+#: table says "dry" and leaves the reader to guess whether that is a gap in the
+#: proof or the shape of the page.
+#:
+#: live        - proven live, and the run leaves rows
+#: live-silent - proven live, but a short run may legitimately record nothing
+#: write       - writes into Telegram; needs --allow-write and a real target
+#: needs-data  - needs a real group, link or peer the account already has
+#: local       - touches no network at all
+LIVE_FEASIBILITY: dict[str, str] = {
+    "add_contact": "write",
+    "ai_chat": "write",
+    "ai_clone": "write",
+    "ai_comment": "write",
+    "auto_reply": "live-silent",
+    "auto_script": "write",
+    "batch_invite": "write",
+    "batch_invite_v2": "write",
+    "batch_join": "write",
+    "batch_login": "local",
+    "batch_rename": "write",
+    "copy_chat": "write",
+    "export_accounts": "live",
+    "filter_group": "live",
+    "filter_phone": "live",
+    "keep_online": "live",
+    "mass_send": "live",
+    "mass_send_v2": "write",
+    "mix_market": "write",
+    "proxy": "live",
+    "puppet_chat": "write",
+    "puppet_chat_v2": "write",
+    "settings": "local",
+    "video_manage": "needs-data",
+    "watch_chat": "live-silent",
+}
+
+#: The order the summary line reports them in.
+FEASIBILITY_LEVELS: tuple[str, ...] = ("live", "live-silent", "write",
+                                       "needs-data", "local")
+
+
 @dataclass(frozen=True)
 class Evidence:
     feature: str
@@ -41,6 +83,10 @@ class Evidence:
     #: fact it was run and recorded nothing - two very different problems.
     rejected: int = 0
     why: str = ""
+
+    @property
+    def feasibility(self) -> str:
+        return LIVE_FEASIBILITY.get(self.feature, "unknown")
 
     @property
     def level(self) -> str:
@@ -256,17 +302,22 @@ def collect(root: Path, directory: Path,
 def render(rows: list[Evidence]) -> str:
     """The table, plus the one summary line the checks parse."""
     width = max((len(row.feature) for row in rows), default=7)
-    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  last"
-             f"  why"]
+    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  "
+             f"{'needs':10s}  last  why"]
     for row in rows:
         lines.append(f"{row.feature:{width}s}  {row.level:5s}  "
                      f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}  "
+                     f"{row.feasibility:10s}  "
                      f"{age(row.last_live) or '-':>5s}  "
                      f"{row.why or ''}".rstrip())
     counts = {level: sum(1 for row in rows if row.level == level)
               for level in LEVELS}
+    needs = {kind: sum(1 for row in rows if row.feasibility == kind)
+             for kind in FEASIBILITY_LEVELS}
     lines.append(f"evidence: {len(rows)} feature(s), "
                  + ", ".join(f"{level} {counts[level]}" for level in LEVELS))
+    lines.append("proof: " + ", ".join(f"{kind} {needs[kind]}"
+                                       for kind in FEASIBILITY_LEVELS))
     return "\n".join(lines)
 
 
@@ -334,18 +385,27 @@ def live_markdown(rows: list[Evidence], directory: Path) -> str:
 
 def as_markdown(rows: list[Evidence]) -> str:
     """A paste-ready table, so the note never carries a number nobody derived."""
-    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 最近真机 | 真机被排除 |",
-             "|---|---|---|---|---|---|---|"]
+    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 要真跑得具备 | 最近真机 "
+             "| 真机被排除 |",
+             "|---|---|---|---|---|---|---|---|"]
+    labels = {"live": "已真跑", "live-silent": "已真跑（可能无行）",
+              "write": "写页面，需 --allow-write 与目标",
+              "needs-data": "需真实群/链接", "local": "不联网"}
     for row in rows:
         lines.append(f"| `{row.feature}` | {row.level} | {row.tests} | "
                      f"{row.live} | {row.dry} | "
+                     f"{labels.get(row.feasibility, '?')} | "
                      f"{stamp_short(row.last_live)} | "
                      f"{row.rejected or ''}"
                      f"{('（' + row.why + '）') if row.why else ''} |")
     counts = as_dict(rows)["counts"]
+    needs = {kind: sum(1 for row in rows if row.feasibility == kind)
+             for kind in FEASIBILITY_LEVELS}
     lines.append("")
     lines.append(f"共 {len(rows)} 项：" + "，".join(
         f"{level} {counts[level]}" for level in LEVELS))
+    lines.append("真跑条件：" + "，".join(
+        f"{labels[kind]} {needs[kind]}" for kind in FEASIBILITY_LEVELS))
     return "\n".join(lines)
 
 

@@ -85,7 +85,11 @@ def test_the_table_names_every_level(tmp_path):
     rows = [evidence.Evidence("a", 1, 0, 0), evidence.Evidence("b", 0, 2, 0)]
     text = evidence.render(rows)
     assert "level" in text
-    assert text.splitlines()[-1].startswith("evidence: 2 feature(s)")
+    # The table ends with two summary lines: how many features reached each
+    # level, and - separately - what proving each one would actually take.
+    assert any(line.startswith("evidence: 2 feature(s)") for line in
+               text.splitlines())
+    assert text.splitlines()[-1].startswith("proof: ")
 
 
 def test_the_evidence_command_exits_zero_when_nothing_is_empty(settings,
@@ -121,7 +125,9 @@ def test_markdown_names_every_row_and_the_totals():
     text = evidence.as_markdown(rows)
     assert text.startswith("| 项 | 证据等级 |")
     assert "| `a` | dry | 2 | 0 | 1 |" in text
-    assert text.strip().endswith("共 2 项：live 0，dry 1，unit 1，none 0")
+    lines = [line for line in text.splitlines() if line.strip()]
+    assert lines[-2] == "共 2 项：live 0，dry 1，unit 1，none 0"
+    assert lines[-1].startswith("真跑条件：")
 
 
 def test_the_two_formats_agree(settings, monkeypatch, capsys):
@@ -252,3 +258,25 @@ def test_the_rejection_reason_names_the_codes(tmp_path):
     _, _, _, rejected, why = evidence.count_receipts_full(tmp_path, "mass_send")
     assert rejected == 1
     assert why == "SESSION_BUSY"
+
+
+def test_every_feature_says_what_proving_it_would_take():
+    """Otherwise "dry" reads as a gap even when the page writes or is local."""
+    from ogtool.evidence import FEASIBILITY_LEVELS, LIVE_FEASIBILITY
+    from ogtool.features import load_defaults, names
+
+    load_defaults()
+    assert set(LIVE_FEASIBILITY) == set(names())
+    assert set(LIVE_FEASIBILITY.values()) <= set(FEASIBILITY_LEVELS)
+
+
+def test_the_feasibility_table_agrees_with_the_receipts():
+    """A page that has live evidence cannot be filed as local or data-bound."""
+    from ogtool.evidence import LIVE_FEASIBILITY
+
+    proves = {"live", "live-silent"}
+    for feature in ("export_accounts", "filter_phone", "keep_online",
+                    "mass_send", "proxy", "filter_group"):
+        assert LIVE_FEASIBILITY[feature] in proves, feature
+    for feature in ("settings", "batch_login"):
+        assert LIVE_FEASIBILITY[feature] == "local", feature
