@@ -68,7 +68,14 @@ def parse_entry(entry: str, kind: str = "custom") -> Target:
                 raise TargetError(f"invite link without a hash: {text}")
             return Target("group", f"+{hash_part}", invite_hash=hash_part)
         if rest.startswith("c/"):
-            return Target("channel", rest)
+            # A private link is t.me/c/<id> or t.me/c/<id>/<post>: the id is
+            # the whole address, a trailing post names a message inside it.
+            # Leaving "c/" on the ref used to make every resolver answer
+            # "cannot read target" - no consumer wants the prefix back.
+            chat_id = rest[2:].split("/", 1)[0]
+            if not chat_id.isdigit():
+                raise TargetError(f"unrecognised link: {text}")
+            return Target("channel", chat_id)
         name = _USERNAME.match(rest.split("/", 1)[0].split("?")[0])
         if not name:
             raise TargetError(f"unrecognised link: {text}")

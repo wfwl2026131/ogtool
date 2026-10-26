@@ -116,6 +116,17 @@ CASES: tuple[Case, ...] = (
                      "--targets", "{self}", "--text", "ogtool smoke",
                      "--no-resume"), None, "mass_send_v2", "ok: 1",
          cli_write=True, min_rows=1),
+    # One comment on my own fixture post: the channel and the discussion
+    # group are both owned by the account, so the only text that moves is
+    # written by the AI into my own thread. A private post link
+    # (t.me/c/<id>/<post>) is what the page is really handed in the field.
+    Case("comment", ("ai_comment", "--live", "--accounts", "{account}",
+                     "--targets", "https://t.me/c/4365539795/2",
+                     "--poll-recent", "1", "--per-post-min", "1",
+                     "--per-post-max", "1",
+                     "--comment-interval-min", "1",
+                     "--comment-interval-max", "2"),
+         None, "ai_comment", "comments", cli_write=True, min_rows=1),
     # Renaming the account's own profile: the four list form of the page, one
     # name, applied and then put back. Out of the suite because every run would
     # rewrite the profile; --only rename runs it deliberately.

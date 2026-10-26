@@ -91,3 +91,17 @@ def test_peer_variants_try_the_id_before_the_phone():
                                                        "+6805350975"]
     assert peer_variants(parse_entry("@demo))".replace("))", ""))) == ["@demo"]
     assert peer_variants(parse_entry("+15550000001")) == ["+15550000001"]
+
+
+def test_a_private_post_link_becomes_a_numeric_channel_ref():
+    """t.me/c/<id>/<post> used to stay "c/<id>" and no resolver could read it.
+
+    The channel's real id is what every consumer needs; the post part is a
+    location, not part of the address, so it is dropped.
+    """
+    target = parse_entry("https://t.me/c/4365539795/2", "custom")
+    assert target.ref == "4365539795"
+    # A channel link without a post lands in the same place.
+    assert parse_entry("https://t.me/c/4365539795", "custom").ref == "4365539795"
+    # A bare -100 channel id keeps working as before.
+    assert parse_entry("-1004365539795", "custom").ref == "-1004365539795"
