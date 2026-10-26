@@ -28,7 +28,6 @@ def test_the_reference_names_are_read():
             "like_min_count": 1,
             "like_max_count": 5,
             "poll_scan_recent_count": 7,
-            "poll_interval_seconds": 30,
         }},
         _settings(),
     )
@@ -37,7 +36,8 @@ def test_the_reference_names_are_read():
     assert config.positive_ratio == 75
     assert (config.likes_min, config.likes_max) == (1, 5)
     assert config.poll_recent == 7
-    assert config.poll_interval == 30.0
+    # poll_interval_seconds is gone: the one-shot run has no poll loop, the
+    # flag was display-only and was deleted in phase five.
 
 
 def test_the_old_names_still_work():

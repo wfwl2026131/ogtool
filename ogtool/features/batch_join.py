@@ -44,7 +44,8 @@ FLAGS = (
     Flag("--request-interval", "request_interval", float,
          "seconds between two requests of the whole pool"),
     Flag("--request-timeout", "request_timeout", float,
-         "seconds before a request is called a timeout"),
+         "seconds before a request is called a timeout (validated, shown in "
+         "the plan; Telethon has no per-request timeout to wire it to)"),
     Flag("--account-interval", "account_interval", float,
          "seconds between two joins of the same account"),
     Flag("--per-account-cap", "per_account_cap", int,
@@ -66,7 +67,6 @@ FLAGS = (
     Flag("--max-joined-chats", "max_joined_chats_per_account", int,
          "stop joining once an account holds this many groups"),
     Flag("--join-concurrency", "join_concurrency", int, "lanes (overrides --threads)"),
-    Flag("--leave-mode", "leave_mode", str, "the page's leaveMode"),
     Flag("--mute-channels", "mute_channels", None, "mute joined channels",
          action="store_true"),
     Flag("--mute-private", "mute_private", None, "mute joined private chats",
@@ -148,8 +148,11 @@ class JoinConfig:
     max_joined_chats: int = 0
     #: ``joinConcurrency``: lanes; falls back to ``threads``.
     join_concurrency: int = 0
-    #: ``leaveMode`` / ``muteChannels`` / ``mutePrivate`` and the two gaps.
-    leave_mode: str = ""
+    #: ``muteChannels`` / ``mutePrivate`` and the two gaps. ``leaveMode`` has
+    #: no CLI flag: leaving is chosen by ``operation_type``, and how a leave
+    #: behaves is decided per chat by the sender (LeaveChannelRequest for a
+    #: channel, DeleteChatUserRequest for a plain group) - a mode string would
+    #: only restate that.
     mute_channels: bool = False
     mute_private: bool = False
     mute_interval: float = 0.0
@@ -198,7 +201,6 @@ class JoinConfig:
                                  kind=int, minimum=0),
             join_concurrency=num(data, "join_concurrency", 0, kind=int,
                                  minimum=0),
-            leave_mode=text(data, "leave_mode"),
             mute_channels=bool(data.get("mute_channels", False)),
             mute_private=bool(data.get("mute_private", False)),
             mute_interval=_seconds(data, "mute_interval", 0.0),

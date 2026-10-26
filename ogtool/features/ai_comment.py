@@ -61,7 +61,6 @@ FLAGS = (
          "percent of comments that carry an emoji"),
     Flag("--like-emoji", "like_emoji", str, "the reaction used for likes"),
     Flag("--max-chars", "max_chars", int, "comment length limit"),
-    Flag("--poll-interval", "poll_interval", float, "seconds between polls"),
     Flag("--poll-recent", "poll_recent", int, "how many recent posts to poll"),
     Flag("--extra-prompts", "extra_prompts", str,
          "extra instructions, blank line separated"),
@@ -94,7 +93,6 @@ class CommentConfig:
     #: ``likeEmojis``: a pool, one of which is picked per reaction.
     like_emojis: list[str] = field(default_factory=list)
     max_chars: int = 80
-    poll_interval: float = 60.0
     poll_recent: int = 3
     extra_prompts: list[str] = field(default_factory=list)
     posts: int = 3
@@ -147,8 +145,6 @@ class CommentConfig:
             like_emojis=_emoji_pool(data),
             max_chars=num(data, "comment_max_chars",
                           num(data, "max_chars", 80), kind=int, minimum=1),
-            poll_interval=num(data, "poll_interval_seconds",
-                              num(data, "poll_interval", 60.0)),
             poll_recent=num(data, "poll_scan_recent_count",
                             num(data, "poll_recent", 3), kind=int, minimum=1),
             only_root_forwarded=bool(

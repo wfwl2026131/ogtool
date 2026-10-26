@@ -200,6 +200,11 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
     rng = random.Random()
     result = PlayResult()
     budget: dict[str, int] = {}
+    # The startup stagger is a startup cost: each account pays its offset
+    # once, on its first message of the run. Adding it to every message
+    # turned "account B starts 10s later" into "every message from B waits
+    # 10s longer" - pacing by accident.
+    started: set[str] = set()
 
     wait, when = schedule_wait(config, datetime.now(UTC))
     if wait:
@@ -231,8 +236,9 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                           f"{message.account_slot}")
                     continue
                 delay = message.delay(rng)
-                if startup_offsets:
+                if startup_offsets and account not in started:
                     delay += startup_offsets.get(account, 0.0)
+                    started.add(account)
                 result.waited += delay
                 if ctx.live:
                     time.sleep(delay)

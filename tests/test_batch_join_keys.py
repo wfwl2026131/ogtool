@@ -83,12 +83,14 @@ def test_the_media_policy_is_read():
 
 
 def test_the_leave_policy_is_read():
+    # leave_mode is gone: leaving is chosen by operation_type and the sender
+    # picks the request per chat kind, so the mode string restated nothing.
     config = JoinConfig.from_dict(
         {"batch_join": {"targets": "@g", "leave_mode": "all",
                         "mute_channels": True, "mute_private": True,
                         "mute_interval_sec": 4, "leave_interval_sec": 7}},
         _settings())
-    assert config.leave_mode == "all"
+    assert not hasattr(config, "leave_mode")
     assert config.mute_channels and config.mute_private
     assert (config.mute_interval, config.leave_interval) == (4.0, 7.0)
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from ogtool.features.batch_join import JoinConfig, assign, run
+import pytest
+
+from ogtool.config import ConfigError
+from ogtool.features.batch_join import FLAGS, JoinConfig, assign, run
 from ogtool.targets import parse_many
 
 
@@ -372,3 +375,21 @@ def test_the_cap_is_not_asked_offline(ctx, capsys):
                         account_interval=0)
     assert run(config, ctx) == 0
     assert "account full" not in capsys.readouterr().out
+
+
+def _settings():
+    return type("S", (), {"runtime": type("R", (), {
+        "clamp_threads": staticmethod(lambda value: value)})()})()
+
+
+def test_leave_mode_is_gone_and_request_timeout_says_what_it_does():
+    """leaveMode never did anything: leaving is chosen by operation_type and
+    the sender picks the request per chat kind. The CLI flag is gone. The
+    request timeout keeps its validation - the plan shows it, and no Telethon
+    entry point accepts a per-request timeout to wire it deeper."""
+    assert all(flag.dest != "leave_mode" for flag in FLAGS)
+    timeout = [flag for flag in FLAGS if flag.dest == "request_timeout"][0]
+    assert "no per-request timeout" in timeout.help
+    with pytest.raises(ConfigError):
+        JoinConfig.from_dict({"batch_join": {"request_timeout": 0.5}},
+                             _settings())

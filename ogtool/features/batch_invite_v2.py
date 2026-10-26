@@ -67,8 +67,6 @@ FLAGS = (
          "success or exec: what the per-target cap counts"),
     Flag("--invites-per-request", "invites_per_request", int,
          "how many invites share one request gap"),
-    Flag("--max-invite-interval-ms", "max_invite_interval_ms", int,
-         "upper bound of the invite interval, milliseconds"),
     Flag("--peer-flood-target-max-retries", "peer_flood_target_max_retries",
          int, "PEER_FLOOD retries for one target"),
     Flag("--custom-task-key", "custom_task_key", str,
@@ -134,8 +132,6 @@ class InviteV2Config:
     task_mark_enabled: bool = True
     #: ``invitesPerRequest``: 一次请求带几个人。
     invites_per_request: int = 1
-    #: ``maxInviteIntervalMsec``: 邀请间隔的上界，毫秒。
-    max_invite_interval_ms: int = 0
     #: ``peerFloodTargetMaxRetries``: 某个群 PEER_FLOOD 时的重试封顶。
     peer_flood_target_max_retries: int = 3
     task_name: str = "batch-invite-v2"
@@ -197,9 +193,7 @@ class InviteV2Config:
             custom_task_key=text(data, "custom_task_key"),
             task_mark_enabled=bool(data.get("task_mark_enabled", True)),
             invites_per_request=num(data, "invites_per_request", 1, kind=int,
-                                     minimum=1),
-            max_invite_interval_ms=num(data, "max_invite_interval_ms", 0,
-                                       kind=int, minimum=0),
+                                    minimum=1),
             peer_flood_target_max_retries=num(
                 data, "peer_flood_target_max_retries", 3, kind=int, minimum=0),
             task_name=name_of(raw, data, "batch-invite-v2"),
@@ -388,8 +382,9 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
         task_key=config.custom_task_key or "-",
         queue=len(jobs),
     )
-    if config.max_invite_interval_ms:
-        print(f"max invite interval: {config.max_invite_interval_ms} ms")
+    # The dump's ``maxInviteIntervalMs`` is superseded by the invite interval
+    # range (inviteIntervalMin/MaxSec): the page already samples the gap per
+    # invite, so a hard millisecond cap would only clip the drawn range.
 
     task = open_task(ctx, config.task_name, FEATURE,
                      {"targets": config.targets, "contacts": config.contacts},

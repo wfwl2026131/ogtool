@@ -93,3 +93,34 @@ def test_loops_repeat_the_script(ctx, pattern_file, capsys):
     output = capsys.readouterr().out
     assert "loop 2/2" in output
     assert "PLAN: 8 messages" in output
+
+
+def test_the_startup_stagger_is_paid_once_per_account(ctx, slept):
+    """Account B starts 10s later; it must not also pay 10s on every later
+    message - the v2 page's --startup-interval was pacing by accident."""
+    from ogtool import chat_pattern
+    from ogtool.features._common import open_task
+    from ogtool.features.puppet_chat import play
+
+    lines = ["A1|L0|D0|from a1", "A2|L0|D0|from b1", "A2|L0|D0|from b2"]
+    pattern = Path(ctx.settings.data_dir) / "stagger.txt"
+    pattern.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    config = PuppetConfig(account_labels=["acc1", "acc2"],
+                          targets=["@g1"], pattern=str(pattern),
+                          loops=1, multiplier=1, daily_limit=0,
+                          task_name="stagger")
+    # A live context, but with the scripted dry sender kept in place: the
+    # stagger is exercised through the sleep path without Telethon.
+    ctx.script.codes = ["ok"] * 6
+    sender = ctx.sender()
+    ctx._sender = sender
+    ctx.live = True
+    task = open_task(ctx, "stagger", "puppet_chat", {}, 3)
+    outcome = play(ctx, task, chat_pattern.load(pattern), config,
+                   labels=["acc1", "acc2"],
+                   startup_offsets={"acc2": 10.0})
+    # acc1 pays 0; acc2 pays its 10s on the FIRST message only - its second
+    # message waits nothing extra. Before the fix the third sleep was 10.0.
+    assert slept == [pytest.approx(0.0), pytest.approx(10.0),
+                     pytest.approx(0.0)]
+    assert outcome.ok == 3
