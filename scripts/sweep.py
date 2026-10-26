@@ -40,11 +40,16 @@ FIXTURES: dict[str, list[str]] = {
     "batch_join": ["--targets", "@sweep"],
     "batch_login": ["--logout", "frozen"],
     "batch_rename": ["--file", "{tmp}/names.txt"],
-    "copy_chat": ["--targets", "@sweep"],
+    # copy_chat has nothing to copy in a dry run unless a message was captured
+    # beforehand, and the capture needs a peer that is actually in --sources.
+    "copy_chat": ["--targets", "@sweep", "--sources", "@sweepsource",
+                  "--message", "@sweepsource|Sender|hello"],
     "filter_group": ["--groups", "@sweep"],
     "filter_phone": ["--numbers", "+10000000001"],
     "mass_send": ["--targets", "@sweep", "--text", "sweep"],
-    "mass_send_v2": ["--text", "sweep"],
+    # Its own distribution: own contacts are a live fetch, so the fixture gives
+    # it what the page distributes instead of leaving the plan empty.
+    "mass_send_v2": ["--text", "sweep", "--targets", "@sweep"],
     "mix_market": ["--targets", "@sweep"],
     "puppet_chat": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],
     "puppet_chat_v2": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],

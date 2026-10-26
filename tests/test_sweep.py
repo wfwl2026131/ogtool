@@ -88,3 +88,22 @@ def test_a_planned_row_is_counted_as_ok(sweep):
     assert body["planned"] == 1
     assert body["ok"] == 1, body["results"]
     assert body["unaccounted"] == 0
+
+
+def test_the_fixtures_make_pages_record_rows(sweep):
+    """A dry run whose plan is empty validates a receipt nobody wrote.
+
+    mass_send reported ok=0 against one planned row and the sweep stayed green,
+    because its scratch pool had no account and no fixture had a target. These
+    are the pages where the fixture now forces real work.
+    """
+    table = sweep.fixtures()
+    for name in ("mass_send", "mass_send_v2", "copy_chat", "ai_chat",
+                 "batch_rename", "batch_invite"):
+        code, out, bodies = sweep.dry_run(name, table)
+        assert code == 0, f"{name}: {out}"
+        assert bodies, f"{name}: no receipt"
+        body = bodies[0]
+        assert body["planned"] >= 1, f"{name}: planned nothing"
+        assert body["ok"] == body["planned"], body["results"]
+        assert body["results"]["total"] >= 1

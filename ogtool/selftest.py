@@ -24,7 +24,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-CHECKS = ("receipts", "knobs", "sweep", "docs", "evidence", "live")
+# The live check writes receipts, and the docs check validates a table built from
+# them: live first, then the note is rewritten, then docs reads something true.
+CHECKS = ("receipts", "knobs", "sweep", "live", "docs", "evidence")
 
 #: Where the two project notes live. They are outside this checkout, so a
 #: missing directory is reported as "skipped", never as a failure.
@@ -288,6 +290,13 @@ def gate_problems(here: Path) -> list[str]:
     return problems
 
 
+def receipts_changed(settings: Any, before: frozenset[str]) -> bool:
+    """Did anything write a receipt since ``before`` was taken?"""
+    from . import receipts as receipts_module
+
+    return receipts_module.snapshot(settings) != before
+
+
 def _sync_blocks() -> None:
     """Rewrite the note's generated blocks; a failure to do so is not fatal."""
     here = Path(__file__).resolve().parent.parent
@@ -339,21 +348,26 @@ def run(settings: Any, only: list[str] | None = None,
             line, found = check_evidence(settings)
         elif name == "live":
             line, found = check_live()
+            if before is not None and receipts_changed(settings, before):
+                print(line)
+                print("note: the live check added receipts; rewriting the "
+                      "generated blocks")
+                _sync_blocks()
+                from . import receipts as receipts_module
+
+                before = receipts_module.snapshot(settings)
+                problems.extend(found)
+                continue
         else:
             line, found = check_sweep(timeout=timeout)
         print(line)
         problems.extend(found)
-    if before is not None:
-        from . import receipts as receipts_module
-
-        if receipts_module.snapshot(settings) != before:
-            # The live check wrote receipts, so the table it was checked against
-            # is now out of date. Rewrite it here: telling the reader to run a
-            # script they did not ask for leaves the note stale by default, which
-            # is how a generated block stops being trusted.
-            print("note: the live check added receipts; rewriting the "
-                  "generated blocks")
-            _sync_blocks()
+    if before is not None and receipts_changed(settings, before):
+        # A check other than live wrote receipts (they share the store), so the
+        # table is out of date again. Same fix, one more time, and no advice.
+        print("note: receipts changed after the last rewrite; rewriting the "
+              "generated blocks")
+        _sync_blocks()
     print(f"selftest: {len(wanted)} check(s), {len(problems)} problem(s)")
     for problem in problems:
         print(f"  {problem}")
