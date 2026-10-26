@@ -200,3 +200,17 @@ def test_a_listening_case_does_not_demand_rows(smoke):
     case = smoke.Case("listen", ("auto_reply",), None, "auto_reply", "")
     assert smoke.shallow_receipt(case, {"mode": "live", "task_id": 1,
                                         "results": {"total": 0}}) == []
+
+
+def test_a_case_can_stay_out_of_the_suite_but_still_be_runnable(smoke):
+    """copy_chat repeats its whole copy on every run: real proof, bad habit.
+
+    The case is registered and runs by name (--only copy); the six checks do
+    not pay for it.
+    """
+    names = {case.name: case for case in smoke.CASES}
+    assert names["copy"].in_suite is False
+    assert names["copy"].cli_write is True
+    assert names["copy"].min_rows == 1
+    # Everything else still runs in the suite.
+    assert [name for name, case in names.items() if not case.in_suite] == ["copy"]

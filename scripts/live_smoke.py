@@ -53,6 +53,10 @@ class Case:
     #: an exit code of 0 with a task that recorded nothing proves less than it
     #: looks, and the two listening pages are exactly that case.
     min_rows: int = 0
+    #: Whether the six checks should run it. A case that copies a chat into the
+    #: same chat is a real proof but repeats its whole output every run, so it
+    #: is registered and run by name instead of on every check.
+    in_suite: bool = True
     #: This case writes into somebody's chat. Refused unless ``--allow-write``.
     write: bool = False
     #: The page is one of the CLI's write pages, so the CLI demands the flag even
@@ -112,6 +116,16 @@ CASES: tuple[Case, ...] = (
                      "--targets", "{self}", "--text", "ogtool smoke",
                      "--no-resume"), None, "mass_send_v2", "ok: 1",
          cli_write=True, min_rows=1),
+    # Copying a chat into itself: capture from the account's own Saved
+    # Messages and send it back there. Proven once with 15 messages
+    # (copy_chat-2567 receipt); kept out of the six checks because every run
+    # would repeat that whole copy, and the point is that the page works, not
+    # that this machine has a tidy chat.
+    Case("copy", ("copy_chat", "--live", "--accounts", "{account}",
+                  "--sources", "{self}", "--targets", "{self}",
+                  "--capture-minutes", "60", "--copy-mode", "copy"),
+         None, "copy_chat", "ok:", cli_write=True, min_rows=1,
+         in_suite=False),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
@@ -377,7 +391,8 @@ def main(argv: list[str]) -> int:
     print(f"account: {account} (@{who})")
     problems: list[str] = []
     every = [case for case in list(CASES) + cases
-             if not only or case.name == only]
+             if only and case.name == only
+             or not only and case.in_suite]
     if only and not every:
         print(f"no case named {only!r}")
         return 2
