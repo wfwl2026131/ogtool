@@ -63,23 +63,18 @@ def test_the_seconds_and_milliseconds_spellings_mean_the_same_thing():
 
 
 def test_the_media_policy_is_read():
+    # The auto-download / auto-play toggles are gone: they configured the
+    # reference client's media autoload preferences, a GUI concept with no
+    # CLI counterpart, and the join page never downloaded media.
     config = JoinConfig.from_dict(
         {"batch_join": {"targets": "@g",
                         "auto_download_scope_group": True,
-                        "auto_download_photos": True,
-                        "auto_download_files": True,
-                        "auto_download_limit_mb": 20,
-                        "auto_play_videos": True,
-                        "auto_play_gifs": True,
-                        "auto_play_limit_mb": 5}},
+                        "auto_play_videos": True}},
         _settings())
-    assert config.auto_download_scope_group is True
-    assert config.auto_download_photos is True
-    assert config.auto_download_files is True
-    assert config.auto_download_limit_mb == 20
-    assert config.auto_play_videos is True
-    assert config.auto_play_gifs is True
-    assert config.auto_play_limit_mb == 5
+    assert not hasattr(config, "auto_download_scope_group")
+    assert not hasattr(config, "auto_play_videos")
+    assert not hasattr(config, "auto_play_gifs")
+    assert not hasattr(config, "auto_play_limit_mb")
 
 
 def test_the_leave_policy_is_read():
@@ -115,19 +110,14 @@ def test_a_leave_run_without_leave_targets_fails_like_an_empty_join(ctx,
     assert "no leave targets" in capsys.readouterr().out
 
 
-def test_the_media_policy_line_names_what_is_on(ctx, capsys):
+def test_the_media_policy_line_is_gone(ctx, capsys):
     from ogtool.targets import Target
 
     config = JoinConfig(targets=[Target("group", "@g")],
-                        auto_download_scope_channel=True,
-                        auto_download_files=True,
-                        auto_download_limit_mb=50,
-                        auto_play_gifs=True,
                         request_interval=0, request_timeout=1,
                         account_interval=0)
     assert run(config, ctx) == 0
-    output = capsys.readouterr().out
-    assert "media policy: download channel (files), 50MB, play gif" in output
+    assert "media policy" not in capsys.readouterr().out
 
 
 def test_mute_and_concurrency_reach_the_header(ctx, capsys):

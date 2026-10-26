@@ -73,28 +73,7 @@ FLAGS = (
          action="store_true"),
     Flag("--mute-interval", "mute_interval", float, "gap between mutes, seconds"),
     Flag("--leave-interval", "leave_interval", float, "gap between leaves, seconds"),
-    Flag("--auto-download-private", "auto_download_scope_private", None,
-         "auto-download in private chats", action="store_true"),
-    Flag("--auto-download-group", "auto_download_scope_group", None,
-         "auto-download in groups", action="store_true"),
-    Flag("--auto-download-channel", "auto_download_scope_channel", None,
-         "auto-download in channels", action="store_true"),
-    Flag("--auto-download-photos", "auto_download_photos", None,
-         "auto-download photos", action="store_true"),
-    Flag("--auto-download-files", "auto_download_files", None,
-         "auto-download files", action="store_true"),
-    Flag("--auto-download-limit-mb", "auto_download_limit_mb", int,
-         "auto-download size cap, MB"),
-    Flag("--auto-play-videos", "auto_play_videos", None, "autoplay videos",
-         action="store_true"),
-    Flag("--auto-play-round-videos", "auto_play_round_videos", None,
-         "autoplay round videos", action="store_true"),
-    Flag("--auto-play-gifs", "auto_play_gifs", None, "autoplay gifs",
-         action="store_true"),
-    Flag("--auto-play-limit-mb", "auto_play_limit_mb", int,
-         "autoplay size cap, MB"),
 )
-
 
 OPERATIONS = ("join", "leave")
 
@@ -157,18 +136,10 @@ class JoinConfig:
     mute_private: bool = False
     mute_interval: float = 0.0
     leave_interval: float = 0.0
-    #: ``autoDownload*`` / ``autoPlay*``: the per-account media policy that
-    #: rides along with the join task.
-    auto_download_scope_private: bool = False
-    auto_download_scope_group: bool = False
-    auto_download_scope_channel: bool = False
-    auto_download_photos: bool = False
-    auto_download_files: bool = False
-    auto_download_limit_mb: int = 0
-    auto_play_round_videos: bool = False
-    auto_play_videos: bool = False
-    auto_play_gifs: bool = False
-    auto_play_limit_mb: int = 0
+    #: The dump's ``autoDownload*`` / ``autoPlay*`` toggles configure the
+    #: reference client's media autoload preferences - a GUI concept this CLI
+    #: has no counterpart for, and the join page never downloaded media. The
+    #: nine flags were display-only and are gone.
     task_name: str = "batch-join"
 
     @classmethod
@@ -205,22 +176,6 @@ class JoinConfig:
             mute_private=bool(data.get("mute_private", False)),
             mute_interval=_seconds(data, "mute_interval", 0.0),
             leave_interval=_seconds(data, "leave_interval", 0.0),
-            auto_download_scope_private=bool(
-                data.get("auto_download_scope_private", False)),
-            auto_download_scope_group=bool(
-                data.get("auto_download_scope_group", False)),
-            auto_download_scope_channel=bool(
-                data.get("auto_download_scope_channel", False)),
-            auto_download_photos=bool(data.get("auto_download_photos", False)),
-            auto_download_files=bool(data.get("auto_download_files", False)),
-            auto_download_limit_mb=num(data, "auto_download_limit_mb", 0,
-                                       kind=int, minimum=0),
-            auto_play_round_videos=bool(
-                data.get("auto_play_round_videos", False)),
-            auto_play_videos=bool(data.get("auto_play_videos", False)),
-            auto_play_gifs=bool(data.get("auto_play_gifs", False)),
-            auto_play_limit_mb=num(data, "auto_play_limit_mb", 0, kind=int,
-                                   minimum=0),
             task_name=name_of(raw, data, "batch-join"),
         )
         config.validate()
@@ -310,32 +265,6 @@ def gap(config: JoinConfig, job: Job, previous: Job | None = None,
     return wait
 
 
-def _media_policy(config: JoinConfig) -> str:
-    """The download / autoplay policy in one line, ``-`` when nothing is set."""
-    scopes = [name for name, on in (("private", config.auto_download_scope_private),
-                                    ("group", config.auto_download_scope_group),
-                                    ("channel", config.auto_download_scope_channel))
-              if on]
-    parts: list[str] = []
-    if scopes:
-        kinds = [kind for kind, on in (("photos", config.auto_download_photos),
-                                       ("files", config.auto_download_files))
-                 if on]
-        parts.append(f"download {'+'.join(scopes)}"
-                     + (f" ({'+'.join(kinds)})" if kinds else ""))
-    if config.auto_download_limit_mb:
-        parts.append(f"{config.auto_download_limit_mb}MB")
-    plays = [kind for kind, on in (("round", config.auto_play_round_videos),
-                                   ("video", config.auto_play_videos),
-                                   ("gif", config.auto_play_gifs))
-             if on]
-    if plays:
-        parts.append(f"play {'+'.join(plays)}"
-                     + (f" {config.auto_play_limit_mb}MB"
-                        if config.auto_play_limit_mb else ""))
-    return ", ".join(parts) or "-"
-
-
 def run(config: JoinConfig, ctx: RunContext) -> int:
     leaving = config.operation_type == "leave"
     targets = config.leave_targets if leaving else config.targets
@@ -383,7 +312,6 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
         mute=("channels" if config.mute_channels else "")
              + ("+private" if config.mute_private else "") or "off",
         leave_interval=f"{config.leave_interval:.0f}s",
-        media_policy=_media_policy(config),
         total=len(pairs),
     )
 
