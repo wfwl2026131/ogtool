@@ -30,13 +30,18 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES: dict[str, list[str]] = {
     "add_contact": ["--contacts", "+10000000001"],
     "ai_chat": ["--targets", "@sweep"],
-    "ai_clone": ["--targets", "@sweep", "--sources", "@source"],
+    "ai_clone": ["--targets", "@sweep", "--sources", "@source",
+                 "--message", "@source|Sender|hello post"],
     # ai_comment draws which posts get a comment, a like or a sticker, so it is
     # randomised by design; its own --seed is what makes two runs comparable, and
     # a seed is part of the configuration, not a way around the check.
     "ai_comment": ["--targets", "@sweep", "--seed", "1"],
     "batch_invite": ["--groups", "@sweep", "--members", "@sweepmember"],
-    "batch_invite_v2": ["--targets", "@sweep"],
+    "batch_invite_v2": ["--targets", "@sweep", "--contacts", "+10000000001"],
+    # A rule plus one simulated incoming message: without both, the page has
+    # nothing to match and plans zero replies.
+    "auto_reply": ["--rule", "hello=>hi", "--simulate",
+                   "@peer|Sender|hello there"],
     "batch_join": ["--targets", "@sweep"],
     "batch_login": ["--logout", "frozen"],
     "batch_rename": ["--file", "{tmp}/names.txt"],
@@ -54,7 +59,8 @@ FIXTURES: dict[str, list[str]] = {
     "puppet_chat": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],
     "puppet_chat_v2": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],
     "video_manage": ["--link", "https://t.me/sweep"],
-    "watch_chat": ["--targets", "@sweep"],
+    "watch_chat": ["--targets", "@sweep", "--relay", "@relaychat",
+                   "--simulate", "@sweep|Sender|hello world"],
 }
 
 

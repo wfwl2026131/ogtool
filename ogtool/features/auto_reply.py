@@ -164,8 +164,17 @@ def run(config: AutoReplyConfig, ctx: RunContext) -> int:
                       "enabled": config.enabled}, replies)
 
     if not ctx.live:
+        # One row per reply this run would have sent: "PLAN: 1 replies" with an
+        # empty table is a claim nobody can check afterwards.
+        planned = 0
+        for message, rule, _reason in decisions:
+            if rule is None:
+                continue
+            record(ctx, task, "auto", str(message.peer), ok=True,
+                   detail=f'rule={rule.name} text="{message.text}"')
+            planned += 1
         print("dry-run: no session was opened")
-        close_task(ctx, task, ok=0, failed=0, status="dry-run")
+        close_task(ctx, task, ok=planned, failed=0, status="dry-run")
         return 0
 
     return _run_live(config, ctx, task)

@@ -408,10 +408,13 @@ def test_a_dry_run_receipt_is_schema_clean_with_no_accounts(ctx, settings):
     body = json.loads(next(receipts.receipt_dir(settings)
                            .glob("keep_online-*.json")).read_text())
     assert receipts.validate(body) == []
-    assert body["ok"] == body["results"]["sent"] == 0
-    # A dry run beats nothing, so no account can be named in it. The live run's
-    # attribution is pinned by the real receipt and by scripts/live_smoke.py.
-    assert body["accounts"] == []
+    # The plan said one heartbeat, so the receipt shows the one it would have
+    # sent: planned rows, nothing sent. The account is named because the row is
+    # about what that account was going to do - the live attribution is pinned
+    # separately by the real receipt and by scripts/live_smoke.py.
+    assert body["results"]["sent"] == 0
+    assert body["ok"] == body["planned"] == body["results"]["total"] == 1
+    assert body["accounts"] == ["acc1"]
 
 
 def test_derive_takes_the_totals_from_the_rows(ctx, settings):

@@ -107,3 +107,19 @@ def test_the_fixtures_make_pages_record_rows(sweep):
         assert body["planned"] >= 1, f"{name}: planned nothing"
         assert body["ok"] == body["planned"], body["results"]
         assert body["results"]["total"] >= 1
+
+
+@pytest.mark.parametrize("name", ["auto_reply", "keep_online"])
+def test_a_dry_plan_shows_up_as_rows(sweep, name):
+    """'PLAN: 1 replies' with an empty table is a claim nobody can check.
+
+    Both pages announced work and recorded nothing, so the receipt said
+    planned 1, ok 0, zero rows - and the schema allows it, because an
+    unexplained plan is legal. Legal is not the same as honest.
+    """
+    table = sweep.fixtures()
+    code, out, bodies = sweep.dry_run(name, table)
+    assert code == 0, out
+    body = bodies[0]
+    assert body["planned"] == body["results"]["total"] >= 1, body["results"]
+    assert body["ok"] == body["planned"]

@@ -81,8 +81,12 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
                      planned=len(schedule))
 
     if not ctx.live:
+        # The plan says N heartbeats; the receipt has to show them, or "planned 1,
+        # ok 0, no rows" is a claim with nothing behind it.
+        for round_index, _offset, account in schedule:
+            record(ctx, task, account, f"heartbeat {round_index}", ok=True)
         print("dry-run: no session was opened")
-        close_task(ctx, task, ok=0, failed=0, status="dry-run")
+        close_task(ctx, task, ok=len(schedule), failed=0, status="dry-run")
         return 0
 
     sender = ctx.sender()
