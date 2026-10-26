@@ -185,6 +185,33 @@ CASES: tuple[Case, ...] = (
                    "--action", "speak", "--interval-ms", "300"),
          None, "video_manage", "GROUP_CALL_NOT_FOUND", cli_write=True,
          min_rows=1, in_suite=False, allow_exit=1),
+    # auto_script live: one send_text step from the shipped self_ping script
+    # into the account's own fixture group. Proves the script engine, the
+    # step send and the derived receipt counters (auto_script-2847 was the
+    # first run with ok=1 actually recorded). One message per --only run.
+    Case("script", ("auto_script", "--live", "--accounts", "{account}",
+                    "--script", "self_ping"),
+         None, "auto_script", "-> ok", cli_write=True, min_rows=1,
+         in_suite=False),
+    # batch_join live: the account is already a member of its own fixture
+    # group, so the real ImportChatInviteRequest rides the
+    # already-participant mapping and lands ok (batch_join-2852 receipt,
+    # row detail USER_ALREADY_PARTICIPANT). Zero side effects, own group.
+    Case("join", ("batch_join", "--live", "--accounts", "{account}",
+                  "--targets", "https://t.me/+ciW3P2jwBuAwZGRl",
+                  "--request-interval", "1"),
+         None, "batch_join", "-> ok", cli_write=True, min_rows=1,
+         in_suite=False),
+    # mix_market live, stage 1 only: the orchestrator re-runs the proven
+    # self add_contact (t1 adds t1) with --stop-after 1. The first live run
+    # exposed the empty-envelope bug (PLAN said ok=1, receipt total=0); the
+    # rows fix turned receipt 2875 into sent=1, and this case pins that.
+    Case("stage1", ("mix_market", "--live", "--accounts", "{account}",
+                    "--contact", "t1|6805350975",
+                    "--targets", "https://t.me/c/3965371671",
+                    "--stop-after", "1"),
+         None, "mix_market", "ok: 1", cli_write=True, min_rows=1,
+         in_suite=False),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",

@@ -217,7 +217,7 @@ def rest_after_failure(config: MixConfig, index: int) -> float:
     return config.create_rest_min + (span * min(index, 3) / 3.0)
 
 
-def stage_add_contacts(config: MixConfig, ctx: RunContext,
+def stage_add_contacts(config: MixConfig, ctx: RunContext, task: TaskRef,
                        labels: list[str]) -> tuple[StageResult, dict[str, str]]:
     """Add the contacts; returns who added whom, for the last stage."""
     result = StageResult("add_contact", STAGES[0][1])
@@ -233,16 +233,21 @@ def stage_add_contacts(config: MixConfig, ctx: RunContext,
             owners[contact] = account
         else:
             result.failed += 1
+        # The stage counter says ok/failed; the row says which contact and
+        # what the server answered. Without it the page's receipt is an
+        # empty envelope under a PLAN line that claims work.
+        record(ctx, task, account, target.ref, answer.ok, answer.code)
     return result, owners
 
 
-def stage_create_groups(config: MixConfig, ctx: RunContext,
+def stage_create_groups(config: MixConfig, ctx: RunContext, task: TaskRef,
                         labels: list[str]) -> StageResult:
     result = StageResult("create_group", STAGES[1][1])
     sender = ctx.sender()
     account = labels[0] if labels else "-"
     for title in config.group_titles:
         answer = sender.create_group(account, title)
+        record(ctx, task, account, title, answer.ok, answer.code)
         if answer.ok:
             result.ok += 1
             if answer.detail:
@@ -393,6 +398,8 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     # receipt reported one row against a plan of zero, which the schema now
     # refuses ("more rows than planned").
     plan_rows = len(config.contacts)
+    if config.stop_after >= 2:
+        plan_rows += len(config.group_titles)
     if config.stop_after >= 4:
         plan_rows += len(labels or ["-"])
     task = open_task(ctx, config.task_name, FEATURE,
@@ -417,11 +424,11 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     owners: dict[str, str] = {}
     if config.stop_after >= 1:
         started = time.perf_counter()
-        contacts_stage, owners = stage_add_contacts(config, ctx, labels)
+        contacts_stage, owners = stage_add_contacts(config, ctx, task, labels)
         contacts_stage.seconds = time.perf_counter() - started
         results.append(contacts_stage)
         print(contacts_stage.line(1, len(STAGES)))
-    created = run_stage(2, stage_create_groups, config, ctx, labels)
+    created = run_stage(2, stage_create_groups, config, ctx, task, labels)
     # A new group has no username, so a slug of its title is not a reference to
     # anything: a live run has to follow what Telegram actually created.  A plan
     # that creates nothing keeps the slug, because there is nothing real to use.

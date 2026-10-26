@@ -128,12 +128,14 @@ def test_a_failed_group_is_held_then_retried_once(ctx, capsys):
     rest is over, so the title is retried once instead of being dropped - which
     would silently lose a whole target.
     """
+    from ogtool.features._common import open_task
     from ogtool.features.mix_market import MixConfig, stage_create_groups
 
     ctx.script.codes = ["FLOOD_WAIT_30", "ok"]
+    task = open_task(ctx, "retry test", "mix_market", {"stage": 2}, 1)
     config = MixConfig(group_titles=["Market A"], create_rest_min=1,
                        create_rest_max=1)
-    result = stage_create_groups(config, ctx, ["acc1"])
+    result = stage_create_groups(config, ctx, task, ["acc1"])
     output = capsys.readouterr().out
     assert "Retry after 1 minute(s)" in output
     assert result.ok == 1
@@ -142,11 +144,13 @@ def test_a_failed_group_is_held_then_retried_once(ctx, capsys):
 
 
 def test_a_second_failure_keeps_the_target_held(ctx, capsys):
+    from ogtool.features._common import open_task
     from ogtool.features.mix_market import MixConfig, stage_create_groups
 
     ctx.script.codes = ["FLOOD_WAIT_30", "FLOOD_WAIT_30"]
+    task = open_task(ctx, "held test", "mix_market", {"stage": 2}, 1)
     config = MixConfig(group_titles=["Market A"], create_rest_min=1,
                        create_rest_max=1)
-    result = stage_create_groups(config, ctx, ["acc1"])
+    result = stage_create_groups(config, ctx, task, ["acc1"])
     assert result.held == ["Market A"]
     assert "failed again" in capsys.readouterr().out

@@ -155,3 +155,22 @@ def test_the_stage_names_are_the_documented_order():
     ]
     assert mix_market.STAGES[0][1] == "add contacts"
     assert mix_market.STAGES[3][1] == "pull own contacts"
+
+
+def test_stage_one_and_two_write_rows(ctx, pattern_file, capsys):
+    """The stage counters live in the PLAN line; the rows live in the receipt.
+    A stage that counted work but recorded nothing produced an empty envelope
+    under a plan that claimed it - the exact hole the schema now refuses.
+    Dry rows carry "planned"; the live version of the same shape is what the
+    mix_market live probe receipt shows."""
+    ctx.script.codes = ["ok"] * 40
+    config = make(contacts=["A4|L0"], group_titles=["Market A"],
+                  stop_after=2)
+    assert run(config, ctx) == 0
+    task_id = ctx.store._conn.execute(
+        "SELECT id FROM tasks WHERE feature='mix_market' "
+        "ORDER BY id DESC LIMIT 1").fetchone()[0]
+    rows = ctx.store.results_for(task_id)
+    # Dry run: the rows are "planned" - one per contact, one per group title.
+    assert [(row["target"], row["status"]) for row in rows] == [
+        ("@L0", "planned"), ("Market A", "planned")]
