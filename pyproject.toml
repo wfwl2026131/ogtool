@@ -1,6 +1,6 @@
 [project]
 name = "ogtool"
-version = "1.0.1"
+version = "1.0.2"
 description = "Offline toolkit for the 22 console features"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
@@ -15,9 +15,10 @@ dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
 ogtool = "ogtool.cli:main"
+ogtool-wizard = "ogtool.wizard:main"
 
 [tool.setuptools]
-packages = ["ogtool", "ogtool.features", "ogtool.prompts"]
+packages = ["ogtool", "ogtool.features", "ogtool.prompts"]  # wizard ships in ogtool/
 
 # The templates are content the pages read at run time: a wheel without them
 # installs fine and then every AI page dies on "prompt template not found".

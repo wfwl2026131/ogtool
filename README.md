@@ -59,6 +59,13 @@ ogtool --config config.yaml accounts add --phone +15551230001 --label demo1
 ogtool --config config.yaml mass_send --targets "@demo_chat" --text "hi"
 ```
 
+**不想背命令？交互式向导一条条问你**（挑功能 → 填参数 → 先 dry-run →
+确认才真跑，写操作二次确认加 --allow-write）：
+
+```bash
+ogtool-wizard
+```
+
 更完整的自用手册（加账号三条路线、五个常用场景的 dry-run/live/
 allow-write 三档命令、限速与 FLOOD_WAIT 规则）在
 [docs/quickstart-试用指南.md](docs/quickstart-试用指南.md)。
