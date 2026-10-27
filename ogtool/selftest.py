@@ -167,6 +167,12 @@ def check_docs(paths: tuple[Path, ...] | None = None,
     if expected is None:
         expected, failures = collected_tests()
         problems.extend(failures)
+    # The live block is machine-local evidence: it lists the receipts this
+    # machine actually collected, under this machine's absolute paths. A
+    # checkout that has never collected any (a fresh clone) cannot re-derive
+    # it, so comparing would call every note stale on arrival. The same skip
+    # rule the notes themselves follow: absent here means skipped, not lying.
+    machine_has_receipts = (root() / "data" / "logs" / "receipts").exists()
     seen = 0
     for path in targets:
         if not path.exists():
@@ -185,7 +191,8 @@ def check_docs(paths: tuple[Path, ...] | None = None,
         text = path.read_text(encoding="utf-8")
         for start_mark, end_mark, expected_block, label in (
                 (EVIDENCE_START, EVIDENCE_END, block, "evidence"),
-                (LIVE_START, LIVE_END, live_block(), "live")):
+                (LIVE_START, LIVE_END,
+                 live_block() if machine_has_receipts else None, "live")):
             if path in BLOCK_NOTES and start_mark not in text:
                 problems.append(f"{path.name}: the {label} markers are gone "
                                 "(restore them; run scripts/sync_evidence.py)")

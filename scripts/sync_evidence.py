@@ -83,6 +83,33 @@ def replace_block(text: str, block: str,
     return text[:start] + block + text[end + len(end_mark):], True
 
 
+def bump_current() -> int:
+    """Point every note's ``current`` marker at the count pytest collects.
+
+    The blocks are generated, but the marker above them used to be a hand
+    edit, and a hand-edited number is exactly the kind that drifts: every
+    test that lands made yesterday's count stale and the docs check caught
+    it one run later. The note carries the number only because the check
+    re-derives it, so the generator that rewrites the blocks derives it.
+    """
+    from ogtool.selftest import CURRENT, DOC_PATHS, collected_tests
+
+    count, failures = collected_tests()
+    for failure in failures:
+        print(failure)
+    if failures:
+        return 1
+    for path in DOC_PATHS:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8")
+        bumped = CURRENT.sub(f"<!-- current: pytest → {count} passed -->", text)
+        if bumped != text:
+            path.write_text(bumped, encoding="utf-8")
+            print(f"{path.name}: current marker -> {count} passed")
+    return count
+
+
 def main(argv: list[str]) -> int:
     args = [item for item in argv[1:] if not item.startswith("--")]
     check_only = "--check" in argv
@@ -109,6 +136,7 @@ def main(argv: list[str]) -> int:
         return 1
     note.write_text(updated, encoding="utf-8")
     print(f"{note.name}: 2 block(s) written ({written} lines)")
+    bump_current()
     return 0
 
 

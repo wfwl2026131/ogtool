@@ -195,3 +195,20 @@ def test_the_live_dead_ends_name_the_fix(tmp_path):
     line, problems = selftest.check_live(base=tmp_path)
     assert problems == []
     assert "account pool is empty" in line and "accounts login" in line
+
+
+def test_docs_check_does_not_call_a_fresh_clone_stale(tmp_path, monkeypatch,
+                                                      capsys):
+    """The live block is machine-local; a tree with no receipts re-derives
+    nothing and must not fail the check for evidence it cannot have."""
+    from ogtool import selftest as module
+
+    note = tmp_path / "note.md"
+    note.write_text("body\n<!-- current: pytest -> 1 passed -->\n"
+                    f"{module.EVIDENCE_START}\n{module.EVIDENCE_END}\n"
+                    f"{module.LIVE_START}\n{module.LIVE_END}\n",
+                    encoding="utf-8")
+    monkeypatch.setattr(module, "root", lambda: tmp_path)
+    line, problems = module.check_docs(paths=(note,), expected=1)
+    assert problems == [], problems
+    assert "1 note(s) checked" in line
