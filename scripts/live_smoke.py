@@ -34,6 +34,16 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+#: The suite's own test chat. Machine-local by nature -- it is a group this
+#: machine's accounts are members of -- so it rides in a gitignored file
+#: (data/fixture_group, one line) instead of in the code: a tree that leaves
+#: this machine reads the empty placeholder and its fixture cases are
+#: skipped rather than fired at a link nobody is in.
+FIXTURE_GROUP = ""
+_fixture_marker = ROOT / "data" / "fixture_group"
+if _fixture_marker.exists():
+    FIXTURE_GROUP = _fixture_marker.read_text(encoding="utf-8").strip()
+
 #: Seconds a listening page is allowed to stay up before Ctrl+C is sent.
 #: Retired as a routine mechanism: the listen pages self-limit with
 #: --run-seconds, so no case ships an interrupt_after any more. The slot
@@ -180,7 +190,7 @@ CASES: tuple[Case, ...] = (
     # The full copy itself is proven live (ai_clone-2786 receipt, 2 posts).
     Case("clone", ("ai_clone", "--live", "--accounts", "{account}",
                    "--sources", "https://t.me/c/4365539795",
-                   "--targets", "https://t.me/c/3965371671",
+                   "--targets", "{fixture}",
                    "--last-source-message-id", "999",
                    "--mode", "copy"),
          None, "ai_clone", "ok: 0", cli_write=True, min_rows=0),
@@ -191,7 +201,7 @@ CASES: tuple[Case, ...] = (
     # GROUP_CALL_NOT_FOUND); kept out of the six checks because it needs the
     # real session for a result that is stable but negative.
     Case("video", ("video_manage", "--live", "--accounts", "{account}",
-                   "--link", "https://t.me/c/3965371671",
+                   "--link", "{fixture}",
                    "--action", "speak", "--interval-ms", "300"),
          None, "video_manage", "GROUP_CALL_NOT_FOUND", cli_write=True,
          min_rows=1, allow_exit=1),
@@ -216,7 +226,7 @@ CASES: tuple[Case, ...] = (
     # rows fix turned receipt 2875 into sent=1, and this case pins that.
     Case("stage1", ("mix_market", "--live", "--accounts", "{account}",
                     "--contact", "t1|6805350975",
-                    "--targets", "https://t.me/c/3965371671",
+                    "--targets", "{fixture}",
                     "--stop-after", "1"),
          None, "mix_market", "ok: 1", cli_write=True, min_rows=1),
     # batch_invite live: the handler invites its own user id into its own
@@ -225,14 +235,14 @@ CASES: tuple[Case, ...] = (
     # the row records the pair (batch_invite-2921, sent=1). Zero third
     # parties.
     Case("invite", ("batch_invite", "--live", "--accounts", "{account}",
-                    "--groups", "https://t.me/c/3965371671",
+                    "--groups", "{fixture}",
                     "--members", "6805350975", "--request-interval", "1"),
          None, "batch_invite", "成功: 1", cli_write=True, min_rows=1),
     # batch_invite_v2 live: the same self-target through the v2 page (own
     # contact into own group; receipt 2925, sent=1). Same no-op-success
     # shape as "invite".
     Case("invite2", ("batch_invite_v2", "--live", "--accounts", "{account}",
-                     "--targets", "https://t.me/c/3965371671",
+                     "--targets", "{fixture}",
                      "--contacts", "6805350975", "--request-interval", "1"),
          None, "batch_invite_v2", "ok: 1", cli_write=True, min_rows=1),
     # batch_login live, offline path: an empty import folder means zero
@@ -250,7 +260,7 @@ CASES: tuple[Case, ...] = (
     # probe. The message physically lands (group id 15 read back "ogtool
     # puppet probe"); receipts 2964/2965 read sent=1.
     Case("puppet", ("puppet_chat_v2", "--live", "--accounts", "{account}",
-                    "--targets", "https://t.me/c/3965371671",
+                    "--targets", "{fixture}",
                     "--pattern", "data/patterns/puppet_one.txt",
                     "--loops", "1", "--daily-limit", "1",
                     "--startup-interval", "0"),
@@ -262,7 +272,7 @@ CASES: tuple[Case, ...] = (
     # entity" failure row, because the page re-parsed the target refs and lost
     # the channel kind. Two sent rows here keep that fix pinned.
     Case("puppet1", ("puppet_chat", "--live", "--accounts", "t1", "a",
-                     "--targets", "https://t.me/c/3965371671",
+                     "--targets", "{fixture}",
                      "--pattern", "patterns/puppet_two.txt",
                      "--loops", "1", "--daily-limit", "1"),
          None, "puppet_chat", "ok: 2", cli_write=True, min_rows=2),
@@ -272,7 +282,7 @@ CASES: tuple[Case, ...] = (
     # read-only page (no --allow-write), one receipt row, zero side effects.
     # Receipts 2843/3440 read live ok=1 can_send=1.
     Case("fgroup", ("filter_group", "--live", "--accounts", "{account}",
-                    "--groups", "https://t.me/c/3965371671"),
+                    "--groups", "{fixture}"),
          None, "filter_group", "ok: 1", min_rows=1),
     Case("dialogs", ("accounts", "dialogs", "--live", "--accounts", "{account}",
                      "--limit", "5"), None, "", "total:"),
@@ -430,6 +440,8 @@ def shallow_receipt(case: Case, body: dict) -> list[str]:
 def run_case(case: Case, config: Path, account: str, who: str,
              allow_write: bool = False) -> list[str]:
     """One case; returns the problems it produced (empty means good)."""
+    if "{fixture}" in case.args and not FIXTURE_GROUP:
+        return [f"{case.name}: skipped, no data/fixture_group on this machine"]
     server = None
     port = 0
     if case.local_port:
@@ -440,7 +452,8 @@ def run_case(case: Case, config: Path, account: str, who: str,
         # allowed write case would be refused at the next layer down.
         args.insert(1, "--allow-write")
     argv = [sys.executable, "-m", "ogtool", "--config", str(config), *args]
-    argv = [item.format(account=account, self=who, port=port) for item in argv]
+    argv = [item.format(account=account, self=who, port=port,
+                        fixture=FIXTURE_GROUP) for item in argv]
     started = subprocess.Popen(  # noqa: S603 - our own CLI
         argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True)

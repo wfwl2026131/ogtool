@@ -120,10 +120,10 @@ def test_peer_variants_lead_with_the_channel_form_for_channel_links():
 
     from ogtool.senders import peer_variants
 
-    channel = parse_entry("https://t.me/c/3965371671", "custom")
+    channel = parse_entry("https://t.me/c/4365539795", "custom")
     forms = peer_variants(channel)
-    assert forms[0] == PeerChannel(3965371671)
-    assert forms[1] == 3965371671
+    assert forms[0] == PeerChannel(4365539795)
+    assert forms[1] == 4365539795
     # A bare numeric id keeps its old shape: int first, phone fallback after.
     assert peer_variants(parse_entry("6805350975")) == [6805350975,
                                                         "+6805350975"]

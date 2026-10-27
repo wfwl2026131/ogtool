@@ -42,12 +42,12 @@ def test_from_dict_keeps_the_parsed_targets(settings):
     from the same link.
     """
     config = PuppetConfig.from_dict(
-        {"puppet_chat": {"targets": "https://t.me/c/3965371671",
+        {"puppet_chat": {"targets": "https://t.me/c/4365539795",
                          "pattern": "x.txt"}}, settings)
-    assert [spec.ref for spec in config.target_specs] == ["3965371671"]
+    assert [spec.ref for spec in config.target_specs] == ["4365539795"]
     assert all(spec.kind == "channel" for spec in config.target_specs)
     # The ref list stays for the receipt's knobs and the display.
-    assert config.targets == ["3965371671"]
+    assert config.targets == ["4365539795"]
 
 
 def test_mode_file_resolves_a_named_script(tmp_path: Path):
