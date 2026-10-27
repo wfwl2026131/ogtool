@@ -4,6 +4,8 @@
 > 看计划，真跑加 `--live`，写东西再加 `--allow-write`。三段式是刻意的：
 > 默认永远不碰网络写操作。
 
+<a id="ex-others"></a>
+
 ## 0. 安装
 
 ```bash
@@ -79,6 +81,8 @@ FLOOD_WAIT 就该停手歇账号**，回执里 `codes` 字段一眼能看。
 
 ## 4. 五个最常用场景
 
+<a id="ex-mass-send"></a>
+
 ### 场景 1：给一组目标群发一条文案（mass_send）
 
 ```bash
@@ -97,6 +101,8 @@ ogtool mass_send --accounts t1,t2 \
 
 多账号轮发、错峰用 `mass_send_v2`（同参数族）。
 
+<a id="ex-auto-reply"></a>
+
 ### 场景 2：私聊自动回复（auto_reply）
 
 ```bash
@@ -105,6 +111,8 @@ ogtool auto_reply --accounts t1 --rules rules.yaml --run-seconds 3600 --live
 ```
 
 回执按账号逐行落，监听到的每条消息都是一行。
+
+<a id="ex-watch-chat"></a>
 
 ### 场景 3：盯群转发（watch_chat）
 
@@ -120,6 +128,8 @@ ogtool watch_chat --accounts t1 \
 - 不给 `--relay` 就只看不转（每条消息记一行 skip）。
 - `--include`/`--exclude` 关键词过滤；同一条消息 60 秒内去重。
 
+<a id="ex-puppet-chat"></a>
+
 ### 场景 4：话术炒群（puppet_chat）
 
 ```bash
@@ -128,6 +138,8 @@ ogtool puppet_chat --accounts t1,a \
   --group "https://t.me/xxxx" \
   --script script.yaml --live --allow-write
 ```
+
+<a id="ex-batch-invite"></a>
 
 ### 场景 5：批量拉人进群（batch_invite）
 

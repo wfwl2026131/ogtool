@@ -20,33 +20,33 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 
 ## 功能总览（交付清单）
 
-| # | 参考端左栏 | 命令 | 关键参数 | dry-run 可验 |
-|---|---|---|---|---|
-| 0 | 🤖 话术炒群 | `puppet_chat` | `--targets --pattern --loops --multiplier --daily-limit` | 是 |
-| 1 | 📋 复制炒群 | `copy_chat` | `--targets --sources --message --filter-keywords --replacements` | 是 |
-| 2 | 🧠 AI原创炒群 | `ai_chat` | `--targets --interval-min/max --news-channel --insert-probability --topics` | 是 |
-| 3 | 💬 AI智能评论 | `ai_comment` | `--targets --posts --positive-ratio --emoji-probability --per-post-min/max` | 是 |
-| 4 | 📦 AI搬运频道 | `ai_clone` | `--sources --targets --mode --style --max-items --mapping` | 是 |
-| 5 | 📢 群发消息 | `mass_send` | `--targets --text/--media --interval-min/max --threads --daily-limit` | 是 |
-| 6 | 🔄 自动回复 | `auto_reply` | `--rule 关键词=>回复 --duplicate-seconds --simulate` | 是 |
-| 7 | 👀 监听聊天 | `watch_chat` | `--targets --exclude --relay` | 是 |
-| 8 | 👥 批量加群 | `batch_join` | `--targets --request-interval --per-account-cap --threads` | 是 |
-| 9 | 🛅 批量上号 | `batch_login` | `--import-folder/--import-zip --export-ids --logout frozen\|all\|both` | 是 |
-| 10 | 🔠 批量改名 | `batch_rename` | `--file --pause-at --stop-at`（暂停/继续/停止） | 是 |
-| 11 | 🔂 批量拉人 | `batch_invite` | `--groups --members --strategy --export-missing/--export-flood` | 是 |
-| 12 | ⚖️ 筛选手机 | `filter_phone` | `--numbers --threads --output` | 是 |
-| 13 | 🧮 筛选群组 | `filter_group` | `--groups --deep --output-dir` | 是 |
-| 14 | 🎥 视频管理 | `video_manage` | `--link --action join\|leave` | 是 |
-| 15 | 📶 代理配置 | `proxy` | `--add --test --bind label=id --timeout-ms` | 是 |
-| 16 | ➕ 批量联系人 | `add_contact` | `--contacts --per-target-cap --request-interval-ms --threads` | 是 |
-| 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout` | 是 |
-| 18 | 📨 群发私信v2 | `mass_send_v2` | `--contact account\|name\|ref --account-interval-min/max --daily-limit --allow-duplicates` | 是 |
-| 19 | 🤖 话术炒群v2 | `puppet_chat_v2` | `--targets --pattern --startup-interval --loops` | 是 |
-| 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --activity --stop-after N` | 是 |
-| 21 | 🟢 保持在线 | `keep_online` | `--interval --loops` | 是 |
-| 22 | ✨ 高级功能 | `export_accounts` | `--output-dir --profile label\|id\|username\|device\|2fa --format --no-sessions` | 是 |
-| 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 |
-| 24 | ⚙️ 设置 | `settings` | `--json`（只读展示 `globals:` 六个键） | 是 |
+| # | 参考端左栏 | 命令 | 关键参数 | dry-run 可验 | 示例 |
+|---|---|---|---|---|---|
+| 0 | 🤖 话术炒群 | `puppet_chat` | `--targets --pattern --loops --multiplier --daily-limit` | 是 | [场景4](docs/quickstart-试用指南.md#ex-puppet-chat) |
+| 1 | 📋 复制炒群 | `copy_chat` | `--targets --sources --message --filter-keywords --replacements` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 2 | 🧠 AI原创炒群 | `ai_chat` | `--targets --interval-min/max --news-channel --insert-probability --topics` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 3 | 💬 AI智能评论 | `ai_comment` | `--targets --posts --positive-ratio --emoji-probability --per-post-min/max` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 4 | 📦 AI搬运频道 | `ai_clone` | `--sources --targets --mode --style --max-items --mapping` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 5 | 📢 群发消息 | `mass_send` | `--targets --text/--media --interval-min/max --threads --daily-limit` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
+| 6 | 🔄 自动回复 | `auto_reply` | `--rule 关键词=>回复 --duplicate-seconds --simulate` | 是 | [场景2](docs/quickstart-试用指南.md#ex-auto-reply) |
+| 7 | 👀 监听聊天 | `watch_chat` | `--targets --exclude --relay` | 是 | [场景3](docs/quickstart-试用指南.md#ex-watch-chat) |
+| 8 | 👥 批量加群 | `batch_join` | `--targets --request-interval --per-account-cap --threads` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 9 | 🛅 批量上号 | `batch_login` | `--import-folder/--import-zip --export-ids --logout frozen\|all\|both` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 10 | 🔠 批量改名 | `batch_rename` | `--file --pause-at --stop-at`（暂停/继续/停止） | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 11 | 🔂 批量拉人 | `batch_invite` | `--groups --members --strategy --export-missing/--export-flood` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
+| 12 | ⚖️ 筛选手机 | `filter_phone` | `--numbers --threads --output` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 13 | 🧮 筛选群组 | `filter_group` | `--groups --deep --output-dir` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 14 | 🎥 视频管理 | `video_manage` | `--link --action join\|leave` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 15 | 📶 代理配置 | `proxy` | `--add --test --bind label=id --timeout-ms` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 16 | ➕ 批量联系人 | `add_contact` | `--contacts --per-target-cap --request-interval-ms --threads` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
+| 18 | 📨 群发私信v2 | `mass_send_v2` | `--contact account\|name\|ref --account-interval-min/max --daily-limit --allow-duplicates` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
+| 19 | 🤖 话术炒群v2 | `puppet_chat_v2` | `--targets --pattern --startup-interval --loops` | 是 | [场景4](docs/quickstart-试用指南.md#ex-puppet-chat) |
+| 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --activity --stop-after N` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 21 | 🟢 保持在线 | `keep_online` | `--interval --loops` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 22 | ✨ 高级功能 | `export_accounts` | `--output-dir --profile label\|id\|username\|device\|2fa --format --no-sessions` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 24 | ⚙️ 设置 | `settings` | `--json`（只读展示 `globals:` 六个键） | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 
 底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
 **26 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
