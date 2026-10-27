@@ -330,7 +330,11 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
         for _label, client in clients:
             with contextlib.suppress(Exception):
                 client.remove_event_handler(handler)
-        close_task(ctx, task, derive=True)
+        # A listener cannot promise a row count up front: messages arrive (or
+        # not) while it sits there. Deriving the plan from the rows it recorded
+        # keeps the receipt's unaccounted at zero either way -- planned 0 with
+        # a relay row in it used to read as "more rows than planned".
+        close_task(ctx, task, derive=True, plan_rows=True)
         print(f"DONE: targets={len(config.targets)} watched={counts.watched} "
               f"relayed={counts.relayed} dropped={counts.dropped}")
     return 0

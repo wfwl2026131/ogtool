@@ -344,9 +344,13 @@ live 用例全部登记在 `scripts/live_smoke.py`（`Case` 表），**全部 25
 机器本地用例。听型两页（auto_reply / watch_chat）用 `--run-seconds` 自限时，
 到点自己闭账出回执，不需要外部信号。
 
-两页的"落行"有结构性前提：**要有第二个对话方向该账号发消息**。自己的
-fixture 群里没有第二成员，所以短跑的回执是干净的 0 行（live-silent）——
-这不是缺口，与 puppet_chat v1、账号真码同属"第二账号"阻塞类。
+听型两页的"落行"前提——**要有第二个对话方向该账号发消息**——已由第二账号
+真码接入解除：第二账号（label `a`）登录入库后，`puppet1` 冒烟用例用双账号
+话术（`patterns/puppet_two.txt`，A1/A2 各一行）在夹具群跑 puppet_chat v1，
+断言 `ok: 2`；auto_reply 与 watch_chat 的正向行由第二账号私聊/群发探针
+消息真实产生（`t.me/c/<id>` 目标经 `PeerChannel` 形式解析，第二账号无需
+先缓存对话即可落行）。每轮 sweep 里的短跑（`--run-seconds 3`）仍以
+`DONE:` 闭账为准——落不落行取决于当轮有没有探针消息。
 
 ## 非交互 live 登录
 

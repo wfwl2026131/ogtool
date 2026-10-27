@@ -239,8 +239,10 @@ def _run_live(config: AutoReplyConfig, ctx: RunContext, task) -> int:
     finally:
         # The receipt is written here, not by the CLI's fallback: a run receipt
         # has no rules, no planned count and no accounts, which is everything
-        # this page is about.
-        close_task(ctx, task, ok=answered, failed=0)
+        # this page is about. ``plan_rows``: the plan was "whatever arrives",
+        # so the task's planned count is back-filled to the replies it sent --
+        # planned 0 with one reply row failed the receipts invariant.
+        close_task(ctx, task, ok=answered, failed=0, plan_rows=True)
     print(f"DONE: replies={answered}")
     return 0
 

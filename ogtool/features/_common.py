@@ -121,19 +121,27 @@ def open_task(ctx: RunContext, name: str, feature: str,
 
 
 def close_task(ctx: RunContext, task: TaskRef, *, ok: int = 0, failed: int = 0,
-               status: str = "", derive: bool = False) -> None:
+               status: str = "", derive: bool = False,
+               plan_rows: bool = False) -> None:
     """Finish the task and write its receipt.
 
     ``derive`` counts ok/failed from the rows the page recorded, for pages whose
     own counter measures something else (mix_market counts stages while it
     records contacts). The totals then agree with the table by construction
     instead of by a reviewer's arithmetic.
+
+    ``plan_rows`` also back-fills ``tasks.planned`` from those rows. A listener
+    (auto_reply, watch_chat) cannot announce a row count before the messages
+    arrive, and a receipt that says planned 0 with a sent row in it fails the
+    "more rows than planned" invariant -- the plan was unknown, not violated.
     """
     if derive:
         rows = ctx.store.results_for(task.id)
         ok = sum(1 for row in rows
                  if str(row["status"] or "") in ("sent", "planned"))
         failed = sum(1 for row in rows if str(row["status"] or "") == "failed")
+    if plan_rows:
+        ctx.store.set_task_planned(task.id, ok + failed)
     final = status or ("dry-run" if not ctx.live else "done")
     ctx.store.finish_task(task.id, sent=ok, failed=failed, status=final)
     # One receipt per run, written where every page already passes: the 25-item

@@ -112,6 +112,11 @@ def resolve_pattern(pattern: str, mode_file: str, mode: str,
 class PuppetConfig:
     account_labels: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
+    #: The targets as they parsed, kind included. ``targets`` alone loses the
+    #: "this id is a channel" fact: a ``t.me/c/<id>`` link parses to kind
+    #: channel, its bare ref re-parses as a group-with-phone-fallback, and a
+    #: second account without the chat cached used to die on that detour.
+    target_specs: list[Target] = field(default_factory=list)
     pattern: str = ""
     mode_file: str = ""
     mode: str = ""
@@ -131,7 +136,8 @@ class PuppetConfig:
     @classmethod
     def from_dict(cls, raw: dict, settings: Settings) -> PuppetConfig:
         data = section(raw, SECTION)
-        targets = [target.ref for target in targets_of(data)]
+        specs = targets_of(data)
+        targets = [target.ref for target in specs]
         if not targets:
             raise ConfigError(f"{SECTION}: no target given (--targets)")
         if not text(data, "pattern") and not text(data, "mode_file"):
@@ -142,6 +148,7 @@ class PuppetConfig:
         return cls(
             account_labels=accounts_of(raw, data),
             targets=targets,
+            target_specs=specs,
             pattern=text(data, "pattern"),
             mode_file=text(data, "mode_file"),
             mode=text(data, "mode"),
@@ -213,8 +220,8 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
 
     total = len(config.targets) * len(messages) * config.loops * config.multiplier
     index = 0
-    for target_ref in config.targets:
-        target: Target = parse_many([target_ref], "custom")[0]
+    for target in (config.target_specs
+                   or parse_many(config.targets, "custom")):
         for loop in range(config.loops):
             if loop:
                 result.waited += config.loop_interval * 60.0
@@ -268,7 +275,7 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                 else:
                     result.failed += 1
                     record(ctx, task, account, target.display(), False,
-                           outcome.code)
+                           outcome.code, outcome.detail)
                     state = outcome.code
                 print(f"[{index:03d}/{total:03d}] A{message.account_slot} "
                       f"account={account} target={target.display()} "

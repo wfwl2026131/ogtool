@@ -1,0 +1,2 @@
+A1|L0|D0|puppet v1 probe slot A1
+A2|L0|D2|puppet v1 probe slot A2

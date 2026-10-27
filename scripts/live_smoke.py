@@ -256,6 +256,16 @@ CASES: tuple[Case, ...] = (
                     "--startup-interval", "0"),
          None, "puppet_chat_v2", "PLAN: 1 messages", cli_write=True,
          min_rows=1),
+    # puppet_chat v1 dual-slot: one line per account slot (A1=t1, A2=a) in the
+    # fixture group. The second account is what the page was always missing --
+    # a two-account pattern used to ship one ok row and one "cannot find any
+    # entity" failure row, because the page re-parsed the target refs and lost
+    # the channel kind. Two sent rows here keep that fix pinned.
+    Case("puppet1", ("puppet_chat", "--live", "--accounts", "t1", "a",
+                     "--targets", "https://t.me/c/3965371671",
+                     "--pattern", "patterns/puppet_two.txt",
+                     "--loops", "1", "--daily-limit", "1"),
+         None, "puppet_chat", "ok: 2", cli_write=True, min_rows=2),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.
     # filter_group live: sorts the fixture group into its bucket - a
@@ -519,6 +529,10 @@ def main(argv: list[str]) -> int:
     if not config.exists():
         print(f"no {config}: this script needs a real login")
         return 2
+    # The batch_login case imports an empty folder; macOS scrubs /tmp behind
+    # the runner's back, and a missing folder reads as a broken page instead
+    # of a cleaned-up tmpdir. Creating it here keeps the case self-sufficient.
+    Path("/tmp/ogempty-import").mkdir(parents=True, exist_ok=True)
     who, probe = self_username(config, account)
     if not who:
         print("the account did not identify itself; nothing else can be tested")

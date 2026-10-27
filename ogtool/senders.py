@@ -188,10 +188,21 @@ def peer_variants(target: Target) -> list[Any]:
     as a phone number, which is how ``--targets 6805350975`` used to end up
     asking for ``+6805350975``.  The phone form stays as the fallback for a
     number that really is a phone number written without a plus.
+
+    A private-group id from a ``t.me/c/<id>`` link names a *channel* peer,
+    not a user: Telethon turns a bare ``int`` into ``PeerUser`` and then
+    fails with "could not find the input entity for PeerUser" even when the
+    account sits in the group.  The ``PeerChannel`` form resolves the moment
+    the account has the dialog, so it leads and the plain int stays behind
+    for the number cases.
     """
     ref = target.ref
     if ref.isdigit():
         forms: list[Any] = [int(ref)]
+        if target.kind == "channel":
+            from telethon.tl.types import PeerChannel
+
+            forms.insert(0, PeerChannel(int(ref)))
         if target.phone_fallback:
             forms.append(target.phone_fallback)
         return forms

@@ -32,6 +32,24 @@ def test_from_dict_needs_a_script():
         PuppetConfig.from_dict({"puppet_chat": {"targets": "@g1"}}, None)  # type: ignore[arg-type]
 
 
+def test_from_dict_keeps_the_parsed_targets(settings):
+    """The page must replay the targets as they parsed, not re-parse refs.
+
+    A t.me/c/<id> link parses to kind channel; re-parsing its bare ref
+    turned it into a group with a phone fallback, and the send then died
+    with "cannot find any entity" on any account that had not cached the
+    chat -- the dual-account run shipped one ok row and one failure row
+    from the same link.
+    """
+    config = PuppetConfig.from_dict(
+        {"puppet_chat": {"targets": "https://t.me/c/3965371671",
+                         "pattern": "x.txt"}}, settings)
+    assert [spec.ref for spec in config.target_specs] == ["3965371671"]
+    assert all(spec.kind == "channel" for spec in config.target_specs)
+    # The ref list stays for the receipt's knobs and the display.
+    assert config.targets == ["3965371671"]
+
+
 def test_mode_file_resolves_a_named_script(tmp_path: Path):
     first = tmp_path / "a.txt"
     second = tmp_path / "b.txt"

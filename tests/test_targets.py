@@ -105,3 +105,25 @@ def test_a_private_post_link_becomes_a_numeric_channel_ref():
     assert parse_entry("https://t.me/c/4365539795", "custom").ref == "4365539795"
     # A bare -100 channel id keeps working as before.
     assert parse_entry("-1004365539795", "custom").ref == "-1004365539795"
+
+
+def test_peer_variants_lead_with_the_channel_form_for_channel_links():
+    """A t.me/c/<id> id is a channel peer, never a user id.
+
+    Telethon turns a bare int into PeerUser, so an account that has not
+    cached the chat died on "could not find the input entity for
+    PeerUser(user_id=...)" even while sitting inside the group. The typed
+    PeerChannel form resolves the moment the dialog exists, so it goes
+    first; the plain int stays for the id-style targets.
+    """
+    from telethon.tl.types import PeerChannel
+
+    from ogtool.senders import peer_variants
+
+    channel = parse_entry("https://t.me/c/3965371671", "custom")
+    forms = peer_variants(channel)
+    assert forms[0] == PeerChannel(3965371671)
+    assert forms[1] == 3965371671
+    # A bare numeric id keeps its old shape: int first, phone fallback after.
+    assert peer_variants(parse_entry("6805350975")) == [6805350975,
+                                                        "+6805350975"]
