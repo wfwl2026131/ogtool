@@ -13,3 +13,6 @@ logs/
 data/
 config.yaml.bak-*
 live_cases.yaml
+build/
+dist/
+*.egg-info/
