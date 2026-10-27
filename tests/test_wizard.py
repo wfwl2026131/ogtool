@@ -127,3 +127,29 @@ def test_read_only_flow_never_carries_allow_write(wizard, captured,
     wizard.run_live(["accounts", "test", "--accounts", "t1"], write=False)
     assert captured == [[sys.executable, "-m", "ogtool", "accounts",
                          "test", "--accounts", "t1", "--live"]]
+
+
+def test_the_wizard_finds_the_project_from_any_directory(wizard, monkeypatch):
+    """A bare ogtool-wizard from $HOME still lands on a config.yaml."""
+    import os
+    import tempfile
+
+    real_cwd = os.getcwd()
+    repo = Path(real_cwd)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            monkeypatch.chdir(tmp)
+            # no config here, and the repo fallback is monkeypatched away
+            monkeypatch.setattr(Path, "home",
+                                lambda: Path(tmp) / "nowhere")
+            wizard.locate_workdir()
+            assert Path("config.yaml").is_file() is False  # nowhere to go
+            # with the real home present it lands in the repo
+            monkeypatch.setattr(Path, "home", lambda: repo.parent)
+            (repo.parent / "tg-src" / "og-scripts").resolve()  # sanity
+            if (repo.parent / "tg-src" / "og-scripts" / "config.yaml") \
+                    .is_file():
+                wizard.locate_workdir()
+                assert Path("config.yaml").is_file()
+    finally:
+        monkeypatch.chdir(real_cwd)

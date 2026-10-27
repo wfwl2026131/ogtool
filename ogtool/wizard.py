@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 PY = sys.executable
 
@@ -424,6 +425,22 @@ def label_of(key: str) -> str:
 WRITE = set()  # filled by main() from the registry; tests may preset it
 
 
+def locate_workdir() -> None:
+    """In-place: run where config.yaml lives.
+
+    The wizard drives ``python -m ogtool`` in the CURRENT directory, so a
+    bare ``ogtool-wizard`` from $HOME must land on the project folder.  The
+    repo checkout is the fallback that matches this machine's layout.
+    """
+    if Path("config.yaml").is_file():
+        return
+    home = Path.home() / "tg-src" / "og-scripts"
+    if (home / "config.yaml").is_file():
+        import os
+
+        os.chdir(home)
+
+
 def main() -> int:
     global WRITE
     try:
@@ -431,6 +448,7 @@ def main() -> int:
         WRITE = set(WRITE_FEATURES)
     except ImportError:  # pragma: no cover - standalone script use
         pass
+    locate_workdir()
     return run_menu()
 
 
