@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ogtool.cli import run
 
 CONFIG = """\
@@ -108,3 +110,14 @@ def test_task_file_is_merged(tmp_path, capsys):
 def test_missing_config_reports_cleanly(tmp_path, capsys):
     assert run(["--config", str(tmp_path / "nope.yaml"), "keep_online"]) == 2
     assert "not found" in capsys.readouterr().out
+
+
+def test_the_version_flag_prints_the_release(capsys):
+    """argparse answers --version by raising SystemExit(0) after printing."""
+    from ogtool import __version__, cli
+
+    with pytest.raises(SystemExit) as done:
+        cli.run(["--version"])
+    assert done.value.code == 0
+    out = capsys.readouterr().out
+    assert out.strip() == f"ogtool {__version__}"
