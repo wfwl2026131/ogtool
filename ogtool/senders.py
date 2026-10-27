@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import json
 import random
 import re
 import threading
@@ -1069,10 +1070,22 @@ class TelethonSender:
             if call is None:
                 return SendResult(ok=False, code="GROUP_CALL_NOT_FOUND",
                                   detail="no group call on this chat")
-            params = DataJSON(data="{}")
-            client(JoinGroupCallRequest(call=call, join_as="me",
-                                        params=params, muted=muted,
-                                        video_stopped=True))
+            # The params carry this client's WebRTC SSRC. An empty "{}" joins
+            # once and then the server starts answering
+            # GROUPCALL_SSRC_DUPLICATE_MUCH: every attempt must present a
+            # fresh ssrc, and a rejected attempt must retry with a new one.
+            for attempt in range(4):
+                ssrc = random.randrange(1, 2**31 - 1)
+                try:
+                    client(JoinGroupCallRequest(
+                        call=call, join_as="me",
+                        params=DataJSON(data=json.dumps({"ssrc": ssrc})),
+                        muted=muted, video_stopped=True))
+                    break
+                except Exception as error:  # noqa: BLE001 - mapped below
+                    if "SSRC_DUPLICATE" not in str(error).upper() \
+                            or attempt == 3:
+                        raise
             if not muted:
                 client(EditGroupCallParticipantRequest(
                     call=call, participant="me", muted=False))

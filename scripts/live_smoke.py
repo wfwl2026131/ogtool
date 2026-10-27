@@ -194,16 +194,15 @@ CASES: tuple[Case, ...] = (
                    "--last-source-message-id", "999",
                    "--mode", "copy"),
          None, "ai_clone", "ok: 0", cli_write=True, min_rows=0),
-    # The call resolve path, live: the fixture group has no group call, so
-    # "speak" resolves the chat, finds none and reports GROUP_CALL_NOT_FOUND -
-    # the same path a real call would ride, without needing one. Proven once
-    # by hand (video_manage live, join ok as already-participant, speak
-    # GROUP_CALL_NOT_FOUND); kept out of the six checks because it needs the
-    # real session for a result that is stable but negative.
+    # The call join path, live: the fixture group carries a real group call
+    # (created once by hand; Telegram keeps it until the group does). The
+    # empty-params join used to answer GROUPCALL_SSRC_DUPLICATE_MUCH on every
+    # retry; the sender now presents a fresh ssrc per attempt, so "speak"
+    # joins and unmutes for real.
     Case("video", ("video_manage", "--live", "--accounts", "{account}",
                    "--link", "{fixture}",
                    "--action", "speak", "--interval-ms", "300"),
-         None, "video_manage", "GROUP_CALL_NOT_FOUND", cli_write=True,
+         None, "video_manage", "1 ok, 0 failed", cli_write=True,
          min_rows=1, allow_exit=1),
     # auto_script live: one send_text step from the shipped self_ping script
     # into the account's own fixture group. Proves the script engine, the

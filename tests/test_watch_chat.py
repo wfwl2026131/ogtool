@@ -179,8 +179,12 @@ def test_the_live_handler_drops_excluded_and_relays_the_rest(ctx, monkeypatch):
     assert len(client.sent) == 1, "a duplicate was relayed twice"
 
     statuses = [row["status"] for row in ctx.store.results_for(ctx.task_id)]
-    assert statuses.count("sent") == 1
-    assert statuses.count("dropped") == 2
+    # The relay is a sent row; the two skips are ok rows too (the dry-run
+    # path records them the same way), so the derived receipt counts all
+    # three -- a skip nobody counts is how a live receipt said planned 0
+    # with a row in the table.
+    assert statuses.count("sent") == 3
+    assert statuses.count("dropped") == 0
 
 
 def test_numeric_targets_are_watched_as_ids_and_relay_as_written():

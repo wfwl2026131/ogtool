@@ -267,9 +267,17 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
     owner = {id(client): label for label, client in clients}
     fallback = labels[0] if labels else "-"
 
-    def log_drop(account: str, peer: str, code: str, detail: str = "") -> None:
+    def log_drop(account: str, peer: str, code: str, detail: str = "",
+                 ok: bool = True) -> None:
         counts.dropped += 1
-        ctx.store.add_result(task.id, account, peer, "dropped", code, detail)
+        # A filter decision is a planned row, not a failure: the dry-run path
+        # records skips as ok rows and its comment says so in so many words.
+        # The live handler wrote status "dropped" instead - a status no
+        # derived total counts - so the receipt said planned 0 while the
+        # results table held the row. Same mapping here, or live and dry
+        # disagree about what a skip is.
+        ctx.store.add_result(task.id, account, peer,
+                             "sent" if ok else "failed", code, detail)
 
     @events.register(events.NewMessage(chats=peers, incoming=True))
     async def handler(event):  # noqa: ANN001, ANN202 - Telethon callback
@@ -303,7 +311,7 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
             print(f"RELAY peer={chat} id={ident} -> {config.relay} "
                   f"message={message_id}")
         else:
-            log_drop(account, chat, code, "relay failed")
+            log_drop(account, chat, code, "relay failed", ok=False)
             print(f"RELAY peer={chat} -> {code}")
 
     for _label, client in clients:
