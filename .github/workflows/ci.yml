@@ -16,10 +16,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - name: install (offline extras only)
+      - name: install
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          # telethon is the live extra, but the unit suite imports it too: the
+          # spec-client fixture builds MagicMock(spec=TelegramClient), and the
+          # client-surface test introspects the real class. Skipping it would
+          # mean the suite verifies a client that does not exist.
+          pip install -e ".[dev]" "telethon>=1.36"
       - name: ruff
         run: ruff check .
       - name: pytest (offline unit suite)
