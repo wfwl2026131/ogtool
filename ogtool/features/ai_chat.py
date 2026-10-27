@@ -15,12 +15,12 @@ from dataclasses import dataclass, field, replace
 from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..limiter import format_duration
-from ..prompts import compose
 from ..runtime import RunContext
 from ..senders import Content
 from ..sources import SourceMessage
 from ..sources import parse_many as parse_sources
 from ..targets import Target, parse_many
+from ..templates import compose
 from . import register
 from ._common import (
     accounts_of,

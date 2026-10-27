@@ -20,11 +20,11 @@ from ..chat_pattern import ChatMessage, PatternError
 from ..config import ConfigError, Settings
 from ..flags import Flag
 from ..limiter import PeerFloodBackoff, format_duration
-from ..prompts import compose
 from ..report import read_lines
 from ..runtime import RunContext
 from ..senders import Content
 from ..targets import Target, parse_many
+from ..templates import compose
 from . import register
 from ._common import (
     accounts_of,

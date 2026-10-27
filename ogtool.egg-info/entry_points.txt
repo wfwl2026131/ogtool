@@ -1,0 +1,2 @@
+[console_scripts]
+ogtool = ogtool.cli:main

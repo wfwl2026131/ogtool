@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from ogtool import prompts
+from ogtool import templates as prompts
 from ogtool.ai import AIClient, AIError
 from ogtool.config import AIConfig, ConfigError
 

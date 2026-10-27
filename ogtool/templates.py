@@ -17,8 +17,10 @@ from .config import ConfigError
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from .config import Settings
 
-#: ``<repo>/prompts``: next to the package, not inside it.
-DEFAULT_DIR = Path(__file__).resolve().parent.parent / "prompts"
+#: The templates ship inside the package (``ogtool/prompts/*.txt``), so the
+#: editable checkout and the installed wheel resolve to the same directory and
+#: no page can die on a missing template after ``pip install``.
+DEFAULT_DIR = Path(__file__).resolve().parent / "prompts"
 
 _PLACEHOLDER = re.compile(r"\{\{\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 

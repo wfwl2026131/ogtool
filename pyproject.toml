@@ -5,6 +5,9 @@ description = "Offline toolkit for the 22 console features"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
 
+[project.urls]
+Homepage = "https://github.com/wfwl2026131/ogtool"
+
 [project.optional-dependencies]
 live = ["telethon>=1.36", "python-socks>=2.4"]
 dev = ["pytest>=8", "ruff>=0.6"]
@@ -13,7 +16,12 @@ dev = ["pytest>=8", "ruff>=0.6"]
 ogtool = "ogtool.cli:main"
 
 [tool.setuptools]
-packages = ["ogtool", "ogtool.features"]
+packages = ["ogtool", "ogtool.features", "ogtool.prompts"]
+
+# The templates are content the pages read at run time: a wheel without them
+# installs fine and then every AI page dies on "prompt template not found".
+[tool.setuptools.package-data]
+"ogtool.prompts" = ["*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
