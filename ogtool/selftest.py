@@ -154,25 +154,30 @@ def live_block(base: Path | None = None,
 
 def check_docs(paths: tuple[Path, ...] | None = None,
                expected: int | None = None,
-               block: str | None = None) -> tuple[str, list[str]]:
+               block: str | None = None,
+               compare_live: bool = False) -> tuple[str, list[str]]:
     """The count a note claims must be the count pytest can still collect.
 
     These notes have carried a stale 'passed: N' more than once, and a number
     nobody re-derives is the easiest lie in a document. A note that is not on
-    this machine is skipped rather than failed - the code travels, the notes may
-    not.
+    this machine is skipped rather than failed - the code travels, the notes
+    may not.
+
+    The two generated blocks are machine-local evidence: they list the
+    receipts this machine's real runs collected, under this machine's paths.
+    Byte-comparing them means something only on the machine that owns that
+    data (the ``selftest`` command, ``compare_live=True``): a tree that just
+    ran the pytest suite holds receipts the *tests* wrote, and a fresh clone
+    holds none -- both would call every note stale on arrival. Under pytest
+    the portable half still holds: the claimed count is re-derived and the
+    markers must exist, which is the check that once caught a deleted
+    evidence table.
     """
     targets = paths or DOC_PATHS
     problems: list[str] = []
     if expected is None:
         expected, failures = collected_tests()
         problems.extend(failures)
-    # The live block is machine-local evidence: it lists the receipts this
-    # machine actually collected, under this machine's absolute paths. A
-    # checkout that has never collected any (a fresh clone) cannot re-derive
-    # it, so comparing would call every note stale on arrival. The same skip
-    # rule the notes themselves follow: absent here means skipped, not lying.
-    machine_has_receipts = (root() / "data" / "logs" / "receipts").exists()
     seen = 0
     for path in targets:
         if not path.exists():
@@ -192,7 +197,7 @@ def check_docs(paths: tuple[Path, ...] | None = None,
         for start_mark, end_mark, expected_block, label in (
                 (EVIDENCE_START, EVIDENCE_END, block, "evidence"),
                 (LIVE_START, LIVE_END,
-                 live_block() if machine_has_receipts else None, "live")):
+                 live_block() if compare_live else None, "live")):
             if path in BLOCK_NOTES and start_mark not in text:
                 problems.append(f"{path.name}: the {label} markers are gone "
                                 "(restore them; run scripts/sync_evidence.py)")
@@ -378,7 +383,8 @@ def run(settings: Any, only: list[str] | None = None,
 
             line, found = check_docs(
                 block=evidence_block(root(),
-                                     evidence_module.receipts_dir(settings)))
+                                     evidence_module.receipts_dir(settings)),
+                compare_live=True)
         elif name == "evidence":
             line, found = check_evidence(settings)
         elif name == "live":

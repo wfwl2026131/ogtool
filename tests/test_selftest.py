@@ -134,8 +134,9 @@ def test_a_stale_live_block_is_reported(tmp_path):
         "<!-- current: pytest → 1 passed -->\n"
         f"{selftest.LIVE_START}\nold table\n{selftest.LIVE_END}\n",
         encoding="utf-8")
+    # block bytes belong to the machine that owns the data: compare_live.
     _line, problems = selftest.check_docs(
-        (note,), expected=1, block="")
+        (note,), expected=1, block="", compare_live=True)
     assert any("live block is stale" in item for item in problems), problems
 
 
@@ -212,3 +213,23 @@ def test_docs_check_does_not_call_a_fresh_clone_stale(tmp_path, monkeypatch,
     line, problems = module.check_docs(paths=(note,), expected=1)
     assert problems == [], problems
     assert "1 note(s) checked" in line
+
+
+def test_docs_check_without_the_machine_skips_block_bytes(tmp_path):
+    """The block bytes are machine-local; the portable half is the count
+    plus the markers' existence, so a suite-only tree stays green even when
+    it holds receipts its own tests wrote (or none at all)."""
+    from ogtool import selftest as module
+
+    note = tmp_path / "note.md"
+    note.write_text("# note\n<!-- current: pytest → 1 passed -->\n"
+                    f"{module.EVIDENCE_START}\n{module.EVIDENCE_END}\n"
+                    f"{module.LIVE_START}\n{module.LIVE_END}\n",
+                    encoding="utf-8")
+    _line, problems = module.check_docs(paths=(note,), expected=1)
+    assert problems == [], problems
+    # ...and the same note on the machine that owns the data is held to the
+    # bytes: compare_live re-derives them and a foreign block fails.
+    _line, strict = module.check_docs(paths=(note,), expected=1,
+                                      compare_live=True)
+    assert any("the live block is stale" in item for item in strict), strict
