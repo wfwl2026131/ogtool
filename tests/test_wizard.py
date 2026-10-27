@@ -36,8 +36,8 @@ def test_the_menu_covers_every_cli_command(wizard):
     choices = set(parser._subparsers._group_actions[0].choices)
     # accounts 及其管理子页、runs/todo/selftest/evidence/bot_links/pattern
     # 是运维命令,不走向导(它们的交互价值低),菜单只承诺 25 个功能页。
-    covered = (set(wizard.menu_order()) | {"accounts", "runs", "todo",
-                                           "selftest", "evidence",
+    covered = (set(wizard.menu_order()) | {"accounts", "runs", "logs",
+                                           "todo", "selftest", "evidence",
                                            "bot_links", "pattern"})
     assert choices - covered == set(), \
         f"CLI has pages the wizard never offers: {choices - covered}"

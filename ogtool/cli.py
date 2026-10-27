@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     subs = parser.add_subparsers(dest="command", required=True)
     _accounts_parser(subs)
     _runs_parser(subs)
+    _logs_parser(subs)
     _selftest_parser(subs)
     _evidence_parser(subs)
 
@@ -170,6 +173,20 @@ def _selftest(args: argparse.Namespace, settings: Settings) -> int:
     return selftest.run(settings, only=wanted, timeout=args.timeout)
 
 
+def _logs_parser(subs: argparse._SubParsersAction) -> None:
+    logs = subs.add_parser(
+        "logs", help="run transcripts: what a run printed, kept on disk")
+    logs.add_argument("action", nargs="?", default="list",
+                      choices=["list", "tail"],
+                      help="list the transcripts, or tail the newest")
+    logs.add_argument("-n", type=int, default=50,
+                      help="tail: how many lines (default 50)")
+    logs.add_argument("--file", default=None,
+                      help="tail a named transcript instead of the newest")
+    logs.add_argument("--follow", action="store_true",
+                      help="tail: keep streaming until Ctrl+C")
+
+
 def _runs_parser(subs: argparse._SubParsersAction) -> None:
     runs = subs.add_parser("runs", help="what the last runs left behind")
     run_subs = runs.add_subparsers(dest="action", required=True)
@@ -193,6 +210,42 @@ def _runs_parser(subs: argparse._SubParsersAction) -> None:
     prune.add_argument("--feature", default="", help="one page only")
     prune.add_argument("--yes", action="store_true",
                        help="actually delete; without it only the plan is printed")
+
+
+def _logs(args: argparse.Namespace, settings: Settings) -> int:
+    """Run transcripts: list them, or tail the newest/named one."""
+    from . import runlog
+
+    if args.action == "list":
+        directory = runlog.runs_dir(settings.log_dir)
+        files = sorted(directory.glob("*.log"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)
+        if not files:
+            print("no run transcripts yet - every command writes one")
+            return 0
+        for path in files[:15]:
+            age = time.time() - path.stat().st_mtime
+            fresh = " ●" if age < 120 else ""
+            stamp = datetime.fromtimestamp(path.stat().st_mtime)
+            print(f"{path.name}  {stamp:%m-%d %H:%M}  "
+                  f"{sum(1 for _ in path.open(encoding='utf-8'))} lines"
+                  f"{fresh}")
+        return 0
+    # tail
+    path = (Path(args.file) if args.file
+            else runlog.newest(settings.log_dir))
+    if path is None or not path.is_file():
+        print("no run transcripts yet")
+        return 0
+    for line in runlog.read_tail(path, args.n):
+        print(line)
+    if args.follow:
+        print(f"--- following {path.name} (Ctrl+C stops) ---")
+        try:
+            runlog.follow(path)
+        except KeyboardInterrupt:  # pragma: no cover - interactive
+            print("(stopped)")
+    return 0
 
 
 def _runs(args: argparse.Namespace, settings: Settings) -> int:
@@ -623,6 +676,18 @@ def run(argv: list[str] | None = None) -> int:
         return _accounts(args, settings)
     if args.command == "runs":
         return _runs(args, settings)
+    if args.command == "logs":
+        return _logs(args, settings)
+
+    # Every other command prints its transcript twice: to the terminal as it
+    # happens, and to logs/runs/<command>-<ts>.log for later or live tailing.
+    from . import runlog
+
+    with runlog.start(settings, args.command) as _transcript:
+        return _dispatch(args, settings)
+
+
+def _dispatch(args: argparse.Namespace, settings: object) -> int:
     if args.command == "selftest":
         return _selftest(args, settings)
     if args.command == "evidence":
