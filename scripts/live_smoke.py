@@ -301,6 +301,22 @@ def config_path() -> Path:
     return ROOT / "config.yaml"
 
 
+def placeholder_config() -> Path:
+    """A config for probes that must not need a real login.
+
+    The gate check runs ``auto_reply --dry-run`` on a machine that may have
+    no ``config.yaml`` at all (a fresh CI checkout). The CLI subprocess still
+    wants a config file to read, so the example file is copied into the
+    gitignored ``data/`` and handed to the run: placeholders only, no
+    credentials, and the dry-run path never touches the network with it.
+    """
+    target = ROOT / "data" / "smoke-placeholder.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    example = ROOT / "config.example.yaml"
+    target.write_text(example.read_text(encoding="utf-8"), encoding="utf-8")
+    return target
+
+
 def extra_path() -> Path:
     """Where the per-machine cases live (``OGTOOL_LIVE_CASES`` overrides).
 
@@ -539,19 +555,31 @@ def main(argv: list[str]) -> int:
               f"{', '.join(refused)}")
         return 2
     config = config_path()
+    probe_only = bool(only)
     if not config.exists():
-        print(f"no {config}: this script needs a real login")
-        return 2
+        if not probe_only:
+            print(f"no {config}: this script needs a real login")
+            return 2
+        # A --only probe (the selftest gate check) must not require a real
+        # login: it runs one dry-run case to prove the write gate's two
+        # halves, so a placeholder config keeps it working on a fresh
+        # checkout while the full suite still refuses.
+        config = placeholder_config()
+        print("no config.yaml; the --only probe runs on a placeholder")
     # The batch_login case imports an empty folder; macOS scrubs /tmp behind
     # the runner's back, and a missing folder reads as a broken page instead
     # of a cleaned-up tmpdir. Creating it here keeps the case self-sufficient.
     Path("/tmp/ogempty-import").mkdir(parents=True, exist_ok=True)
-    who, probe = self_username(config, account)
-    if not who:
-        print("the account did not identify itself; nothing else can be tested")
-        print(probe)
-        return 1
-    print(f"account: {account} (@{who})")
+    who = ""
+    if not probe_only:
+        # Real-login identification is for the suite; a --only dry-run probe
+        # has nothing to identify and no credentials to do it with.
+        who, probe = self_username(config, account)
+        if not who:
+            print("the account did not identify itself; nothing else can be tested")
+            print(probe)
+            return 1
+        print(f"account: {account} (@{who})")
     problems: list[str] = []
     every = [case for case in list(CASES) + cases
              if only and case.name == only

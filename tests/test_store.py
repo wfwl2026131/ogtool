@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import os
+import time
+from unittest.mock import patch
+
 from ogtool.store import Account, Store
 
 
@@ -68,12 +72,26 @@ def test_logs_are_written(tmp_path):
 
 
 def test_the_daily_day_bounds_convert_local_midnight_to_utc():
+    """A 00:30 local stamp means "this machine's day", wherever it sits.
+
+    The machine's own zone must not leak in: a runner in UTC used to answer
+    00:30 UTC for a stamp the test asked at 00:30 UTC+8, and the assertion
+    only held on a machine set to UTC+8. Monkeypatched TZ pins the answer.
+    """
     from datetime import datetime, timedelta, timezone
 
     from ogtool.store import local_day_bounds
 
     east = timezone(timedelta(hours=8))
-    start, end = local_day_bounds(datetime(2026, 10, 24, 0, 30, tzinfo=east))
+    with patch.dict(os.environ, {"TZ": "Asia/Shanghai"}):
+        if hasattr(time, "tzset"):
+            time.tzset()
+        try:
+            start, end = local_day_bounds(
+                datetime(2026, 10, 24, 0, 30, tzinfo=east))
+        finally:
+            if hasattr(time, "tzset"):
+                time.tzset()
     assert start == "2026-10-23T16:00:00+00:00"
     assert end == "2026-10-24T16:00:00+00:00"
 

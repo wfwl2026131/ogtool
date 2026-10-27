@@ -118,7 +118,11 @@ def test_the_closing_line_is_the_reference_sentence(capsys, settings, store,
     monkeypatch.setattr(cli, "_Pool", lambda *a, **k: pool)
     path = tmp_path / "new.txt"
     path.write_text("pw\n", encoding="utf-8")
-    code = cli.run(["accounts", "password", "--accounts", "acc1",
+    # The config is the fixture's, not whatever a repo checkout happens to
+    # hold: without it the run looked for ./config.yaml and a CI runner (no
+    # config on disk) failed a test that never needed a real account.
+    code = cli.run(["--config", str(settings.path), "accounts", "password",
+                    "--accounts", "acc1",
                     "--new-password-file", str(path)])
     output = capsys.readouterr().out
     assert "Password change task finished. Success: 1/1" in output
