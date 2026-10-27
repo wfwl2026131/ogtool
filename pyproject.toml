@@ -10,6 +10,7 @@ Homepage = "https://github.com/wfwl2026131/ogtool"
 
 [project.optional-dependencies]
 live = ["telethon>=1.36", "python-socks>=2.4"]
+tdata = ["opentele2>=2.0"]
 dev = ["pytest>=8", "ruff>=0.6"]
 
 [project.scripts]

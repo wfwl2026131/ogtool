@@ -193,8 +193,14 @@ ogtool batch_join --targets "@g1,@g2,@g3" --request-interval 5 \
 # #9 批量上号：.session + *.json 元数据，ZIP 也行
 ogtool batch_login --import-folder ./sessions --label-prefix imp-
 ogtool batch_login --import-zip ./bundle.zip
+ogtool batch_login --import-tdata ./tdata   # Telegram Desktop 账号,见下
 ogtool batch_login --export-ids ./ids.txt
 ogtool batch_login --logout frozen          # frozen | all | both
+
+# #9 的 tdata 路线:二进制格式不手写,可选依赖转换
+#   pip install "ogtool[tdata]"        (即 opentele2)
+# 转出的会话逐账号落行,收据与 .session 路线完全一致。
+# 没装转换器时命令直接给出上面的安装提示,退出码 2。
 
 # #10 批量改名：进度/失败/跳过/当前账号/状态，含暂停·继续·停止
 ogtool batch_rename --file names.txt --pause-at 2 --stop-at 5

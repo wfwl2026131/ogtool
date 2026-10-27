@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import sys
 import zipfile
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -185,3 +187,112 @@ def test_an_import_task_is_opened_with_the_rows_it_will_write(ctx, tmp_path: Pat
     assert body["ok"] == 2
     assert body["unaccounted"] == 0
     assert receipts.validate(body) == []
+
+
+def test_import_tdata_without_the_converter_is_a_config_error(ctx, tmp_path):
+    """No opentele2 installed: say the install line, exit 2, never a traceback."""
+    config = LoginConfig(import_tdata=str(tmp_path / "tdata"))
+    (tmp_path / "tdata").mkdir()
+    real = sys.modules.get("opentele2")
+    sys.modules["opentele2"] = None  # sentinel: "present" check must fail
+    sys.modules.pop("opentele2.td", None)
+    try:
+        import builtins
+        real_import = builtins.__import__
+
+        def blocked(name, *args, **kwargs):
+            if name.startswith("opentele2"):
+                raise ModuleNotFoundError(name)
+            return real_import(name, *args, **kwargs)
+
+        builtins.__import__ = blocked
+        try:
+            with pytest.raises(ConfigError) as err:
+                run(config, ctx)
+        finally:
+            builtins.__import__ = real_import
+    finally:
+        if real is None:
+            sys.modules.pop("opentele2", None)
+        else:
+            sys.modules["opentele2"] = real
+    assert "pip install opentele2" in str(err.value)
+
+
+def test_import_tdata_converts_every_account(ctx, tmp_path, monkeypatch,
+                                             capsys):
+    """With the converter present, one session per tdata account is
+    materialised and imported through the same pool path."""
+
+    tdata = tmp_path / "tdata"
+    tdata.mkdir()
+    (tdata / "key_datas").write_bytes(b"")  # looks like a tdata folder
+
+    fake_client = MagicMock()
+
+    async def fake_to_telethon(session, flag, *args, **kwargs):
+        Path(str(session) + ".session").write_bytes(b"fake")
+        return fake_client
+
+    async def fake_disconnect():
+        return None
+
+    fake_client.disconnect = fake_disconnect
+
+    class FakeTDesktop:
+        def __init__(self, _path):
+            self.count = 2
+
+        def isLoaded(self):
+            return True
+
+        accountsCount = property(lambda self: 2)
+        ToTelethon = staticmethod(fake_to_telethon)
+
+    fake_module = MagicMock()
+    fake_module.TDesktop = FakeTDesktop
+    fake_module.api = MagicMock()
+    fake_module.api.UseCurrentSession = object()
+    monkeypatch.setitem(sys.modules, "opentele2", fake_module)
+    monkeypatch.setitem(sys.modules, "opentele2.td", fake_module)
+    monkeypatch.setitem(sys.modules, "opentele2.api", fake_module)
+
+    config = LoginConfig(import_tdata=str(tdata), label_prefix="td-")
+    assert run(config, ctx) == 0
+    output = capsys.readouterr().out
+    assert "converted tdata-0" in output
+    assert "converted tdata-1" in output
+    assert "imported td-tdata-0" in output
+    assert "imported td-tdata-1" in output
+    # The receipt counts one row per converted account.
+    # The receipt counts one row per converted account: read the newest
+    # batch_login task from the tasks table directly.
+    latest = ctx.store._conn.execute(
+        "SELECT id FROM tasks WHERE feature='batch_login' "
+        "ORDER BY id DESC LIMIT 1").fetchone()
+    rows = ctx.store.results_for(latest["id"])
+    assert len(rows) == 2
+
+
+def test_import_tdata_with_no_accounts_is_a_config_error(ctx, tmp_path,
+                                                         monkeypatch):
+    """A folder that is not a loaded tdata tree is refused, not imported."""
+
+    fake_module = MagicMock()
+
+    class FakeTDesktop:
+        def __init__(self, _path):
+            pass
+
+        def isLoaded(self):
+            return False
+
+    fake_module.TDesktop = FakeTDesktop
+    monkeypatch.setitem(sys.modules, "opentele2", fake_module)
+    monkeypatch.setitem(sys.modules, "opentele2.td", fake_module)
+    monkeypatch.setitem(sys.modules, "opentele2.api", fake_module)
+    config = LoginConfig(import_tdata=str(tmp_path / "not-tdata"))
+    (tmp_path / "not-tdata").mkdir()
+    with pytest.raises(ConfigError) as err:
+        run(config, ctx)
+    assert "no tdata accounts" in str(err.value)

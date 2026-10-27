@@ -9,6 +9,7 @@ also read a ``tdata`` folder, but that is a binary format and out of scope here.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import zipfile
@@ -45,6 +46,8 @@ FLAGS = (
     Flag("--import-folder", "import_folder", str,
          "folder holding .session files (+ optional .json)"),
     Flag("--import-zip", "import_zip", str, "ZIP holding the same layout"),
+    Flag("--import-tdata", "import_tdata", str,
+         "Telegram Desktop tdata folder (needs the opentele2 extra)"),
     Flag("--export-ids", "export_ids", str, "write every account id here"),
     Flag("--logout", "logout", str, "frozen|all|both"),
     Flag("--label-prefix", "label_prefix", str, "prefix for imported labels"),
@@ -57,6 +60,7 @@ class LoginConfig:
     account_labels: list[str] = field(default_factory=list)
     import_folder: str = ""
     import_zip: str = ""
+    import_tdata: str = ""
     export_ids: str = ""
     logout: str = ""
     label_prefix: str = ""
@@ -89,9 +93,11 @@ class LoginConfig:
         data = section(raw, SECTION)
         folder = text(data, "import_folder")
         archive = text(data, "import_zip")
-        if not folder and not archive and not data.get("logout"):
+        tdata = text(data, "import_tdata")
+        if not folder and not archive and not tdata and not data.get("logout"):
             raise ConfigError(
-                f"{SECTION}: give --import-folder, --import-zip or --logout"
+                f"{SECTION}: give --import-folder, --import-zip, "
+                f"--import-tdata or --logout"
             )
         base_api = text(data, "login_base_api")
         if base_api and not base_api.startswith(("http://", "https://")):
@@ -113,6 +119,7 @@ class LoginConfig:
             account_labels=accounts_of(raw, data),
             import_folder=folder,
             import_zip=archive,
+            import_tdata=tdata,
             export_ids=text(data, "export_ids"),
             logout=text(data, "logout"),
             label_prefix=text(data, "label_prefix"),
@@ -229,10 +236,15 @@ def run(config: LoginConfig, ctx: RunContext) -> int:
     # reports and the sweep could never see, because its fixture imported none.
     folder = Path(config.import_folder).expanduser() if config.import_folder else None
     archive = Path(config.import_zip).expanduser() if config.import_zip else None
+    tdata = Path(config.import_tdata).expanduser() if config.import_tdata else None
     if archive is not None and not archive.exists():
         print(f"ERROR: zip not found: {archive}")
         return 2
-    planned = _planned_imports(folder, archive, config, ctx)
+    if tdata is not None and not tdata.exists():
+        print(f"ERROR: tdata folder not found: {tdata}")
+        return 2
+    converted = _tdata_converted(tdata, config, ctx) if tdata is not None else []
+    planned = _planned_imports(folder, archive, config, ctx) + len(converted)
     if config.logout:
         planned += len(_logout_targets(config.logout, ctx)[0])
     task = open_task(ctx, config.task_name, FEATURE, {"section": SECTION},
@@ -259,6 +271,11 @@ def run(config: LoginConfig, ctx: RunContext) -> int:
             imported += _import(folder, config, ctx, task)
     elif folder is not None:
         imported += _import(folder, config, ctx, task)
+    elif converted:
+        # The converted sessions were materialised before the task opened
+        # (the plan had to count them); importing from that folder is the
+        # same file operation the other routes run.
+        imported += _import(Path(converted[0]).parent, config, ctx, task)
 
     accounts = ctx.store.list_accounts()
     print(f"账号数：{len(accounts)}")
@@ -416,3 +433,63 @@ def main(raw: dict, ctx: RunContext) -> int:
 
 __all__ = ["LOGOUT_ALL", "LOGOUT_BOTH", "LOGOUT_FROZEN", "LoginConfig",
            "TITLE", "find_sessions", "main", "read_metadata", "run"]
+
+
+#: The optional dependency behind ``--import-tdata``. Telegram Desktop's
+#: tdata folder is a binary format (local key + AES-encrypted account
+#: streams); writing that parser by hand is a project of its own, so the
+#: conversion leans on opentele2 and says so plainly when it is absent.
+TDATA_HINT = "pip install opentele2  # the tdata converter, optional extra"
+
+
+def _convert_tdata(source: Path, workspace: Path, password: str = "") -> list[Path]:
+    """Convert every tdata account into .session files under ``workspace``.
+
+    Returns the session paths in tdata account order, so the caller's plan
+    counts exactly what this will import. opentele2's converter is async
+    (it drives Telethon under the hood), hence the explicit loop.
+    """
+    try:
+        from opentele2.api import UseCurrentSession
+        from opentele2.td import TDesktop
+    except ModuleNotFoundError:
+        raise ConfigError(
+            f"{SECTION}: --import-tdata needs the optional converter "
+            f"({TDATA_HINT})") from None
+    if not source.exists():
+        raise ConfigError(f"{SECTION}: tdata folder not found: {source}")
+    desk = TDesktop(str(source))
+    if not desk.isLoaded() or desk.accountsCount == 0:
+        raise ConfigError(
+            f"{SECTION}: no tdata accounts in {source} (is this a tdata "
+            "folder with an authorized account?)")
+    async def convert_all() -> list[Path]:
+        # The converter leaves the client connected; disconnect inside the
+        # same loop before the file is claimed by the pool, or the copy
+        # races the socket writer.
+        done: list[Path] = []
+        for index in range(desk.accountsCount):
+            target = workspace / f"tdata-{index}"
+            client = await desk.ToTelethon(str(target), UseCurrentSession)
+            await client.disconnect()
+            done.append(Path(str(target) + ".session"))
+        return done
+
+    return asyncio.run(convert_all())
+
+
+def _tdata_converted(tdata: Path, config: LoginConfig,
+                     ctx: RunContext) -> list[Path]:
+    """One tdata tree converted into sessions the pool can import.
+
+    The sessions land under the data dir (gitignored) instead of /tmp: the
+    task is opened with their count, so they must outlive this function and
+    survive a macOS /tmp scrub between the plan and the import.
+    """
+    workspace = ctx.settings.data_dir / "tdata-imports"
+    workspace.mkdir(parents=True, exist_ok=True)
+    sessions = _convert_tdata(tdata, workspace,
+                              config.two_factor_password)
+    for session in sessions:
+        print(f"converted {session.name}")
+    return sessions
