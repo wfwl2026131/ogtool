@@ -5,8 +5,13 @@
 
 25 项里有 3 项不做（充值码 / licence / AI 计费结算，绑他们的服务端），
 按总方案的口径是 **22 个功能模块**；加上账号池与设置页参数，一共
-**26 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 295 条全绿，
-`ruff check .` 无告警。
+**26 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 全绿，
+`ruff check .` 无告警。MIT 许可，见 [LICENSE](LICENSE)。
+
+> 本仓库不带任何账号、会话或私群链接：`config.yaml`、`data/`、会话文件
+> 都在 `.gitignore` 里；`scripts/live_smoke.py` 的夹具群链接从
+> `data/fixture_group`（gitignored）读取，没有该文件时相关用例自动跳过。
+> 自带 `config.example.yaml`，三步上手照 README 走即可。
 
 ## 功能总览（交付清单）
 
