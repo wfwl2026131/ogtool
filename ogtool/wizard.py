@@ -76,11 +76,16 @@ def run_live(argv: list[str], *, write: bool) -> None:
     done = subprocess.run([PY, "-m", "ogtool", *live])
     if done.returncode == 0:
         print("\n✅ 跑完。回执在 data/logs/receipts/ 下,最新一张:")
-        from ogtool.config import Settings
-        from ogtool.receipts import receipt_dir
+        # 找回执是锦上添花: 没 config.yaml(冷环境/CI)就闭嘴,不砸向导。
+        try:
+            from ogtool.config import Settings
+            from ogtool.receipts import receipt_dir
 
-        receipts = sorted(receipt_dir(Settings.load("config.yaml")).glob(
-            "*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+            receipts = sorted(receipt_dir(
+                Settings.load("config.yaml")).glob("*.json"),
+                key=lambda p: p.stat().st_mtime, reverse=True)
+        except Exception:  # noqa: BLE001 - the run already succeeded
+            return
         if receipts:
             body = json.loads(receipts[0].read_text())
             print(f"   {receipts[0].name}  planned={body.get('planned')} "
