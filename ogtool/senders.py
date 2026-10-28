@@ -408,6 +408,13 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
         return TIMEOUT, text, True
     if "AUTH_KEY_UNREGISTERED" in upper or "SESSION_REVOKED" in upper:
         return SESSION_NOT_FOUND, text, False
+    # keep_online runs for hours: a dropped socket surfaces as ConnectionError
+    # (or an OSError naming the socket). It is the same class of problem as
+    # TIMEOUT - the network broke, not the target - so it is retryable too.
+    if name in ("ConnectionError", "ConnectionResetError",
+                "ConnectionRefusedError", "BrokenPipeError") \
+            or "CONNECTION" in upper or "BROKEN PIPE" in upper:
+        return NETWORK_ERROR, text, True
     # Two ogtool processes cannot share one Telethon session: the .session file
     # is SQLite too, and the loser gets 'database is locked'. Saying so beats
     # 'UNKNOWN: OperationalError', which reads like a Telegram problem.
@@ -765,7 +772,20 @@ class TelethonSender:
 
     def _client_locked(self, account: str) -> Any:
         if account in self._clients:
-            return self._clients[account]
+            client = self._clients[account]
+            # keep_online runs for hours; wifi naps, mobile networks hand
+            # over, the DC closes the socket. Telethon's sync wrapper does
+            # not revive a dead client on its own, so a cached one that
+            # has dropped is reconnected here instead of failing every
+            # later call with ConnectionError until the process restarts.
+            connected = getattr(client, "is_connected", None)
+            if callable(connected) and not connected():
+                try:
+                    client.connect()
+                    print(f"RECONNECT: {account} session socket restored")
+                except Exception as error:  # noqa: BLE001 - next call maps it
+                    print(f"RECONNECT: {account} failed: {error}")
+            return client
         api_id, api_hash = self.settings.require_credentials()
         session_path = self.settings.session_path(account)
         if not session_path.exists():
