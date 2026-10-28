@@ -377,6 +377,11 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
                             random.Random(config.limits.threads))
         order = "round_robin"
     planned = schedule(pairs, config.limits, accounts=labels, budgets=budget_of)
+    skipped = len(pairs) - len(planned)
+    if skipped:
+        left = {label: b.left for label, b in budget_of.items()}
+        print(f"BUDGET: {skipped} pair(s) skipped - daily limit reached; "
+              f"left per account: {left}")
     now = datetime.now(UTC).replace(microsecond=0)
     start, start_reason = _start_time(config, now)
     contents = {account.label: _apply_task_mark(config, content)
@@ -438,12 +443,13 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
                     ctx.store.add_result(task.id, item.account,
                                          item.target.ref, "sent",
                                          detail=str(result.message_id))
-                    print(f"sent {line}")
+                    print(f"✅ SENT {line} msg_id={result.message_id}")
                     continue
                 counters["failed"] += 1
                 ctx.store.add_result(task.id, item.account, item.target.ref,
                                      "failed", result.code, result.detail)
-                print(f"failed {result.code} {line} {result.detail}")
+                print(f"❌ FAIL {line} code={result.code} "
+                      f"detail={result.detail}")
             if result.code == PEER_FLOOD:
                 key = (item.account, item.target.ref)
                 attempts[key] = attempts.get(key, 0) + 1

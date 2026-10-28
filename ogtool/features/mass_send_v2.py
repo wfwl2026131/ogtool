@@ -359,15 +359,17 @@ def _send_lane(sender: object, ctx: RunContext, task: object,
             with _COUNT_LOCK:
                 counters["ok"] += 1
             record(ctx, task, pair.account, pair.target, True)
-            print(f"[{pair.index:03d}/{total:03d}] "
-                  f"account={pair.account} target={pair.target} -> ok")
+            print(f"✅ SENT [{pair.index:03d}/{total:03d}] "
+                  f"account={pair.account} target={pair.target} "
+                  f"msg_id={result.message_id}")
             continue
         with _COUNT_LOCK:
             counters["failed"] += 1
         record(ctx, task, pair.account, pair.target, False, result.code,
                result.detail)
-        print(f"[{pair.index:03d}/{total:03d}] "
-              f"account={pair.account} target={pair.target} -> {result.code}")
+        print(f"❌ FAIL [{pair.index:03d}/{total:03d}] "
+              f"account={pair.account} target={pair.target} "
+              f"code={result.code}")
         if result.code == "PEER_FLOOD":
             ctx.note(f"PEER_FLOOD for {pair.account}: the lane keeps going")
 
