@@ -9,6 +9,7 @@ switch rewrites the wording through the model without touching the structure.
 
 from __future__ import annotations
 
+import json
 import random
 import time
 from dataclasses import dataclass, field
@@ -168,6 +169,127 @@ class PuppetConfig:
 #: How often one line is retried after PEER_FLOOD (the page has no field).
 FLOOD_CAP = 2
 
+#: A failure with one of these codes is about the *account*, not the chat:
+#: the session was revoked or the auth key is gone, so every puppet sitting
+#: on that account has to move. The reference phrases it as
+#: ``mark account unavailable account=%1 ... affectedPuppets=%4``.
+ACCOUNT_DEAD_CODES = frozenset({"SESSION_NOT_FOUND"})
+
+
+class SlotMap:
+    """The reference's puppet-account mapping table and its remap rules.
+
+    The executor does not send from a fixed account per slot: it assigns
+    puppets to accounts load balanced, moves a puppet when its account hits
+    the daily speech limit (``Daily speech limit reached ... remap puppet
+    A%5``), moves every puppet of an account that dies mid-run
+    (``mark account unavailable``) and says ``will retry later`` for a slot
+    whose accounts are all spent, which the next cycle picks up.
+    """
+
+    def __init__(self, labels: list[str], daily_limit: int = 0) -> None:
+        self.labels = list(labels)
+        self.limit = daily_limit
+        self.assignments: dict[int, str] = {}
+        self.budget: dict[str, int] = {}
+        self.fails: dict[str, int] = {}
+        self.dead: set[str] = set()
+        self.dead_reason: dict[str, str] = {}
+        self.announced = False
+
+    # assignment -------------------------------------------------------
+
+    def setup(self, assignments: dict[int, str]) -> None:
+        """Seed slots the mapping does not have yet and announce the table.
+
+        ``assignments`` is ``assign_slots``'s output, so multi-pattern runs
+        keep one consistent slot -> account story; only new slots land here,
+        remapped slots are never overwritten.
+        """
+        new = {slot: label for slot, label in assignments.items()
+               if slot not in self.assignments}
+        if not new:
+            return
+        self.assignments.update(new)
+        if not self.labels:
+            return  # plan only: no mapping story without real accounts
+        if self.announced:
+            return
+        self.announced = True
+        by_account: dict[str, list[int]] = {}
+        for slot, label in sorted(self.assignments.items()):
+            by_account.setdefault(label, []).append(slot)
+        for label in self.labels:
+            mine = by_account.get(label, [])
+            if mine:
+                puppets = ", ".join(f"A{slot}" for slot in mine)
+                print(f"Account {label}: {len(mine)} puppets [{puppets}]")
+        real = sum(1 for label in self.labels if label in by_account)
+        print(f"Account mapping completed: {len(self.assignments)} puppet "
+              f"slots -> {real} real accounts, 0 conflicts, load balanced")
+
+    def account(self, slot: int) -> str | None:
+        """The account that sends for ``slot``, remapped when it must be."""
+        label = self.assignments.get(slot)
+        if label is None:
+            return None
+        if self._usable(label):
+            return label
+        replacement = self._replacement(slot, label)
+        if replacement is None:
+            if self.limit:
+                print(f"All available accounts have reached the daily "
+                      f"speech limit ({self.limit}) for puppet A{slot}")
+            # The per-group ``No available account ... will retry later``
+            # line is the player's to print: it names the group.
+            return None
+        if label in self.dead:
+            reason = self.dead_reason.get(label, "")
+            print(f"Cached account {label} is now invalid ({reason}), "
+                  f"remapping puppet A{slot}")
+        elif self.limit:
+            print(f"Daily speech limit reached: account={label} "
+                  f"count={self.budget.get(label, 0)} limit={self.limit}, "
+                  f"remap puppet A{slot}")
+        self.assignments[slot] = replacement
+        print(f"Reassigned puppet A{slot} -> {replacement}")
+        return replacement
+
+    def note_result(self, account: str, ok: bool, code: str = "") -> None:
+        """Count the send, and move a dead account's puppets at once."""
+        if ok:
+            self.budget[account] = self.budget.get(account, 0) + 1
+            return
+        self.fails[account] = self.fails.get(account, 0) + 1
+        if code not in ACCOUNT_DEAD_CODES or account in self.dead:
+            return
+        self.dead.add(account)
+        self.dead_reason[account] = code
+        affected = sorted(slot for slot, label in self.assignments.items()
+                          if label == account)
+        print(f"mark account unavailable account={account} reason={code} "
+              f"affectedPuppets={len(affected)}")
+        for slot in affected:
+            replacement = self._replacement(slot, account)
+            if replacement is None:
+                self.assignments.pop(slot, None)
+                continue
+            self.assignments[slot] = replacement
+            print(f"Reassigned puppet A{slot} -> {replacement}")
+
+    # internals --------------------------------------------------------
+
+    def _usable(self, label: str) -> bool:
+        if label in self.dead:
+            return False
+        return not self.limit or self.budget.get(label, 0) < self.limit
+
+    def _replacement(self, slot: int, old: str) -> str | None:
+        for label in self.labels:
+            if label != old and self._usable(label):
+                return label
+        return None
+
 
 @dataclass(slots=True)
 class PlayResult:
@@ -179,6 +301,29 @@ class PlayResult:
     @property
     def processed(self) -> int:
         return self.ok + self.failed + self.skipped
+
+
+@dataclass(slots=True)
+class StatsFile:
+    """``puppet_chat_%1_%2.json``: what one cycle wrote to disk."""
+
+    path: str = ""
+    task: str = ""
+    cycle: int = 0
+    ok: int = 0
+    failed: int = 0
+    skipped: int = 0
+
+    def dump(self, directory: Path) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        self.path = str(directory / f"puppet_chat_{self.task}_{self.cycle}.json")
+        payload = {"task": self.task, "cycle": self.cycle, "ok": self.ok,
+                   "failed": self.failed, "skipped": self.skipped,
+                   "written_at": datetime.now(UTC).isoformat(timespec="seconds")}
+        Path(self.path).write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        return Path(self.path)
 
 
 def _content(message: ChatMessage, pictures: Path,
@@ -198,9 +343,25 @@ def _content(message: ChatMessage, pictures: Path,
 def play(ctx: RunContext, task, messages: list[ChatMessage],
          config: PuppetConfig, labels: list[str], *,
          startup_offsets: dict[str, float] | None = None,
-         ai: object | None = None) -> PlayResult:
-    """Replay the script over every target; returns what the page counts."""
+         ai: object | None = None,
+         slot_map: SlotMap | None = None,
+         resume_pairs: frozenset[tuple[str, str]] | None = None,
+         index_base: int = 0,
+         message_wait: float = 0.0,
+         total_override: int = 0) -> PlayResult:
+    """Replay the script over every target; returns what the page counts.
+
+    ``slot_map`` switches the player onto the reference's mapping lifecycle
+    (load balanced assignment, daily-limit remaps, dead-account moves and
+    ``will retry later`` slots); without it the simple per-message budget
+    rebind of #0 stays in place. ``resume_pairs`` skips (account, target)
+    pairs an earlier run already delivered. ``message_wait`` is the
+    executor's ``Waiting %1 seconds before next message`` floor between
+    sends.
+    """
     slots = chat_pattern.assign_slots(messages, labels)
+    if slot_map is not None:
+        slot_map.setup(slots)
     sender = ctx.sender()
     backoff = PeerFloodBackoff()
     pictures = Path(config.pictures)
@@ -212,14 +373,16 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
     # turned "account B starts 10s later" into "every message from B waits
     # 10s longer" - pacing by accident.
     started: set[str] = set()
+    done = set(resume_pairs or frozenset())
 
     wait, when = schedule_wait(config, datetime.now(UTC))
     if wait:
         print(f"schedule: {when} (waiting {format_duration(wait)})")
         pause(ctx, wait)
 
-    total = len(config.targets) * len(messages) * config.loops * config.multiplier
-    index = 0
+    total = (total_override or
+             len(config.targets) * len(messages) * config.loops * config.multiplier)
+    index = index_base
     for target in (config.target_specs
                    or parse_many(config.targets, "custom")):
         for loop in range(config.loops):
@@ -232,17 +395,38 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                     time.sleep(config.loop_interval * 60.0)
             for message in chat_pattern.multiply(messages, config.multiplier):
                 index += 1
-                account = slots.get(message.account_slot, labels[0] if labels
-                                    else "-")
-                account = _rebind(account, labels, budget, config.daily_limit,
-                                  message.account_slot)
-                if account is None:
+                if slot_map is not None:
+                    account = slot_map.account(message.account_slot)
+                    if account is None:
+                        result.skipped += 1
+                        print(f"{target.display()}: No available account "
+                              f"for puppet A{message.account_slot}, "
+                              f"will retry later")
+                        continue
+                else:
+                    account = slots.get(message.account_slot, labels[0]
+                                        if labels else "-")
+                    account = _rebind(account, labels, budget,
+                                      config.daily_limit,
+                                      message.account_slot)
+                    if account is None:
+                        result.skipped += 1
+                        print(f"skipped: no account under the daily limit "
+                              f"({config.daily_limit}) for A"
+                              f"{message.account_slot}")
+                        continue
+                if done and (account, target.display()) in done:
                     result.skipped += 1
-                    print(f"skipped: no account under the daily limit "
-                          f"({config.daily_limit}) for A"
-                          f"{message.account_slot}")
+                    print(f"RESUME: skipping A{message.account_slot} "
+                          f"account={account} target={target.display()}")
                     continue
                 delay = message.delay(rng)
+                if message_wait and message_wait > delay:
+                    # The executor's own floor between sends, reported the
+                    # way the reference reports it.
+                    print(f"Waiting {message_wait:.0f} seconds before next "
+                          f"message")
+                    delay = message_wait
                 if startup_offsets and account not in started:
                     delay += startup_offsets.get(account, 0.0)
                     started.add(account)
@@ -270,10 +454,14 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                 if outcome.ok:
                     result.ok += 1
                     budget[account] = budget.get(account, 0) + 1
+                    if slot_map is not None:
+                        slot_map.note_result(account, True, outcome.code)
                     record(ctx, task, account, target.display(), True)
                     state = "ok"
                 else:
                     result.failed += 1
+                    if slot_map is not None:
+                        slot_map.note_result(account, False, outcome.code)
                     record(ctx, task, account, target.display(), False,
                            outcome.code, outcome.detail)
                     state = outcome.code
@@ -396,5 +584,6 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(PuppetConfig.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["PuppetConfig", "PlayResult", "TITLE", "main", "parse_modes",
-           "play", "resolve_pattern", "run"]
+__all__ = ["ACCOUNT_DEAD_CODES", "PlayResult", "PuppetConfig",
+           "SlotMap", "StatsFile", "TITLE", "main", "parse_modes", "play",
+           "resolve_pattern", "run"]
