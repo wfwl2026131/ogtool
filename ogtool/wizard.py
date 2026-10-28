@@ -195,16 +195,30 @@ def pick_accounts() -> str:
     return ask("用哪些账号(逗号分隔,如 t1 或 t1,a)")
 
 
+#: 会话内免确认开关: 输一次 ``all`` 之后,这一轮向导不再追问。
+TRUSTED: set[str] = set()
+
+
 def show_plan(argv: list[str]) -> bool:
-    """dry-run 出计划,返回用户要不要继续。"""
+    """dry-run 出计划,返回用户要不要继续。
+
+    一次确认就够: ``yes`` 跑这一个,``all`` 跑并放开本会话后面的确认。
+    ``--allow-write`` 由 run_live 补,CLI 层的写闸门不受影响。
+    """
+    if "all" in TRUSTED:
+        return True
     print("\n—— 先跑 dry-run(不出网)——\n")
     plan = subprocess.run([PY, "-m", "ogtool", *argv, "--dry-run"])
     print()
     if plan.returncode != 0:
         print("dry-run 退出码非 0,上面应有报错,先解决再试。")
         return False
-    answer = input("计划如上。真跑吗?输入 yes 才执行(其他任何输入=取消): ")
-    return answer.strip().lower() == "yes"
+    answer = input("计划如上。yes=跑一次  all=跑且本会话不再问  其他=取消: ")
+    answer = answer.strip().lower()
+    if answer == "all":
+        TRUSTED.add("all")
+        return True
+    return answer == "yes"
 
 
 def newest_receipt() -> None:
@@ -226,11 +240,17 @@ def newest_receipt() -> None:
 
 def run_live(argv: list[str], *, write: bool) -> None:
     live = [*argv, "--live"]
-    if write:
-        confirm = input("这是写操作(真发/真拉/真改名)。输 yes 确认加 --allow-write: ")
-        if confirm.strip().lower() != "yes":
+    if write and "all" not in TRUSTED:
+        confirm = input("写操作(真发/真拉/真改名)。"
+                        "yes=这次带写  all=本会话都不再问  其他=取消: ")
+        confirm = confirm.strip().lower()
+        if confirm not in ("yes", "all"):
             print("取消。")
             return
+        if confirm == "all":
+            TRUSTED.add("all")
+        live.append("--allow-write")
+    elif write:
         live.append("--allow-write")
     print()
     done = subprocess.run([PY, "-m", "ogtool", *live])

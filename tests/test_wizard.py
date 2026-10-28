@@ -153,3 +153,40 @@ def test_the_wizard_finds_the_project_from_any_directory(wizard, monkeypatch):
                 assert Path("config.yaml").is_file()
     finally:
         monkeypatch.chdir(real_cwd)
+
+
+def test_one_yes_runs_a_write_and_all_silences_the_session(wizard, monkeypatch):
+    """The user asked for fewer confirmations: one yes, or one all."""
+    import builtins
+    answers = iter(["yes", "yes"])          # plan confirm + write confirm
+    monkeypatch.setattr(builtins, "input",
+                        lambda *a, **k: next(answers))
+    out: list[list[str]] = []
+
+    def fake_run(cmd, *args, **kwargs):
+        out.append(cmd)
+        if "--dry-run" in cmd:
+            class Done:
+                returncode = 0
+            return Done()
+        class Done2:
+            returncode = 0
+        return Done2
+
+    monkeypatch.setattr(wizard.subprocess, "run", fake_run)
+    wizard.run_live(["mass_send", "--accounts", "t1"], write=True)
+    assert "--allow-write" in out[-1]
+    assert wizard.run_live(["mass_send"], write=True) is None
+    assert "--allow-write" in out[-1]       # still present, no question
+
+    # all = trusted for the rest of the session
+    wizard.TRUSTED.clear()
+    trusted = iter(["all"])
+    monkeypatch.setattr(builtins, "input",
+                        lambda *a, **k: next(trusted))
+    monkeypatch.setattr(wizard, "show_plan",
+                        lambda argv: True)   # plan already shown this run
+    wizard.run_live(["mass_send"], write=True)
+    assert "--allow-write" in out[-1]
+    wizard.run_live(["keep_online"], write=True)
+    assert "--allow-write" in out[-1] and "--live" in out[-1]

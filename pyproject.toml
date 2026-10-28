@@ -1,6 +1,6 @@
 [project]
 name = "ogtool"
-version = "1.0.8"
+version = "1.0.9"
 description = "Offline toolkit for the 22 console features"
 requires-python = ">=3.11"
 dependencies = ["PyYAML>=6"]
