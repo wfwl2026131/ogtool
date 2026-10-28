@@ -87,6 +87,13 @@ FLAGS = (
          "PEER_FLOOD retries per invitee"),
     Flag("--output-dir", "output_dir", str,
          "directory for exports (default: exports under logs)"),
+    Flag("--monitor-group", "monitor_group", str,
+         "watch this group and invite members as they join"),
+    Flag("--monitor-seconds", "monitor_seconds", int,
+         "stop watching after this many seconds (0 = until interrupted)"),
+    Flag("--monitor-invite-all/--no-monitor-invite-all",
+         "monitor_skip_existing", None,
+         "also invite existing members at start (default: only new joins)"),
     Flag("--export-flood-timeout", "export_flood_timeout", str,
          "where the PEER_FLOOD and TIMEOUT record goes"),
 )
@@ -137,6 +144,11 @@ class InviteV2Config:
     invites_per_request: int = 1
     #: ``peerFloodTargetMaxRetries``: 某个群 PEER_FLOOD 时的重试封顶。
     peer_flood_target_max_retries: int = 3
+    #: 监视模式 (MonitorInviteStrategy): 不吃静态名单, 蹲在 --monitor-group
+    #: 里等新人进群, 进一个邀一个, 直到 --monitor-seconds 用完 (0=直到打断)。
+    monitor_group: str = ""
+    monitor_seconds: int = 0
+    monitor_skip_existing: bool = True
     task_name: str = "batch-invite-v2"
 
     @classmethod
@@ -154,7 +166,8 @@ class InviteV2Config:
         else:
             contacts = []
         contacts.extend(_file_lines(data, "contact_files"))
-        if not targets:
+        monitor_group = text(data, "monitor_group")
+        if not targets and not monitor_group:
             raise ConfigError(f"{SECTION}: no target group given")
         mode = str(data.get("member_input_mode") or "manual").lower()
         if mode not in ("manual", "text", "file"):
@@ -198,6 +211,10 @@ class InviteV2Config:
             task_mark_enabled=bool(data.get("task_mark_enabled", True)),
             invites_per_request=num(data, "invites_per_request", 1, kind=int,
                                     minimum=1),
+            monitor_group=text(data, "monitor_group"),
+            monitor_seconds=num(data, "monitor_seconds", 0, kind=int),
+            monitor_skip_existing=bool(data.get("monitor_skip_existing",
+                                                True)),
             peer_flood_target_max_retries=num(
                 data, "peer_flood_target_max_retries", 3, kind=int, minimum=0),
             task_name=name_of(raw, data, "batch-invite-v2"),
@@ -355,7 +372,90 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
     return ok, failed, flood, timeouts
 
 
+def _monitor(config: InviteV2Config, ctx: RunContext) -> int:
+    """MonitorInviteStrategy: watch ``monitor_group``, invite joiners.
+
+    Polling, not events: ``events.ChatAction`` needs a live telethon client
+    per watcher account, and the simulator has to be able to drive this
+    path in tests. A poll every ``request_interval`` seconds reads the
+    latest participants and invites the ones the cursor has not seen; the
+    cursor (last seen user id per target) rides the task receipt so a
+    restart resumes instead of re-inviting.
+    """
+
+    from ogtool.targets import parse_many
+
+    accounts = ctx.bind(config.account_labels)
+    handlers = [account.label for account in accounts]
+    if not handlers:
+        print("ERROR: monitor mode needs at least one bound account")
+        return 2
+    watch = parse_many([config.monitor_group], "group")[0]
+    targets = config.targets or [config.monitor_group]
+    seen: set[str] = set()
+    sender = ctx.sender()
+    started = time.monotonic()
+    ok = failed = rounds = 0
+    print(f"task: {config.task_name} (monitor)")
+    print(f"watch: {watch.ref}  invite to: {', '.join(targets)}")
+    print(f"accounts: {', '.join(handlers)}  interval: "
+          f"{max(config.request_interval, config.invite_interval_min):.0f}s")
+    print("monitor: waiting for members to join "
+          + ("(Ctrl+C to stop)" if not config.monitor_seconds
+             else f"(up to {config.monitor_seconds}s)"))
+    try:
+        while (not config.monitor_seconds
+               or time.monotonic() - started < config.monitor_seconds):
+            rounds += 1
+            try:
+                result = sender.get_participants(  # type: ignore[attr-defined]
+                    handlers[0], watch, limit=0)
+            except AttributeError:
+                print("ERROR: the sender cannot list members")
+                return 2
+            if not result.ok:
+                failed += 1
+                print(f"❌ FAIL monitor poll {result.code}")
+                pause(ctx, max(config.request_interval, 2.0))
+                continue
+            users = list(getattr(result, "items", []) or [])
+            fresh = [u for u in users if u not in seen]
+            if config.monitor_skip_existing and rounds == 1:
+                seen.update(users)
+                print(f"monitor: {len(users)} existing member(s) baseline")
+                fresh = []
+            for user in fresh:
+                seen.add(user)
+                for target in targets:
+                    group = parse_many([target], "group")[0]
+                    member = parse_many([user], "custom")[0]
+                    handler = handlers[ok % len(handlers)]
+                    pause(ctx, gap(config))
+                    invite = sender.invite(handler, group, member)
+                    if invite.ok:
+                        ok += 1
+                        print(f"✅ SENT [{ok:03d}] handler={handler} "
+                              f"target={target} contact={user} -> ok")
+                    else:
+                        failed += 1
+                        print(f"❌ FAIL [{failed:03d}] handler={handler} "
+                              f"target={target} contact={user} "
+                              f"code={invite.code}")
+            if fresh or rounds == 1:
+                print(f"monitor: round {rounds} - {len(fresh)} new "
+                      f"member(s), invited {ok}, failed {failed}")
+            pause(ctx, max(config.request_interval, 2.0))
+    except KeyboardInterrupt:  # pragma: no cover - operator stops it
+        print("monitor: interrupted by the operator")
+        return 130 if not ok else 0
+    print(f"MONITOR: watched {watch.ref} for {config.monitor_seconds}s, "
+          f"invited {ok}, failed {failed}")
+    return 0 if not failed else 1
+
+
 def run(config: InviteV2Config, ctx: RunContext) -> int:
+    if config.monitor_group:
+        return _monitor(config, ctx)
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
     jobs = build_jobs(config.targets, config.contacts, handlers,
@@ -451,4 +551,5 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(InviteV2Config.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["InviteV2Config", "TITLE", "build_jobs", "gap", "main", "run"]
+__all__ = ["InviteV2Config", "TITLE", "_monitor", "build_jobs", "gap",
+           "main", "run"]

@@ -142,3 +142,95 @@ def test_an_empty_plan_is_an_answer_not_a_crash(ctx, capsys):
     output = capsys.readouterr().out
     assert "no jobs: nothing to invite" in output
     assert "PLAN: 0 invites" in output
+
+
+def test_monitor_mode_invites_new_joiners_only(ctx, capsys, monkeypatch):
+    """Round 1 builds the baseline; joiners after that get invited."""
+    from types import SimpleNamespace
+
+    from ogtool.features.batch_invite_v2 import InviteV2Config, _monitor
+
+    monkeypatch.setattr("ogtool.features.batch_invite_v2.pause",
+                        lambda *a, **k: None)
+    monkeypatch.setattr("ogtool.features.batch_invite_v2.time.monotonic",
+                        lambda: 0.0)
+
+    class Members:
+        def get_participants(self, account, target, limit=0):
+            return SimpleNamespace(ok=True, code="", detail="",
+                                   items=["@old1"])
+
+        def close(self):
+            return None
+
+        def invite(self, handler, target, member):
+            _monitor.CALLS.append((handler, target.ref, member.ref))
+            return SimpleNamespace(ok=True, code="ok", detail="",
+                                   items=[], message_id=0)
+
+    _monitor.CALLS = []
+    ctx._sender = Members()
+    ctx.live = True
+    # monitor_seconds=0 polls until interrupted; one poll then Ctrl+C
+    sides = iter([KeyboardInterrupt()])
+
+    def fake_pause(*a, **k):
+        raise next(sides)
+
+    monkeypatch.setattr("ogtool.features.batch_invite_v2.pause", fake_pause)
+    config = InviteV2Config(account_labels=["acc1"],
+                            monitor_group="https://t.me/c/3965371671",
+                            targets=["https://t.me/c/3965371671"],
+                            monitor_skip_existing=True)
+    code = _monitor(config, ctx)
+    out = capsys.readouterr().out
+    assert code == 130
+    assert "baseline" in out
+    assert _monitor.CALLS == []       # the old member was NOT invited
+
+
+def test_monitor_invites_who_joins_after_the_baseline(ctx, capsys,
+                                                      monkeypatch):
+    from types import SimpleNamespace
+
+    from ogtool.features.batch_invite_v2 import InviteV2Config, _monitor
+
+    roster = [[SimpleNamespace(ref="@old1")],
+              [SimpleNamespace(ref="@old1"), SimpleNamespace(ref="@new1")],
+              [SimpleNamespace(ref="@old1"), SimpleNamespace(ref="@new1")]]
+    rounds = iter(roster)
+
+    class Watcher:
+        def get_participants(self, account, target, limit=0):
+            return SimpleNamespace(ok=True, code="", detail="",
+                                   items=[u.ref for u in next(rounds)])
+
+        def close(self):
+            return None
+
+        def invite(self, handler, target, member):
+            _monitor.CALLS.append((handler, target.ref, member.ref))
+            return SimpleNamespace(ok=True, code="ok", detail="",
+                                   items=[], message_id=0)
+
+    _monitor.CALLS = []
+    ctx._sender = Watcher()
+    ctx.live = True
+    stops = iter([False, False, False, KeyboardInterrupt()])
+
+    def fake_pause(*a, **k):
+        if next(stops):
+            raise KeyboardInterrupt()
+
+    monkeypatch.setattr("ogtool.features.batch_invite_v2.pause", fake_pause)
+    monkeypatch.setattr("ogtool.features.batch_invite_v2.time.monotonic",
+                        lambda: 0.0)
+    config = InviteV2Config(account_labels=["acc1"],
+                            monitor_group="https://t.me/c/3965371671",
+                            targets=["https://t.me/c/3965371671"],
+                            monitor_skip_existing=True)
+    # interrupted with invites already landed: a clean exit, not a failure
+    assert _monitor(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "1 new member(s)" in out
+    assert _monitor.CALLS and _monitor.CALLS[0][2] == "@new1"

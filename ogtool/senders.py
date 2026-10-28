@@ -1125,7 +1125,12 @@ class TelethonSender:
                          limit: int = 0) -> SendResult:
         def call(client: Any, peer: Any) -> SendResult:
             users = client.get_participants(peer, limit=limit or None)
-            return SendResult(ok=True, count=len(users))
+            rows: list[str] = []
+            for user in users:
+                username = getattr(user, "username", "") or ""
+                rows.append(f"@{username}" if username
+                            else str(getattr(user, "id", "")))
+            return SendResult(ok=True, count=len(users), items=rows)
 
         return self._on_target(account, target, "participants", call)
 
