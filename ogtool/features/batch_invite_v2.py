@@ -324,7 +324,7 @@ def _invite_lane(sender: object, ctx: RunContext, task: object,
         if result.ok:
             ok += 1
             record(ctx, task, handler, f"{group}<-{contact}", True)
-            print(f"[{index:03d}/{total:03d}] handler={handler} "
+            print(f"✅ SENT [{index:03d}/{total:03d}] handler={handler} "
                   f"target={group} contact={contact} -> ok")
             continue
         failed += 1

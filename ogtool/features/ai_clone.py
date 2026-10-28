@@ -383,7 +383,8 @@ def run(config: CloneConfig, ctx: RunContext) -> int:
             record(ctx, task, item.account, target.display(), False,
                    outcome.code, detail=item.source.sender)
             state = outcome.code
-        print(f"[{index:03d}/{len(items):03d}] account={item.account} "
+        marker = "✅ SENT" if state == "ok" else "❌ FAIL"
+        print(f"{marker} [{index:03d}/{len(items):03d}] account={item.account} "
               f"source={item.source.peer} target={target.display()} "
               f"delay={item.delay:.0f}s {label} text={body_text[:40]} -> {state}")
 

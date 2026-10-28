@@ -779,7 +779,8 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                     record(ctx, task, account, target.display(), False,
                            outcome.code, detail=message.sender)
                     state = outcome.code
-                print(f"[{index:03d}/{total:03d}] target={target.display()} "
+                marker = "✅ SENT" if state == "ok" else "❌ FAIL"
+                print(f"{marker} [{index:03d}/{total:03d}] target={target.display()} "
                       f"account={account} source={message.sender} "
                       f"delay={delay:.0f}s text={message.text[:40]} -> {state}")
 

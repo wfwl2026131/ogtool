@@ -219,12 +219,13 @@ def run(config: WatchConfig, ctx: RunContext) -> int:
         if result.ok:
             counts.relayed += 1
             record(ctx, task, account, relay, True)
-            print(f"[{index:03d}] peer={target.ref} sender="
+            print(f"✅ RELAY [{index:03d}] peer={target.ref} sender="
                   f"{message.sender or '-'} -> relayed to {relay}")
         else:
             counts.dropped += 1
             record(ctx, task, account, relay, False, result.code, result.detail)
-            print(f"[{index:03d}] peer={target.ref} -> {result.code}")
+            print(f"❌ FAIL [{index:03d}] peer={target.ref} "
+                  f"-> {result.code}")
 
     print(f"targets: {len(config.targets)}  watched: {counts.watched}  "
           f"relayed: {counts.relayed}  dropped: {counts.dropped}")
@@ -308,11 +309,11 @@ def _run_live(config: WatchConfig, ctx: RunContext, task,
             counts.relayed += 1
             ctx.store.add_result(task.id, account, config.relay, "sent",
                                  detail=f"{chat}#{ident}")
-            print(f"RELAY peer={chat} id={ident} -> {config.relay} "
+            print(f"✅ RELAY peer={chat} id={ident} -> {config.relay} "
                   f"message={message_id}")
         else:
             log_drop(account, chat, code, "relay failed", ok=False)
-            print(f"RELAY peer={chat} -> {code}")
+            print(f"❌ FAIL RELAY peer={chat} -> {code}")
 
     for _label, client in clients:
         client.add_event_handler(handler)

@@ -251,13 +251,13 @@ def _invite_lane(sender: object, ctx: RunContext, task: int,
         if result.ok:
             ok += 1
             record(ctx, task, handler, f"{group}<-{member}", True)
-            print(f"[{index:03d}/{total:03d}] handler={handler} "
+            print(f"✅ SENT [{index:03d}/{total:03d}] handler={handler} "
                   f"group={group} member={member} -> ok")
             continue
         failed += 1
         record(ctx, task, handler, f"{group}<-{member}", False, result.code,
                result.detail)
-        print(f"[{index:03d}/{total:03d}] handler={handler} "
+        print(f"❌ FAIL [{index:03d}/{total:03d}] handler={handler} "
               f"group={group} member={member} -> {result.code}")
         if (result.code in ("USER_PRIVACY_RESTRICTED",
                             "USER_NOT_MUTUAL_CONTACT", "USER_ID_INVALID")

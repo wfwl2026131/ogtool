@@ -277,7 +277,8 @@ def play(ctx: RunContext, task, messages: list[ChatMessage],
                     record(ctx, task, account, target.display(), False,
                            outcome.code, outcome.detail)
                     state = outcome.code
-                print(f"[{index:03d}/{total:03d}] A{message.account_slot} "
+                marker = "✅ SENT" if state == "ok" else "❌ FAIL"
+                print(f"{marker} [{index:03d}/{total:03d}] A{message.account_slot} "
                       f"account={account} target={target.display()} "
                       f"delay={delay:.0f}s {_describe(body)} -> {state}")
     return result

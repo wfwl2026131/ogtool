@@ -324,7 +324,8 @@ def reply_round(config: AiChatConfig, ctx: RunContext, sender: object,
                 record(ctx, task, labels[0], f"{target.display()}#"
                        f"{message.message_id}", False, outcome.code)
                 state = outcome.code
-            print(f"[reply {index:02d}] to={message.sender or '-'} "
+            marker = "✅ SENT" if state == "ok" else "❌ FAIL"
+            print(f"{marker} [reply {index:02d}] to={message.sender or '-'} "
                   f"chat={target.display()} msg={message.message_id} "
                   f"ai={generated.label()} -> {state}")
     return answered, failed

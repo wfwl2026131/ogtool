@@ -274,7 +274,8 @@ def run(config: ContactConfig, ctx: RunContext) -> int:
                 record(ctx, task, account, contact, False, result.code,
                        result.detail)
                 state = result.code
-            print(f"[{positions[(account, contact, round_index)]:03d}/"
+            marker = "✅ SENT" if state == "ok" else "❌ FAIL"
+            print(f"{marker} [{positions[(account, contact, round_index)]:03d}/"
                   f"{total:03d}] account={account} contact={contact} "
                   f"round={round_index} -> {state}")
         return ok_count, failed_count, waited

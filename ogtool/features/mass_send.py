@@ -398,6 +398,10 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
         print(f"removed {dropped} sent target(s) from {config.custom_targets_file}")
     for line in render(planned, contents, start):
         print(line)
+    if not planned and pairs and not skipped:
+        removed_note = (f"{dropped} already sent (dedup)" if dropped
+                        else "no filter matched")
+        print(f"EXPLAIN: nothing scheduled - {removed_note}")
 
     # An exhausted budget or a target that filtered out leaves the plan empty;
     # indexing the last entry first crashed the run instead of reporting that.

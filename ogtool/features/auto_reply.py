@@ -154,7 +154,7 @@ def run(config: AutoReplyConfig, ctx: RunContext) -> int:
               f'text="{message.text}"')
         if rule is not None:
             replies += 1
-            print(f"OUT -> {rule.name} reply=\"{rule.reply}\"")
+            print(f"✅ OUT -> {rule.name} reply=\"{rule.reply}\"")
         else:
             print(f"SKIP: {reason}")
 

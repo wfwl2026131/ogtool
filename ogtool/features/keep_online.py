@@ -105,10 +105,10 @@ def run(config: KeepOnlineConfig, ctx: RunContext) -> int:
                    getattr(result, "detail", ""))
             if result.ok:
                 online += 1
-                print(f"online {account}")
+                print(f"✅ ONLINE {account}")
             else:
                 failed += 1
-                print(f"failed {result.code} {account} {result.detail}")
+                print(f"❌ FAIL {result.code} {account} {result.detail}")
                 ctx.note(f"heartbeat failed for {account}: {result.code}", "warn")
     except KeyboardInterrupt:  # pragma: no cover - interactive
         ctx.note("interrupted by the operator", "warn")

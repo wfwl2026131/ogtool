@@ -245,7 +245,8 @@ def execute(
                 if result.code == TIMEOUT:
                     outcome.note_timeout(job.subject)
         state = "ok" if result.ok else result.code
-        speak(f"[{index:03d}/{outcome.stats.total or len(items):03d}] "
+        marker = "✅ SENT" if result.ok else "❌ FAIL"
+        speak(f"{marker} [{index:03d}/{outcome.stats.total or len(items):03d}] "
               f"account={job.account} {label}={job.subject} -> {state}")
 
     lane_jobs = _split_lanes(items, lanes if ctx.live else 1, lane_key)

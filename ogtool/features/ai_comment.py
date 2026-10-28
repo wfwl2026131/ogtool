@@ -444,7 +444,7 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                 progress["index"] += 1
             record(ctx, task, spec.account, f"{target.display()}#{spec.post_id}",
                    True, detail=f"sticker {sticker.detail}")
-            print(f"[{progress['index']:03d}] sticker {spec.account} "
+            print(f"✅ SENT [{progress['index']:03d}] sticker {spec.account} "
                   f"post={spec.post_id} {sticker.detail}")
             return
         generated = ai.generate(_prompt(ctx, config, spec, post),
@@ -509,7 +509,9 @@ def run(config: CommentConfig, ctx: RunContext) -> int:
                 state = f"ok reactions={reacted}/{spec.likes}"
                 if attempts:
                     state += f" retries={attempts}"
-        print(f"[{index:03d}/{stats.total:03d}] account={spec.account} "
+        marker = ("✅ SENT" if state.split()[0] in ("ok", "liked")
+                  else "❌ FAIL")
+        print(f"{marker} [{index:03d}/{stats.total:03d}] account={spec.account} "
               f"target={target.display()} post={spec.post_id} "
               f"tone={spec.tone} likes={spec.likes} "
               f"emoji={'yes' if spec.emoji else 'no'} "

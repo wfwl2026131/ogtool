@@ -391,7 +391,7 @@ def _set_username(config: RenameConfig, state: RenameState, sender: object,
         result = sender.update_username(account, value)  # type: ignore[attr-defined]
         if result.ok:
             state.bump("用户名")
-            print(f"账号 {account} 用户名已更新: @{value}"
+            print(f"✅ SENT 账号 {account} 用户名已更新: @{value}"
                   + (f"（第 {attempt + 1} 次）" if attempt else ""))
             return
         occupied = any(token in str(result.code).upper()
@@ -399,7 +399,7 @@ def _set_username(config: RenameConfig, state: RenameState, sender: object,
                                      "USERNAMES_UNAVAILABLE"))
         if not occupied:
             state.failed += 1
-            print(f"账号 {account} 用户名更新失败: {result.code}")
+            print(f"❌ FAIL 账号 {account} 用户名更新失败: {result.code}")
             return
         if attempt < config.username_suffix_retries:
             print(f"账号 {account} 用户名 @{value} 已被占用，换后缀重试")
@@ -417,7 +417,7 @@ def _edit_extras(config: RenameConfig, state: RenameState, sender: object,
         result = sender.update_about(account, value)  # type: ignore[attr-defined]
         if result.ok:
             state.bump("简介")
-            print(f"账号 {account} 简介已更新")
+            print(f"✅ SENT 账号 {account} 简介已更新")
         else:
             state.failed += 1
             print(f"账号 {account} 简介更新失败: {result.code}")
