@@ -27,10 +27,10 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 2 | 🧠 AI原创炒群 | `ai_chat` | `--targets --interval-min/max --news-channel --insert-probability --topics` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 3 | 💬 AI智能评论 | `ai_comment` | `--targets --posts --positive-ratio --emoji-probability --per-post-min/max` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 4 | 📦 AI搬运频道 | `ai_clone` | `--sources --targets --mode --style --max-items --mapping` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
-| 5 | 📢 群发消息 | `mass_send` | `--targets --text/--media --interval-min/max --threads --daily-limit` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
+| 5 | 📢 群发消息 | `mass_send` | `--targets --text/--media --interval-min/max --threads --daily-limit --loop-rounds --loop-pause` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
 | 6 | 🔄 自动回复 | `auto_reply` | `--rule 关键词=>回复 --duplicate-seconds --simulate` | 是 | [场景2](docs/quickstart-试用指南.md#ex-auto-reply) |
 | 7 | 👀 监听聊天 | `watch_chat` | `--targets --exclude --relay` | 是 | [场景3](docs/quickstart-试用指南.md#ex-watch-chat) |
-| 8 | 👥 批量加群 | `batch_join` | `--targets --request-interval --per-account-cap --threads` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 8 | 👥 批量加群 | `batch_join` | `--targets --request-interval --per-account-cap --threads --resume --verify-url/--verify-rounds/--verify-delay` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 9 | 🛅 批量上号 | `batch_login` | `--import-folder/--import-zip --export-ids --logout frozen\|all\|both` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 10 | 🔠 批量改名 | `batch_rename` | `--file --pause-at --stop-at`（暂停/继续/停止） | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 11 | 🔂 批量拉人 | `batch_invite` | `--groups --members --strategy --export-missing/--export-flood` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
@@ -39,7 +39,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 14 | 🎥 视频管理 | `video_manage` | `--link --action join\|leave` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 15 | 📶 代理配置 | `proxy` | `--add --test --bind label=id --timeout-ms` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 16 | ➕ 批量联系人 | `add_contact` | `--contacts --per-target-cap --request-interval-ms --threads` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
-| 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
+| 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout --resume --monitor-group/--monitor-seconds` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
 | 18 | 📨 群发私信v2 | `mass_send_v2` | `--contact account\|name\|ref --account-interval-min/max --daily-limit --allow-duplicates` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
 | 19 | 🤖 话术炒群v2 | `puppet_chat_v2` | `--targets --pattern --startup-interval --loops` | 是 | [场景4](docs/quickstart-试用指南.md#ex-puppet-chat) |
 | 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --activity --stop-after N` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
@@ -50,6 +50,15 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 
 底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
 **26 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
+
+## 对齐参考客户端的四个进阶能力（v1.1.1+）
+
+| 能力 | 命令 | 说明 |
+|---|---|---|
+| 循环群发 | `mass_send --loop-rounds 3 --loop-pause 600` | 每轮重新规划（预算/内容重算），轮次间隔可调；`--loop-rounds 0` 跑到 Ctrl+C；某一轮计划为 0 自动收工 |
+| 邀请监视 | `batch_invite_v2 --monitor-group <群> --monitor-seconds 0` | 蹲群等新人，进一个邀一个；首轮名单当基线不重复邀请；`--monitor-invite-all` 连老人一起邀 |
+| 断点续跑 | `batch_join --resume` / `batch_invite_v2 --resume` | 状态就是回执库：跳过已成功的（账号, 目标）/（handler, 群<-联系人），中断后接着跑不重发 |
+| 加群后验证 | `batch_join --verify-url <webhook> --verify-rounds 3 --verify-delay 5` | 每次进群成功后 POST `{feature,task,account,target}`，回 200 = 验证通过；不通重试，最终失败写 VERIFY_FAILED 回执行 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
