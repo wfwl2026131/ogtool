@@ -28,6 +28,7 @@ MENU_CUSTOM = [
     ("puppet_chat", "🤖 话术炒群(按剧本轮流发言)"),
     ("batch_invite", "👥 批量拉人(把人拉进指定群)"),
     ("batch_join", "🚪 批量加群(一组账号加入一组群)"),
+    ("invite_monitor", "👀 拉人监视(蹲群等新人,进一个邀一个)"),
     ("video_manage", "🎥 进群语音房(join/speak)"),
     ("test", "🩺 账号连通性测试(accounts test)"),
 ]
@@ -105,6 +106,7 @@ GENERIC: dict[str, dict] = {
         "steps": [
             ("--targets", "拉进哪个群(逗号分隔)", "", "str"),
             ("--contacts", "要拉的人(手机号/@用户名,逗号分隔)", "", "str"),
+            ("--resume", "断点续跑(y/n,回车=n)", "", "bool"),
         ],
     },
     "mix_market": {
@@ -515,6 +517,26 @@ def flow_batch_invite() -> None:
         run_live(argv, write=True)
 
 
+def flow_invite_monitor() -> None:
+    """蹲群监视: 进一个邀一个 (batch_invite_v2 --monitor-group)."""
+    accounts = pick_accounts()
+    group = ask("蹲哪个群(群链接)")
+    invite_to = ask("把人拉进哪个群(回车=同一个)", group)
+    seconds = ask("盯多久秒(0=一直盯,Ctrl+C 停)", "0")
+    invite_all = ask("老人也一起邀吗(y/N)", "n").strip().lower()
+    argv = ["batch_invite_v2", "--accounts", accounts,
+            "--monitor-group", group,
+            "--monitor-seconds", seconds]
+    if invite_all in ("y", "yes"):
+        argv.append("--monitor-invite-all")
+    if invite_to and invite_to != group:
+        argv += ["--targets", invite_to]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
+    if show_plan(argv):
+        run_live(argv, write=True)
+
+
 def flow_batch_join() -> None:
     accounts = pick_accounts()
     targets = ask("要加入的群(逗号分隔)")
@@ -549,6 +571,7 @@ FLOWS = {
     "puppet_chat": flow_puppet_chat,
     "batch_invite": flow_batch_invite,
     "batch_join": flow_batch_join,
+    "invite_monitor": flow_invite_monitor,
     "video_manage": flow_video_manage,
     "test": flow_test,
 }

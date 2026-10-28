@@ -220,3 +220,38 @@ def test_the_advanced_knobs_are_all_reachable_and_remembered(wizard,
     remembered = wizard.load_preset("mass_send")
     assert remembered["daily_limit"] == "50"
     assert remembered["targets"] == "@x"
+
+
+def test_the_monitor_flow_walks_the_inviter_monitor(wizard, monkeypatch,
+                                                    captured):
+    """👀 拉人监视: group + seconds build a batch_invite_v2 monitor argv."""
+    answers = iter(["t1", "https://t.me/c/3965371671", "", "8", "n",
+                    "", "yes"])
+    monkeypatch.setattr("builtins.input", lambda _p="": next(answers))
+    monkeypatch.setattr(wizard, "show_plan", lambda argv: True)
+    wizard.flow_invite_monitor()
+    # run_live also collects the account pool: [ogtool, accounts, list, ...]
+    # first; the dry-run/launch calls come after. Find the batch one.
+    argv = next(cmd for cmd in captured
+                if "batch_invite_v2" in cmd)[3:]
+    assert argv[0] == "batch_invite_v2"
+    assert "--monitor-group" in argv
+    assert argv[argv.index("--monitor-group") + 1] \
+        == "https://t.me/c/3965371671"
+    assert "--monitor-seconds" in argv
+    assert argv[argv.index("--monitor-seconds") + 1] == "8"
+    # same group = no separate --targets
+    assert "--targets" not in argv
+
+
+def test_the_monitor_flow_passes_a_separate_target_group(wizard, monkeypatch,
+                                                         captured):
+    answers = iter(["t1", "https://t.me/c/111", "https://t.me/c/222", "0",
+                    "n", "", "yes"])
+    monkeypatch.setattr("builtins.input", lambda _p="": next(answers))
+    monkeypatch.setattr(wizard, "show_plan", lambda argv: True)
+    wizard.flow_invite_monitor()
+    argv = next(cmd for cmd in captured
+                if "batch_invite_v2" in cmd)[3:]
+    assert "--targets" in argv
+    assert argv[argv.index("--targets") + 1] == "https://t.me/c/222"
