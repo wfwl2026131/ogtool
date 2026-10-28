@@ -414,3 +414,53 @@ def test_resume_skips_pairs_the_results_table_already_ok(ctx, capsys,
     assert "RESUME: skipping 1 already-done pair(s)" in out
     assert "Processed: 0 / 0" in out
     assert "ok: 0" in out
+
+
+def test_verify_hook_posts_and_retries_then_verifies(ctx, capsys,
+                                                      monkeypatch):
+    """Round 1 is unreachable, round 2 is a 200: verified once."""
+    import urllib.error
+
+    from ogtool.features.batch_join import JoinConfig, _verify_join
+
+    config = JoinConfig(targets=parse_many(["@g1"], "group"),
+                        verify_url="http://127.0.0.1:1/verify",
+                        verify_rounds=2, verify_delay=0.0)
+    calls = {"n": 0}
+
+    class Answer:
+        status = 200
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(request, timeout=0):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise urllib.error.URLError("connection refused")
+        return Answer()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert _verify_join(config, ctx, "acc1", "@g1") is True
+    out = capsys.readouterr().out
+    assert calls["n"] == 2
+    assert "VERIFY unreachable" in out
+    assert "✅ VERIFIED acc1 @g1 (round 2)" in out
+
+
+def test_verify_hook_gives_up_after_all_rounds(ctx, capsys, monkeypatch):
+    from ogtool.features.batch_join import JoinConfig, _verify_join
+
+    config = JoinConfig(targets=parse_many(["@g1"], "group"),
+                        verify_url="http://127.0.0.1:1/verify",
+                        verify_rounds=2, verify_delay=0.0)
+    import urllib.error
+
+    def fake_urlopen(request, timeout=0):
+        raise urllib.error.URLError("down")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    assert _verify_join(config, ctx, "acc1", "@g1") is False
+    out = capsys.readouterr().out
+    assert "❌ VERIFY FAILED acc1 @g1 after 2 round(s)" in out

@@ -74,6 +74,13 @@ FLAGS = (
     Flag("--mute-interval", "mute_interval", float, "gap between mutes, seconds"),
     Flag("--resume/--no-resume", "resume", None,
          "skip (account, target) pairs this feature already joined"),
+    Flag("--verify-url", "verify_url", str,
+         "post-join verification webhook (POST {account,target,feature,task}; "
+         "HTTP 200 = verified)"),
+    Flag("--verify-rounds", "verify_rounds", int,
+         "verification attempts per join (default 3)"),
+    Flag("--verify-delay", "verify_delay", float,
+         "seconds between verification rounds (default 5)"),
     Flag("--leave-interval", "leave_interval", float, "gap between leaves, seconds"),
 )
 
@@ -144,6 +151,13 @@ class JoinConfig:
     #: nine flags were display-only and are gone.
     #: 断点续跑: 跳过 results 表里这个 feature 已经 ok 的 (账号, 目标)。
     resume: bool = False
+    #: checkme 通用加群后验证钩子 (参考客户端 checkmeEnabled/checkmeBaseUrl/
+    #: checkmeMaxRound/checkmeDelaySec 的非绑定版): 每个 join 成功后向
+    #: verify_url POST {account, target, feature, task}, 200 即视为验证通过,
+    #: 最多 verify_rounds 轮, 每轮间隔 verify_delay 秒。空 URL = 关闭。
+    verify_url: str = ""
+    verify_rounds: int = 3
+    verify_delay: float = 5.0
     task_name: str = "batch-join"
 
     @classmethod
@@ -181,6 +195,9 @@ class JoinConfig:
             mute_interval=_seconds(data, "mute_interval", 0.0),
             leave_interval=_seconds(data, "leave_interval", 0.0),
             resume=bool(data.get("resume", False)),
+            verify_url=text(data, "verify_url"),
+            verify_rounds=num(data, "verify_rounds", 3, kind=int, minimum=1),
+            verify_delay=_seconds(data, "verify_delay", 5.0),
             task_name=name_of(raw, data, "batch-join"),
         )
         config.validate()
@@ -268,6 +285,48 @@ def gap(config: JoinConfig, job: Job, previous: Job | None = None,
         else:
             wait = max(wait, config.account_interval)
     return wait
+
+
+def _verify_join(config: JoinConfig, ctx: RunContext, account: str,
+                 target: str) -> bool:
+    """Generic post-join verification webhook (the checkme idea, unbound).
+
+    ``verify_url`` gets one POST per round with the join facts; a 200 is
+    the verifier's yes. Everything else (4xx/5xx/timeout) is retried up
+    to ``verify_rounds`` with ``verify_delay`` between rounds, then
+    reported as a verification failure - the join itself stays valid.
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    payload = _json.dumps({
+        "feature": FEATURE,
+        "task": config.task_name,
+        "account": account,
+        "target": target,
+    }).encode("utf-8")
+    for attempt in range(1, max(1, config.verify_rounds) + 1):
+        try:
+            request = urllib.request.Request(
+                config.verify_url, data=payload,
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request,
+                                        timeout=30) as answer:
+                if answer.status == 200:
+                    print(f"✅ VERIFIED {account} {target}"
+                          + (f" (round {attempt})" if attempt > 1 else ""))
+                    return True
+                print(f"VERIFY http {answer.status} {account} {target} "
+                      f"(round {attempt}/{config.verify_rounds})")
+        except (urllib.error.URLError, OSError) as error:
+            print(f"VERIFY unreachable {account} {target} "
+                  f"(round {attempt}/{config.verify_rounds}): {error}")
+        if attempt < config.verify_rounds and config.verify_delay:
+            pause(ctx, config.verify_delay)
+    print(f"❌ VERIFY FAILED {account} {target} "
+          f"after {config.verify_rounds} round(s)")
+    return False
 
 
 def run(config: JoinConfig, ctx: RunContext) -> int:
@@ -383,6 +442,11 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
             continue
         record(ctx, task, job.account, job.subject, job.extra["ok"] == "1",
                job.extra["code"])
+        if (config.verify_url and job.extra.get("ok") == "1" and ctx.live
+                and not _verify_join(config, ctx, job.account,
+                                     job.subject)):
+            record(ctx, task, job.account, job.subject, False,
+                   "VERIFY_FAILED", "post-join webhook never said 200")
         mute_state = job.extra.get("mute", "")
         if mute_state:
             muted += mute_state == "ok"
