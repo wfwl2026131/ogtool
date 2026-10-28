@@ -55,3 +55,22 @@ def test_a_disconnected_cached_client_is_reconnected_on_next_use(tmp_path,
     assert connects["n"] == 1
     out = capsys.readouterr().out
     assert "RECONNECT: acc1 session socket restored" in out
+
+
+def test_a_cancelled_call_maps_to_network_error_and_is_retryable():
+    """A disconnect racing an in-flight call is a dropped socket, not UNKNOWN."""
+    import asyncio as _asyncio
+
+    from ogtool.senders import code_from_exception
+
+    code, _detail, retryable = code_from_exception(_asyncio.CancelledError())
+    assert code == "NETWORK_ERROR"
+    assert retryable is True
+
+
+def test_a_connection_reset_maps_to_network_error():
+    from ogtool.senders import code_from_exception
+
+    code, _detail, retryable = code_from_exception(
+        ConnectionResetError("Connection lost"))
+    assert code == "NETWORK_ERROR" and retryable is True

@@ -9,6 +9,7 @@ session and no network, and the error codes stay in one place.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import inspect
 import json
@@ -415,6 +416,11 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
                 "ConnectionRefusedError", "BrokenPipeError") \
             or "CONNECTION" in upper or "BROKEN PIPE" in upper:
         return NETWORK_ERROR, text, True
+    if name == "CancelledError" or "CONNECTION CLOSED" in upper \
+            or "DISCONNECTED" in upper:
+        # A disconnect racing an in-flight request: keep_online's kill probe
+        # surfaced it. Same class of problem as a dropped socket.
+        return NETWORK_ERROR, text or "the connection was cancelled", True
     # Two ogtool processes cannot share one Telethon session: the .session file
     # is SQLite too, and the loser gets 'database is locked'. Saying so beats
     # 'UNKNOWN: OperationalError', which reads like a Telegram problem.
@@ -844,6 +850,14 @@ class TelethonSender:
         try:
             return action()
         except Exception as error:  # noqa: BLE001 - mapped below
+            code, detail, retryable = code_from_exception(error)
+            return SendResult(ok=False, code=code, detail=detail,
+                              retryable=retryable)
+        except asyncio.CancelledError as error:
+            # Python 3.8+: CancelledError is a BaseException, so the except
+            # above misses it. A disconnect racing an in-flight call (the
+            # keep_online kill probe hit exactly this) must come back as a
+            # retryable failure, not crash the whole run.
             code, detail, retryable = code_from_exception(error)
             return SendResult(ok=False, code=code, detail=detail,
                               retryable=retryable)
