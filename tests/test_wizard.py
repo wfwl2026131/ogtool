@@ -74,7 +74,8 @@ def test_generic_flow_builds_argv(wizard, monkeypatch):
     class FakeDone:
         returncode = 0
 
-    answers = iter(["t1", "https://t.me/x", "hello", "30", "90", "no"])
+    # the advanced-knobs prompt comes after the base steps; Enter = quick mode
+    answers = iter(["t1", "https://t.me/x", "hello", "30", "90", "", "no"])
     monkeypatch.setattr("builtins.input", lambda _p="": next(answers))
     monkeypatch.setattr(subprocess, "run",
                         lambda argv, **kw: calls.append(list(argv))
@@ -190,3 +191,31 @@ def test_one_yes_runs_a_write_and_all_silences_the_session(wizard, monkeypatch):
     assert "--allow-write" in out[-1]
     wizard.run_live(["keep_online"], write=True)
     assert "--allow-write" in out[-1] and "--live" in out[-1]
+
+
+def test_the_advanced_knobs_are_all_reachable_and_remembered(wizard,
+                                                             monkeypatch,
+                                                             tmp_path):
+    """f walks every remaining flag; runs are remembered as defaults."""
+    monkeypatch.chdir(tmp_path)          # PRESET_FILE lands in the fake tree
+    answers = iter(["t1", "@x", "hi", "1", "2",
+                    "f",                 # full mode
+                    "", "", "", "", "", "", "50", "", "",   # 9 knobs
+                    "yes",               # plan confirm
+                    "yes"])              # write confirm
+    monkeypatch.setattr("builtins.input", lambda _p="": next(answers))
+    calls: list[list[str]] = []
+
+    class Done:
+        returncode = 0
+
+    monkeypatch.setattr(subprocess, "run",
+                        lambda argv, **kw: calls.append(list(argv))
+                        or Done())
+    wizard.flow_mass_send()
+    live = calls[-1]
+    assert "--daily-limit" in live and "50" in live
+    # remembered for the next run
+    remembered = wizard.load_preset("mass_send")
+    assert remembered["daily_limit"] == "50"
+    assert remembered["targets"] == "@x"

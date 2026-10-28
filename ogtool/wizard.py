@@ -199,6 +199,104 @@ def pick_accounts() -> str:
 TRUSTED: set[str] = set()
 
 
+# —— 参数记忆与全量模式 ——
+# 参考客户端每个页面一个配置面板,几十个旋钮全摆出来;向导默认只问必填,
+# 这里补上另外两块: 上次填的值记住(回车=用上次),以及 f 全量模式把
+# 该页所有旗标逐个问一遍(回车=默认/上次值)。
+PRESET_FILE = Path("data") / "wizard-presets.json"
+GLOBAL_FLAGS = {"accounts", "task-name", "dry-run", "live", "allow-write",
+                "verbose", "config"}
+
+
+def load_preset(feature: str) -> dict:
+    """The values this feature was last run with, if any."""
+    try:
+        store = json.loads(PRESET_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return store.get(feature) or {}
+
+
+def save_preset(feature: str, values: dict) -> None:
+    try:
+        PRESET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            store = json.loads(PRESET_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            store = {}
+        if values:
+            store[feature] = values
+        else:
+            store.pop(feature, None)
+        PRESET_FILE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
+                               encoding="utf-8")
+    except OSError:
+        pass
+
+
+def page_flags(feature: str) -> list:
+    """Every flag this CLI page accepts, minus the global ones.
+
+    Most pages keep a ``FLAGS`` tuple; the three hand-parsed pages
+    (mass_send, auto_reply, keep_online) declare their flags straight on
+    the argparse parser, so the parser itself is walked for them. Both
+    come back as simple namespaces with name/dest/kind/action/help.
+    """
+    from types import SimpleNamespace
+
+    from ogtool.cli import build_parser
+    from ogtool.features import load_defaults, module
+
+    load_defaults()
+    mods = getattr(module(feature), "FLAGS", None)
+    if mods:
+        return [flag for flag in mods
+                if flag.dest not in GLOBAL_FLAGS]
+    parser = build_parser().choices[feature] \
+        if hasattr(build_parser(), "choices") else None
+    if parser is None:
+        subparsers = build_parser()._subparsers._group_actions[0].choices  # noqa: SLF001
+        parser = subparsers[feature]
+    out = []
+    for action in parser._actions:  # noqa: SLF001
+        names = [opt for opt in action.option_strings
+                 if opt.startswith("--")]
+        if not names:
+            continue
+        name = names[0].lstrip("-").replace("-", "_")
+        if name in GLOBAL_FLAGS or name in {"help", "task", "task_name",
+                                            "verbose"}:
+            continue
+        out.append(SimpleNamespace(
+            name=names[0], dest=name,
+            kind=int if action.type is int else
+            (bool if action.const is True else str),
+            action="store_true" if action.const is True else "store",
+            help=action.help or ""))
+    return out
+
+
+def ask_flag(flag, preset: dict) -> object | None:
+    """One flag as a question. Enter takes the remembered or built-in default."""
+    remembered = preset.get(flag.dest)
+    name = flag.name
+    if flag.kind is bool or flag.action == "store_true":
+        if ask(f"{name} {flag.help}? (y/N)", "N").lower() in ("y", "yes"):
+            return True
+        return remembered if isinstance(remembered, bool) else None
+    raw = ask(f"{name} {flag.help}", "" if remembered is None
+              else str(remembered))
+    if not raw.strip():
+        return remembered
+    if flag.kind is int:
+        try:
+            return int(raw)
+        except ValueError:
+            print("  (不是数字,跳过这个参数)")
+            return remembered
+    return raw
+
+
 def show_plan(argv: list[str]) -> bool:
     """dry-run 出计划,返回用户要不要继续。
 
@@ -295,8 +393,59 @@ def flow_generic(feature: str) -> None:
             argv += [flag, value]
         elif feature == "auto_script" and flag == "--script":
             argv.append("--list")
+    extend_argv(argv, feature)
+    remember(argv, feature, spec)
     if show_plan(argv):
         run_live(argv, write=feature in WRITE)
+
+
+def _flag_names(argv: list[str]) -> set[str]:
+    """Flags already present, with their dest forms."""
+    out: set[str] = set()
+    for token in argv:
+        if token.startswith("--"):
+            out.add(token[2:].replace("-", "_"))
+            out.add(token[2:])
+    return out
+
+
+def extend_argv(argv: list[str], feature: str) -> None:
+    """全量模式: 把该页其余旗标逐个问一遍(回车=上次值/默认)。"""
+    asked = _flag_names(argv)
+    asked |= GLOBAL_FLAGS
+    asked |= {"dry-run", "allow-write", "live"}
+    remaining = [flag for flag in page_flags(feature)
+                 if flag.name.lstrip("-") not in asked
+                 and flag.dest not in asked
+                 and flag.dest.replace("_", "-") not in asked]
+    if not remaining:
+        return
+    mode = ask(f"还有 {len(remaining)} 个高级参数没问。回车=用默认直接跑,"
+               " f=逐个过一遍", "")
+    if mode.strip().lower() != "f":
+        return
+    preset = load_preset(feature)
+    for flag in remaining:
+        value = ask_flag(flag, preset)
+        if value is True:
+            argv.append(flag.name)
+        elif value is not None and value is not False and value != "":
+            argv += [flag.name, str(value)]
+
+
+def remember(argv: list[str], feature: str,
+             spec: dict | None = None) -> None:
+    """把这次填的值记下来,下次回车直接用(上次值覆盖默认)。"""
+    values: dict[str, object] = {}
+    for i, token in enumerate(argv):
+        if not token.startswith("--") or token[2:] in GLOBAL_FLAGS:
+            continue
+        name = token[2:].replace("-", "_")
+        nxt = argv[i + 1] if i + 1 < len(argv) else ""
+        if nxt.startswith("--"):
+            continue
+        values[name] = nxt
+    save_preset(feature, {k: v for k, v in values.items() if v})
 
 
 def flow_mass_send() -> None:
@@ -308,6 +457,8 @@ def flow_mass_send() -> None:
     argv = ["mass_send", "--accounts", accounts, "--targets", targets,
             "--text", text, "--interval-min", str(imin),
             "--interval-max", str(imax)]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
@@ -321,6 +472,8 @@ def flow_watch_chat() -> None:
             "--run-seconds", str(seconds)]
     if relay:
         argv += ["--relay", relay]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=bool(relay))
 
@@ -332,6 +485,8 @@ def flow_auto_reply() -> None:
     argv = ["auto_reply", "--accounts", accounts, "--rules", rules]
     if seconds:
         argv += ["--run-seconds", str(seconds)]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
@@ -342,6 +497,8 @@ def flow_puppet_chat() -> None:
     script = ask("剧本文件(如 script.yaml)")
     argv = ["puppet_chat", "--accounts", accounts, "--group", group,
             "--script", script]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
@@ -352,6 +509,8 @@ def flow_batch_invite() -> None:
     members = ask("要拉的人(手机号或用户名,逗号分隔)")
     argv = ["batch_invite", "--accounts", accounts, "--groups", groups,
             "--members", members]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
@@ -360,6 +519,8 @@ def flow_batch_join() -> None:
     accounts = pick_accounts()
     targets = ask("要加入的群(逗号分隔)")
     argv = ["batch_join", "--accounts", accounts, "--targets", targets]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
@@ -370,6 +531,8 @@ def flow_video_manage() -> None:
     action = ask("动作 join/speak/leave", "speak")
     argv = ["video_manage", "--accounts", accounts, "--link", link,
             "--action", action]
+    extend_argv(argv, argv[0])
+    remember(argv, argv[0], None)
     if show_plan(argv):
         run_live(argv, write=True)
 
