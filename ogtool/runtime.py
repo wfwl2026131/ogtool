@@ -32,7 +32,9 @@ class RunContext:
     def sender(self) -> DryRunSender | TelethonSender:
         if self._sender is None:
             self._sender = (
-                TelethonSender(self.settings) if self.live
+                # The store rides along so a client open can honour the
+                # account's bound proxy (the proxy page's assignment).
+                TelethonSender(self.settings, _store=self.store) if self.live
                 else DryRunSender(script=self.script)
             )
         return self._sender  # type: ignore[return-value]

@@ -769,6 +769,34 @@ class TelethonSender:
     #: caching here is what "success cached group call slug" actually meant -
     #: the page used to keep a synthesized string nobody consumed.
     _calls: dict[tuple[str, str], Any] = field(default_factory=dict)
+    #: The account store, when one was handed in: the proxy page binds a row to
+    #: an account and the accounts table carries it in the ``proxy`` column -
+    #: the reference client's per-account assignment, which wins over the
+    #: global settings proxy when a client opens.
+    _store: Any = field(default=None, repr=False)
+
+    def _proxy_for(self, account: str) -> Any:
+        """The proxy a fresh client for ``account`` connects through.
+
+        Resolution order mirrors the reference client's assignment model: the
+        account's bound proxy (``accounts.proxy`` column, written by
+        ``proxy --bind``) first, then the global settings proxy, then none.
+        A bound value that fails to parse degrades to the global one with a
+        printed line instead of dying here - the client still opens.
+        """
+        store = getattr(self, "_store", None)
+        if store is not None:
+            row = store.get_account(account)
+            bound = (getattr(row, "proxy", "") or "").strip() if row else ""
+            if bound:
+                try:
+                    tuple_value = _proxy_tuple(bound)
+                except ValueError as error:
+                    print(f"PROXY: {account} bound proxy unusable: {error}")
+                else:
+                    print(f"PROXY: {account} -> {bound}")
+                    return tuple_value
+        return self.settings.proxy.to_telethon() if self.settings.proxy else None
 
     def _client(self, account: str) -> Any:
         # Two lanes may reach for their first client at the same moment; the
@@ -802,7 +830,7 @@ class TelethonSender:
             from telethon.sync import TelegramClient
         except ImportError as error:  # pragma: no cover - live only
             raise RuntimeError("telethon is not installed") from error
-        proxy = self.settings.proxy.to_telethon() if self.settings.proxy else None
+        proxy = self._proxy_for(account)
         client = _AwaitedClient(
             TelegramClient(str(session_path), api_id, api_hash, proxy=proxy)
         )

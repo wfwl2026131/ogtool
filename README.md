@@ -59,6 +59,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 邀请监视 | `batch_invite_v2 --monitor-group <群> --monitor-seconds 0` | 蹲群等新人，进一个邀一个；首轮名单当基线不重复邀请；`--monitor-invite-all` 连老人一起邀 |
 | 断点续跑 | `batch_join --resume` / `batch_invite_v2 --resume` | 状态就是回执库：跳过已成功的（账号, 目标）/（handler, 群<-联系人），中断后接着跑不重发 |
 | 加群后验证 | `batch_join --verify-url <webhook> --verify-rounds 3 --verify-delay 5` | 每次进群成功后 POST `{feature,task,account,target}`，回 200 = 验证通过；不通重试，最终失败写 VERIFY_FAILED 回执行 |
+| 每账号代理绑定（v1.1.8+） | `proxy --add socks5://host:port --bind 账号=代理ID` | 代理页的"分配"落地：绑定后该账号的客户端直连绑定代理，未绑定的账号走 `config.yaml` 的全局 `proxy:`；绑定值解析不了就退回全局并打一行 PROXY 提示 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
