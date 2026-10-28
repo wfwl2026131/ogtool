@@ -87,6 +87,8 @@ FLAGS = (
          "PEER_FLOOD retries per invitee"),
     Flag("--output-dir", "output_dir", str,
          "directory for exports (default: exports under logs)"),
+    Flag("--resume/--no-resume", "resume", None,
+         "skip (handler, group<-contact) triples already invited"),
     Flag("--monitor-group", "monitor_group", str,
          "watch this group and invite members as they join"),
     Flag("--monitor-seconds", "monitor_seconds", int,
@@ -146,6 +148,8 @@ class InviteV2Config:
     peer_flood_target_max_retries: int = 3
     #: 监视模式 (MonitorInviteStrategy): 不吃静态名单, 蹲在 --monitor-group
     #: 里等新人进群, 进一个邀一个, 直到 --monitor-seconds 用完 (0=直到打断)。
+    #: 断点续跑: results 表里该 feature 已 sent 的 (handler, group<-contact)。
+    resume: bool = False
     monitor_group: str = ""
     monitor_seconds: int = 0
     monitor_skip_existing: bool = True
@@ -211,6 +215,7 @@ class InviteV2Config:
             task_mark_enabled=bool(data.get("task_mark_enabled", True)),
             invites_per_request=num(data, "invites_per_request", 1, kind=int,
                                     minimum=1),
+            resume=bool(data.get("resume", False)),
             monitor_group=text(data, "monitor_group"),
             monitor_seconds=num(data, "monitor_seconds", 0, kind=int),
             monitor_skip_existing=bool(data.get("monitor_skip_existing",
@@ -462,6 +467,15 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
                       target_success_cap=config.target_success_cap,
                       exec_cap=config.exec_cap,
                       cap_by=config.limit_count_type)
+    if config.resume:
+        done = ctx.store.sent_pairs(FEATURE)
+        before = len(jobs)
+        jobs = [job for job in jobs
+                if (job[0], f"{job[1]}<-{job[2]}") not in done]
+        skipped = before - len(jobs)
+        if skipped:
+            print(f"RESUME: skipping {skipped} already-invited "
+                  f"contact(s); {len(jobs)} left")
 
     header(
         config.task_name,

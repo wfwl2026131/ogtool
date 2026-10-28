@@ -234,3 +234,25 @@ def test_monitor_invites_who_joins_after_the_baseline(ctx, capsys,
     out = capsys.readouterr().out
     assert "1 new member(s)" in out
     assert _monitor.CALLS and _monitor.CALLS[0][2] == "@new1"
+
+
+def test_resume_skips_already_invited_triples(ctx, capsys, store):
+    """--resume drops (handler, group<-contact) pairs the receipts carry."""
+    from ogtool.features._common import open_task
+    from ogtool.features.batch_invite_v2 import FEATURE, InviteV2Config, build_jobs, run
+
+    config = InviteV2Config(
+        account_labels=["acc1"],
+        targets=["https://t.me/c/3965371671"],
+        contacts=["@new1", "@new2"],
+        resume=True,
+    )
+    task = open_task(ctx, "prior-invite", FEATURE, {}, 1)
+    store.add_result(task.id, "acc1",
+                     "https://t.me/c/3965371671<-@new1", "sent")
+
+    jobs = build_jobs(config.targets, config.contacts, ["acc1"])
+    assert len(jobs) == 2
+    assert run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "RESUME: skipping 1 already-invited contact(s); 1 left" in out

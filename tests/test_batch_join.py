@@ -393,3 +393,24 @@ def test_leave_mode_is_gone_and_request_timeout_says_what_it_does():
     with pytest.raises(ConfigError):
         JoinConfig.from_dict({"batch_join": {"request_timeout": 0.5}},
                              _settings())
+
+
+def test_resume_skips_pairs_the_results_table_already_ok(ctx, capsys,
+                                                         store, monkeypatch):
+    """--resume filters (account, target) pairs the receipts already sent."""
+    from ogtool.features._common import open_task
+    from ogtool.features.batch_join import FEATURE, JoinConfig, run
+
+    config = JoinConfig(
+        account_labels=["acc1"],
+        targets=parse_many(["https://t.me/c/3965371671"], "custom"),
+        resume=True,
+    )
+    task = open_task(ctx, "prior-run", FEATURE, {}, 1)
+    store.add_result(task.id, "acc1", "3965371671", "sent")
+
+    assert run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "RESUME: skipping 1 already-done pair(s)" in out
+    assert "Processed: 0 / 0" in out
+    assert "ok: 0" in out

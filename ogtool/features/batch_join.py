@@ -72,6 +72,8 @@ FLAGS = (
     Flag("--mute-private", "mute_private", None, "mute joined private chats",
          action="store_true"),
     Flag("--mute-interval", "mute_interval", float, "gap between mutes, seconds"),
+    Flag("--resume/--no-resume", "resume", None,
+         "skip (account, target) pairs this feature already joined"),
     Flag("--leave-interval", "leave_interval", float, "gap between leaves, seconds"),
 )
 
@@ -140,6 +142,8 @@ class JoinConfig:
     #: reference client's media autoload preferences - a GUI concept this CLI
     #: has no counterpart for, and the join page never downloaded media. The
     #: nine flags were display-only and are gone.
+    #: 断点续跑: 跳过 results 表里这个 feature 已经 ok 的 (账号, 目标)。
+    resume: bool = False
     task_name: str = "batch-join"
 
     @classmethod
@@ -176,6 +180,7 @@ class JoinConfig:
             mute_private=bool(data.get("mute_private", False)),
             mute_interval=_seconds(data, "mute_interval", 0.0),
             leave_interval=_seconds(data, "leave_interval", 0.0),
+            resume=bool(data.get("resume", False)),
             task_name=name_of(raw, data, "batch-join"),
         )
         config.validate()
@@ -357,6 +362,15 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
 
     jobs = [Job(account=account, subject=target.ref, target=target)
             for account, target in pairs]
+    if config.resume:
+        done = ctx.store.sent_pairs(FEATURE)
+        before = len(jobs)
+        jobs = [job for job in jobs
+                if (job.account, job.subject) not in done]
+        skipped = before - len(jobs)
+        if skipped:
+            print(f"RESUME: skipping {skipped} already-done pair(s); "
+                  f"{len(jobs)} left")
     outcome = execute(jobs, ctx, call, total=len(jobs),
                       success_cap=config.success_cap, exec_cap=config.exec_cap,
                       flood_cap=config.flood_cap, retry_cap=1, label="group",
