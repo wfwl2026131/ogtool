@@ -1,14 +1,27 @@
-"""#15 proxy - the proxy table: add, import, paste, clear, test, bind.
+"""#15 proxy - the proxy table: add, import, paste, clear, test, bind, rotate.
 
 The page is the only table view in the console: a list of proxies with a status
 column, plus select all / import / paste / clear / delete / speed test.  Rows live in the
 ``proxies`` table; binding one to an account writes the account's ``proxy``
 column, which is what the sender reads when it opens a client.
+
+Two behaviours mirror the reference client's dynamic-proxy page:
+
+- a row whose URL carries ``{SessionKey}`` (optionally ``{SessionKey#12}`` for
+  a longer key, ``{SessionKey#d#12}`` for digits only) is a rotating-residential
+  template: binding expands one fresh random key **per account**, so every
+  account pins its own exit IP for the session lifetime - the row itself keeps
+  the raw template;
+- ``--rotate`` rebinds any account whose bound proxy tested as ``timeout`` to
+  the fastest ``ok`` row (the reference's ``ProxyRotationManager`` doing its
+  ``startNextCheck``).
 """
 
 from __future__ import annotations
 
 import random
+import re
+import string
 from dataclasses import dataclass, field
 
 from ..config import ConfigError, Settings
@@ -64,6 +77,38 @@ def parse_proxy(value: str) -> Proxy:
     return Proxy(kind=kind, host=host, port=port, user=user, password=password)
 
 
+SESSION_KEY = re.compile(r"\{SessionKey(?:#d)?(?:#(\d+))?\}")
+
+
+def resolve_session_keys(url: str, rng: random.Random) -> str:
+    """Expand every ``{SessionKey}`` placeholder into one fresh sticky key.
+
+    ``{SessionKey}`` -> 8 alphanumerics, ``{SessionKey#12}`` -> 12
+    alphanumerics, ``{SessionKey#d#12}`` -> 12 digits - the exact grammar the
+    reference client's dynamic-proxy help text spells out.  One expansion per
+    placeholder: every account bound from the same template row gets its own
+    key, which is what pins a different exit IP to each account.
+    """
+    def _one(match: re.Match[str]) -> str:
+        length = int(match.group(1) or 8)
+        alphabet = (string.digits if "#d" in match.group(0)
+                    else string.ascii_letters + string.digits)
+        return "".join(rng.choice(alphabet) for _ in range(length))
+
+    return SESSION_KEY.sub(_one, url)
+
+
+def _sticky(proxy: Proxy, rng: random.Random) -> Proxy:
+    """A concrete copy of ``proxy`` with any session-key template expanded."""
+    url = proxy.url()
+    if "{SessionKey" not in url:
+        return proxy
+    resolved = parse_proxy(resolve_session_keys(url, rng))
+    resolved.latency_ms = proxy.latency_ms
+    resolved.status = proxy.status
+    return resolved
+
+
 FLAGS = (
     Flag("--add", "add", str, "add one proxy (socks5://host:port)", action="append"),
     Flag("--import", "import_file", str, "file with one proxy per line"),
@@ -74,6 +119,10 @@ FLAGS = (
          action="store_true"),
     Flag("--timeout-ms", "timeout_ms", int, "a proxy slower than this is a timeout"),
     Flag("--bind", "bind", str, "account=proxy_id (repeatable)", action="append"),
+    Flag("--rotate", "rotate", None,
+         "move accounts off a proxy whose last test timed out to the fastest "
+         "ok one (combine with --test for a fresh check)",
+         action="store_true"),
 )
 
 
@@ -86,6 +135,7 @@ class ProxyConfig:
     delete: int = 0
     clear: bool = False
     test: bool = False
+    rotate: bool = False
     timeout_ms: int = 3000
     bind: list[str] = field(default_factory=list)
     task_name: str = "proxy"
@@ -108,6 +158,7 @@ class ProxyConfig:
             delete=num(data, "delete", 0, kind=int),
             clear=bool(data.get("clear", False)),
             test=bool(data.get("test", False)),
+            rotate=bool(data.get("rotate", False)),
             timeout_ms=num(data, "timeout_ms", 3000, kind=int),
             bind=[str(item) for item in bind],
             task_name=name_of(raw, data, "proxy"),
@@ -149,13 +200,16 @@ def run(config: ProxyConfig, ctx: RunContext) -> int:
         task = open_task(ctx, config.task_name, FEATURE,
                          {"add": config.add, "delete": config.delete,
                           "timeout": config.timeout_ms,
-                          "test": config.test},
+                          "test": config.test, "rotate": config.rotate},
                          planned=len(rows))
         _test(rows, config.timeout_ms, ctx, task)
         rows = ctx.store.list_proxies()
 
     if config.bind:
         _bind(rows, config, ctx)
+
+    if config.rotate:
+        _rotate(rows, ctx)
 
     rows = ctx.store.list_proxies()
     print(f"总计: {len(rows)}")
@@ -213,6 +267,7 @@ def _bind(rows: list[Proxy], config: ProxyConfig, ctx: RunContext) -> None:
         print("bind: no account bound (dry-run)")
         return
     by_id = {row.id: row for row in rows}
+    rng = random.Random()
     for spec in config.bind:
         label, _, target_id = spec.partition("=")
         label = label.strip()
@@ -220,12 +275,70 @@ def _bind(rows: list[Proxy], config: ProxyConfig, ctx: RunContext) -> None:
         if proxy is None:
             print(f"bind {label}: proxy not found: {target_id!r}")
             continue
-        ctx.store.bind_proxy(label, proxy)
-        answer = ctx.sender().set_proxy(label, proxy.url())  # the real URL
+        # A {SessionKey} template row expands per account: each account pins
+        # its own sticky key (its own exit IP) in the accounts.proxy column,
+        # while the table row keeps the raw template for the next account.
+        concrete = _sticky(proxy, rng)
+        ctx.store.bind_proxy(label, concrete)
+        stored = getattr(ctx.store.get_account(label), "proxy", "") or concrete.url()
+        answer = ctx.sender().set_proxy(label, stored)  # the real URL
         if answer.ok:
-            print(f"bind {label} -> #{proxy.id} {proxy.display()}")
+            print(f"bind {label} -> #{proxy.id} {concrete.display()}")
         else:
             print(f"bind {label} -> #{proxy.id} {answer.code} {answer.detail}")
+
+
+def _rotate(rows: list[Proxy], ctx: RunContext) -> None:
+    """Move accounts off a proxy that just timed out (startNextCheck's job).
+
+    Matching is by endpoint, not by URL: a bound {SessionKey} URL never equals
+    its template row's URL, but the host:port pair is what identifies the
+    proxy behind it.
+    """
+    accounts = ctx.bind([])
+    if not accounts:
+        print("rotate: no account bound (dry-run)")
+        return
+    healthy = sorted((row for row in rows if row.status == "ok"),
+                      key=lambda row: row.latency_ms)
+    dead = {(row.host, row.port) for row in rows if row.status == "timeout"}
+    if not dead:
+        print("ROTATE: nothing timed out, bindings stay")
+        return
+    if not healthy:
+        print("ROTATE: no healthy proxy, bindings stay")
+        return
+    rng = random.Random()
+    moved = 0
+    for account in accounts:
+        bound = (getattr(ctx.store.get_account(account.label), "proxy", "")
+                 or "").strip()
+        if _endpoint_of(bound) not in dead:
+            continue
+        target = healthy[0]
+        if _endpoint_of(bound) == (target.host, target.port):
+            target = healthy[1] if len(healthy) > 1 else None
+        if target is None:
+            continue
+        concrete = _sticky(target, rng)
+        ctx.store.bind_proxy(account.label, concrete)
+        stored = ctx.store.get_account(account.label).proxy
+        answer = ctx.sender().set_proxy(account.label, stored)
+        if answer.ok:
+            moved += 1
+            print(f"ROTATE: {account.label} -> #{target.id} "
+                  f"{concrete.display()} ({target.latency_ms} ms)")
+        else:
+            print(f"ROTATE: {account.label} -> #{target.id} "
+                  f"{answer.code} {answer.detail}")
+    print(f"ROTATE: {moved} account(s) moved")
+
+
+def _endpoint_of(url: str) -> tuple[str, int]:
+    """``socks5://user:pass@host:port`` -> ``(host, port)``."""
+    from urllib.parse import urlsplit
+    parts = urlsplit(url or "")
+    return (parts.hostname or "", parts.port or 0)
 
 
 @register(FEATURE)

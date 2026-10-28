@@ -60,6 +60,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 断点续跑 | `batch_join --resume` / `batch_invite_v2 --resume` | 状态就是回执库：跳过已成功的（账号, 目标）/（handler, 群<-联系人），中断后接着跑不重发 |
 | 加群后验证 | `batch_join --verify-url <webhook> --verify-rounds 3 --verify-delay 5` | 每次进群成功后 POST `{feature,task,account,target}`，回 200 = 验证通过；不通重试，最终失败写 VERIFY_FAILED 回执行 |
 | 每账号代理绑定（v1.1.8+） | `proxy --add socks5://host:port --bind 账号=代理ID` | 代理页的"分配"落地：绑定后该账号的客户端直连绑定代理，未绑定的账号走 `config.yaml` 的全局 `proxy:`；绑定值解析不了就退回全局并打一行 PROXY 提示 |
+| 动态代理+轮换（v1.1.9+） | `proxy --add 'socks5://user:pwd_session-{SessionKey}_lifetime-10m@host:port' --bind 账号=ID`；`proxy --test --rotate` | `{SessionKey}` 模板按账号各自展开成粘性会话键（8 位字母数字；`#12`=12 位；`#d#12`=纯数字），一个账号一个出口 IP；`--rotate` 把测速超时代理上的账号挪到最快的可用代理（对齐参考端 ProxyRotationManager） |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 

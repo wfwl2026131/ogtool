@@ -153,10 +153,12 @@ GENERIC: dict[str, dict] = {
         ],
     },
     "proxy": {
-        "label": "📶 代理配置(添加/测试)",
+        "label": "📶 代理配置(添加/测试/绑定/轮换)",
         "steps": [
             ("--add", "添加代理 host:port:user:pass(留空跳过)", "", "str"),
             ("--test", "测一遍所有代理", "", "flag"),
+            ("--bind", "绑定 账号=代理ID(留空跳过)", "", "str"),
+            ("--rotate", "把超时代理上的账号挪到最快可用代理", "", "flag"),
         ],
     },
     "settings": {
