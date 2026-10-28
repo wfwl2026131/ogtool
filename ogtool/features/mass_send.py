@@ -64,6 +64,11 @@ class MassSendConfig:
     remove_sent_custom_targets: bool = False
     custom_targets_file: str = ""
     last_media_dir: str = ""
+    #: 循环群发: rounds>1 (or 0 = until interrupted) re-plans and re-sends
+    #: after each finished round, pausing ``loop_pause`` seconds between
+    #: rounds. Round 1 behaves exactly like a one-shot run.
+    loop_rounds: int = 1
+    loop_pause: float = 600.0
     task_name: str = "mass-send"
     dry_run: bool = True
 
@@ -111,6 +116,8 @@ class MassSendConfig:
             start_mode=str(send.get("start_mode") or "immediate").lower(),
             schedule_at=str(send.get("schedule_at") or ""),
             load_balance=bool(send.get("load_balance")),
+            loop_rounds=int(send.get("loop_rounds") or 1),
+            loop_pause=float(send.get("loop_pause") or 600.0),
             task_mark_enabled=bool(send.get("task_mark_enabled", True)),
             task_mark=str(send.get("task_mark") or ""),
             remove_sent_custom_targets=bool(
@@ -344,11 +351,42 @@ def validate(config: MassSendConfig, accounts: list[str],
 
 
 def run(config: MassSendConfig, ctx: RunContext) -> int:
+    """One-shot by default; ``loop_rounds`` re-runs the whole page.
+
+    Rounds>0 means exactly that many rounds; 0 means until interrupted.
+    Each round re-plans from scratch: the budget is re-read, the content
+    is rebuilt (AI pages get a fresh draft), and a round that plans zero
+    messages ends the loop instead of spinning on it.
+    """
     if not config.targets:
         ctx.note("no targets given", "error")
         print("ERROR: no targets (use --targets or --targets-file)")
         return 2
 
+    rounds = max(1, config.loop_rounds) if config.loop_rounds else 0
+    total_failed = done = 0
+    try:
+        while rounds == 0 or done < rounds:
+            done += 1
+            if done > 1 or rounds not in (0, 1):
+                print(f"ROUND {done}"
+                      + (f"/{rounds}" if rounds else ""))
+            code, planned = _run_once(config, ctx)
+            if code and config.loop_rounds:
+                ctx.note(f"round {done} finished with failures", "warn")
+            if planned == 0:
+                if done > 1:
+                    print("LOOP: round planned nothing - stopping")
+                break
+            if done < rounds or rounds == 0:
+                pause(ctx, max(0.0, config.loop_pause))
+    except KeyboardInterrupt:  # pragma: no cover - operator stops it
+        ctx.note("interrupted by the operator", "warn")
+        return 130
+    return 0 if not total_failed else 1
+
+
+def _run_once(config: MassSendConfig, ctx: RunContext) -> tuple[int, int]:
     accounts = ctx.bind(config.account_labels or None)
     if not accounts:
         ctx.note("no account bound, the plan is printed without one", "warn")
@@ -358,7 +396,7 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     for message in errors:
         print(f"ERROR: {message}")
     if errors:
-        return 2
+        return 2, 0
     for message in warnings:
         print(f"warning: {message}")
 
@@ -418,7 +456,7 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
                                  "planned")
         print("dry-run: nothing was sent")
         close_task(ctx, task, ok=len(planned), failed=0, status="dry-run")
-        return 0
+        return 0, len(planned)
 
     sender = ctx.sender()
     plan_lines = render(planned, contents, start)
@@ -469,7 +507,7 @@ def run(config: MassSendConfig, ctx: RunContext) -> int:
     sent, failed = counters["sent"], counters["failed"]
     close_task(ctx, task, ok=sent, failed=failed)
     print(f"DONE: sent={sent} failed={failed}")
-    return 0 if not failed else 1
+    return (0 if not failed else 1), len(planned)
 
 
 @register(FEATURE)

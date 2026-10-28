@@ -533,6 +533,10 @@ def _mass_send_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--daily-limit", type=int, default=None)
     parser.add_argument("--success-cap", type=int, default=None)
     parser.add_argument("--exec-cap", type=int, default=None)
+    parser.add_argument("--loop-rounds", type=int, default=None,
+                        help="send this many rounds (0 = until interrupted)")
+    parser.add_argument("--loop-pause", type=float, default=None,
+                        help="seconds between rounds")
 
 
 def _auto_reply_parser(parser: argparse.ArgumentParser) -> None:
@@ -616,6 +620,8 @@ def _mass_send_overrides(args: argparse.Namespace) -> dict[str, Any]:
         ("daily_limit", args.daily_limit),
         ("success_cap", args.success_cap),
         ("exec_cap", args.exec_cap),
+        ("loop_rounds", args.loop_rounds),
+        ("loop_pause", args.loop_pause),
     ):
         if value is not None:
             send[key] = value

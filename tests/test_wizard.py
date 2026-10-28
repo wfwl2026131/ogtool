@@ -200,7 +200,8 @@ def test_the_advanced_knobs_are_all_reachable_and_remembered(wizard,
     monkeypatch.chdir(tmp_path)          # PRESET_FILE lands in the fake tree
     answers = iter(["t1", "@x", "hi", "1", "2",
                     "f",                 # full mode
-                    "", "", "", "", "", "", "50", "", "",   # 9 knobs
+                    "", "", "", "", "", "", "50", "", "", "",
+                    "",   # 11 knobs (loop_rounds + loop_pause joined)
                     "yes",               # plan confirm
                     "yes"])              # write confirm
     monkeypatch.setattr("builtins.input", lambda _p="": next(answers))

@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import random
 import re
+from types import SimpleNamespace
 
 from ogtool.features.mass_send import (
+    ContentSpec,
     MassSendConfig,
     _interleave,
     run,
@@ -159,3 +161,56 @@ def test_an_empty_plan_does_not_crash_the_eta_line(ctx, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "PLAN: 0 messages" in out
     assert "ETA 0s" in out
+
+
+def test_loop_rounds_run_the_page_more_than_once(ctx, capsys, monkeypatch):
+    """--loop-rounds 2 plans and sends twice, with ROUND headers."""
+    from ogtool.features.mass_send import MassSendConfig, run
+
+    monkeypatch.setattr("ogtool.features.mass_send.pause",
+                        lambda *a, **k: None)
+    config = MassSendConfig(
+        account_labels=["acc1"],
+        targets=parse_many(["@one"], "custom"),
+        content=ContentSpec(text="loop me"),
+        limits=Limits(account_min=0.0, account_max=0.0),
+        loop_rounds=2,
+        loop_pause=0.0,
+    )
+    assert run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert out.count("ROUND 1") == 1 and out.count("ROUND 2") == 1
+    # each round produced its own PLAN and receipt
+    assert out.count("PLAN: 1 messages") == 2
+    assert out.count("dry-run: nothing was sent") == 2
+
+
+def test_an_empty_plan_ends_the_loop(ctx, capsys, monkeypatch):
+    """A round that plans zero messages stops the loop instead of spinning."""
+    monkeypatch.setattr("ogtool.features.mass_send.pause",
+                        lambda *a, **k: None)
+    config = MassSendConfig(
+        account_labels=["acc1"],
+        targets=parse_many(["@one"], "custom"),
+        content=ContentSpec(text="loop me"),
+        limits=Limits(account_min=0.0, account_max=0.0,
+                      daily_limit=1),
+        loop_rounds=0,          # until interrupted; the budget stops it
+        loop_pause=0.0,
+    )
+    ctx.live = True
+
+    class Sender:
+        def send(self, *args, **kwargs):
+            return SimpleNamespace(ok=True, code="ok", detail="",
+                                   items=[], message_id=7)
+
+        def close(self, *args, **kwargs):
+            return None
+
+    ctx._sender = Sender()
+    assert run(config, ctx) == 0
+    out = capsys.readouterr().out
+    assert "PLAN: 1 messages" in out
+    assert "PLAN: 0 messages" in out
+    assert out.count("PLAN: 0 messages") == 1  # stopped right there
