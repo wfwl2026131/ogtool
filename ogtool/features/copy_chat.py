@@ -19,6 +19,7 @@ from pathlib import Path
 
 from ..ai import AIClient
 from ..config import ConfigError, Settings
+from ..disk_quota import COPY_CHAT, record_send, seed_budget
 from ..flags import Flag
 from ..limiter import format_duration
 from ..report import dedupe
@@ -62,50 +63,113 @@ CAPTURE_LIMIT = 200
 
 FLAGS = (
     Flag("--targets", "targets", str, "targets, comma separated"),
-    Flag("--targets-file", "files", str, "file with one target per line",
-         action="append"),
+    Flag(
+        "--targets-file", "files", str, "file with one target per line", action="append"
+    ),
     Flag("--sources", "sources", str, "source groups, comma separated"),
-    Flag("--sources-file", "source_files", str,
-         "file with one source per line", action="append"),
+    Flag(
+        "--sources-file",
+        "source_files",
+        str,
+        "file with one source per line",
+        action="append",
+    ),
     Flag("--copy-mode", "copy_mode", str, "copy, rewrite or ai"),
-    Flag("--capture-limit", "capture_limit", int,
-         "how many messages one source gives up (default 200)"),
-    Flag("--capture-minutes", "capture_minutes", int,
-         "how far back the capture goes"),
-    Flag("--daily-limit", "daily_limit", int,
-         "text messages one account may send per day"),
+    Flag(
+        "--capture-limit",
+        "capture_limit",
+        int,
+        "how many messages one source gives up (default 200)",
+    ),
+    Flag("--capture-minutes", "capture_minutes", int, "how far back the capture goes"),
+    Flag(
+        "--daily-limit",
+        "daily_limit",
+        int,
+        "text messages one account may send per day",
+    ),
     Flag("--multiplier", "multiplier", int, "message multiplier"),
     Flag("--polish", "polish", int, "polish level 0-3"),
-    Flag("--ai-polish-level", "ai_polish_level", int,
-         "aiPolishLevel: how hard the rewrite is (0-3)"),
-    Flag("--message-speed", "message_speed", int,
-         "messageSpeed: sent messages per minute, 0 = as fast as allowed"),
-    Flag("--lightweight", "lightweight_mode", None,
-         "lightweightMode: skip keyword replacement and media rewrite",
-         action="store_true"),
-    Flag("--ignore-bot", "ignore_bot_messages", None,
-         "drop messages captured from bots", action="store_true"),
-    Flag("--ignore-at", "ignore_at_messages", None,
-         "drop messages that mention someone", action="store_true"),
-    Flag("--ignore-tme", "ignore_tme_links", None,
-         "drop messages that carry a t.me link", action="store_true"),
-    Flag("--ignore-pinned", "ignore_pinned_messages", None,
-         "drop pinned messages", action="store_true"),
-    Flag("--ignore-admin", "ignore_admin_messages", None,
-         "drop messages posted by an admin", action="store_true"),
+    Flag(
+        "--ai-polish-level",
+        "ai_polish_level",
+        int,
+        "aiPolishLevel: how hard the rewrite is (0-3)",
+    ),
+    Flag(
+        "--message-speed",
+        "message_speed",
+        int,
+        "messageSpeed: sent messages per minute, 0 = as fast as allowed",
+    ),
+    Flag(
+        "--lightweight",
+        "lightweight_mode",
+        None,
+        "lightweightMode: skip keyword replacement and media rewrite",
+        action="store_true",
+    ),
+    Flag(
+        "--ignore-bot",
+        "ignore_bot_messages",
+        None,
+        "drop messages captured from bots",
+        action="store_true",
+    ),
+    Flag(
+        "--ignore-at",
+        "ignore_at_messages",
+        None,
+        "drop messages that mention someone",
+        action="store_true",
+    ),
+    Flag(
+        "--ignore-tme",
+        "ignore_tme_links",
+        None,
+        "drop messages that carry a t.me link",
+        action="store_true",
+    ),
+    Flag(
+        "--ignore-pinned",
+        "ignore_pinned_messages",
+        None,
+        "drop pinned messages",
+        action="store_true",
+    ),
+    Flag(
+        "--ignore-admin",
+        "ignore_admin_messages",
+        None,
+        "drop messages posted by an admin",
+        action="store_true",
+    ),
     Flag("--interval-min", "interval_min", float, "minimum send interval"),
     Flag("--interval-max", "interval_max", float, "maximum send interval"),
-    Flag("--filter-keywords", "filter_keywords", str,
-         "keywords, one per line; | separates alternatives; a blank line "
-         "starts the rule set of the next target"),
-    Flag("--filter-senders", "filter_senders", str,
-         "sender ids to drop, comma separated"),
-    Flag("--replacements", "replacements", str,
-         "left=right rewrites, one per line"),
-    Flag("--account-groups", "account_groups", str,
-         "one account list per target, comma separated, one line per target"),
-    Flag("--message", "messages", str, "captured source message, "
-         "peer|sender|text (repeatable)", action="append"),
+    Flag(
+        "--filter-keywords",
+        "filter_keywords",
+        str,
+        "keywords, one per line; | separates alternatives; a blank line "
+        "starts the rule set of the next target",
+    ),
+    Flag(
+        "--filter-senders", "filter_senders", str, "sender ids to drop, comma separated"
+    ),
+    Flag("--replacements", "replacements", str, "left=right rewrites, one per line"),
+    Flag(
+        "--account-groups",
+        "account_groups",
+        str,
+        "one account list per target, comma separated, one line per target",
+    ),
+    Flag(
+        "--message",
+        "messages",
+        str,
+        "captured source message, peer|sender|text (repeatable)",
+        action="append",
+    ),
 )
 
 
@@ -126,8 +190,7 @@ def keyword_groups(raw: object) -> list[list[str]]:
                 groups.append(current)
                 current = []
             continue
-        current.extend(part.strip() for part in line.split("|")
-                       if part.strip())
+        current.extend(part.strip() for part in line.split("|") if part.strip())
     if current:
         groups.append(current)
     return [dedupe(group) for group in groups if group]
@@ -152,8 +215,9 @@ def account_groups(raw: object) -> list[list[str]]:
     for line in lines:
         if not line.strip():
             continue
-        out.append([part.strip() for part in line.replace("|", ",").split(",")
-                    if part.strip()])
+        out.append(
+            [part.strip() for part in line.replace("|", ",").split(",") if part.strip()]
+        )
     return out
 
 
@@ -188,8 +252,12 @@ def ignore_reason(message: SourceMessage, ignores: dict[str, bool]) -> str:
     return ""
 
 
-def select(message: SourceMessage, keywords: list[str],
-           senders: list[str], ignores: dict[str, bool] | None = None) -> str:
+def select(
+    message: SourceMessage,
+    keywords: list[str],
+    senders: list[str],
+    ignores: dict[str, bool] | None = None,
+) -> str:
     """``""`` when the message survives, else the reason it is dropped."""
     if senders and message.sender in senders:
         return "sender"
@@ -224,8 +292,7 @@ class CopyConfig:
     ignores: dict[str, bool] = field(default_factory=dict)
     #: ``keywordReplacementGroups``: per-target replacement sets, the same way
     #: ``filterKeywordGroups`` gives per-target keywords.
-    replacement_groups: list[list[tuple[str, str]]] = field(
-        default_factory=list)
+    replacement_groups: list[list[tuple[str, str]]] = field(default_factory=list)
     #: ``sourcesPerTarget``: how many sources feed one target in multi-to-one.
     sources_per_target: int = 0
     #: ``dailyTextLimitPerAccount``: a per-account cap under the task cap.
@@ -249,12 +316,10 @@ class CopyConfig:
         if not targets:
             raise ConfigError(f"{SECTION}: no target given (--targets)")
 
-        sources = [target.ref for target in targets_of(data, "sources",
-                                                       kind="group")]
+        sources = [target.ref for target in targets_of(data, "sources", kind="group")]
         if len(sources) > SOURCE_LIMIT:
             raise ConfigError(
-                f"{SECTION}: {len(sources)} sources, the page allows "
-                f"{SOURCE_LIMIT}"
+                f"{SECTION}: {len(sources)} sources, the page allows {SOURCE_LIMIT}"
             )
 
         return cls(
@@ -264,37 +329,39 @@ class CopyConfig:
             copy_mode=text(data, "copy_mode", "copy"),
             pairing=pairing_of(data),
             capture_limit=num(data, "capture_limit", 0, kind=int, minimum=0),
-            capture_minutes=num(data, "capture_minutes", 60, kind=int,
-                                minimum=0),
+            capture_minutes=num(data, "capture_minutes", 60, kind=int, minimum=0),
             daily_limit=num(data, "daily_limit", 0, kind=int, minimum=0),
             multiplier=num(data, "multiplier", 1, kind=int, minimum=1),
             polish=num(data, "polish", 0, kind=int, minimum=0),
             interval_min=num(
-                data, "min_speech_interval_seconds",
-                num(data, "interval_min", 5.0)),
+                data, "min_speech_interval_seconds", num(data, "interval_min", 5.0)
+            ),
             interval_max=num(
-                data, "max_speech_interval_seconds",
-                num(data, "interval_max", 12.0)),
+                data, "max_speech_interval_seconds", num(data, "interval_max", 12.0)
+            ),
             replacement_groups=replacement_groups(
-                data.get("keyword_replacement_groups")),
+                data.get("keyword_replacement_groups")
+            ),
             groups=keyword_groups(data.get("filter_keywords")),
             senders=_split(data.get("filter_senders")),
             replacements=parse_replacements(_lines(data.get("replacements"))),
             account_groups=account_groups(data.get("account_groups")),
             messages=from_config(data),
             ignores=read_ignores(data),
-            ai_polish_level=num(data, "ai_polish_level", 0, kind=int,
-                                minimum=0),
-            ai_polish_batch_size=num(data, "ai_polish_batch_size", 10,
-                                     kind=int, minimum=1),
-            sources_per_target=num(data, "sources_per_target", 0, kind=int,
-                                   minimum=0),
+            ai_polish_level=num(data, "ai_polish_level", 0, kind=int, minimum=0),
+            ai_polish_batch_size=num(
+                data, "ai_polish_batch_size", 10, kind=int, minimum=1
+            ),
+            sources_per_target=num(data, "sources_per_target", 0, kind=int, minimum=0),
             daily_text_limit_per_account=num(
-                data, "daily_text_limit_per_account", 0, kind=int, minimum=0),
+                data, "daily_text_limit_per_account", 0, kind=int, minimum=0
+            ),
             collection_interval_minutes=num(
-                data, "collection_interval_minutes", 0, kind=int, minimum=0),
-            crossover_message_id=num(data, "crossover_message_id", 0, kind=int,
-                                     minimum=0),
+                data, "collection_interval_minutes", 0, kind=int, minimum=0
+            ),
+            crossover_message_id=num(
+                data, "crossover_message_id", 0, kind=int, minimum=0
+            ),
             message_speed=num(data, "message_speed", 0, kind=int, minimum=0),
             lightweight_mode=bool(data.get("lightweight_mode")),
             task_name=name_of(raw, data, "copy-chat"),
@@ -344,8 +411,9 @@ def polish_text(ai: object, text: str, level: int) -> tuple[str, str]:
     """
     if level not in POLISH_PROMPTS or not text.strip():
         return text, "none"
-    prompt = (f"{POLISH_PROMPTS[level]}\n\n原文：\n{text}\n\n"
-              f"只输出改写后的正文，不要解释。")
+    prompt = (
+        f"{POLISH_PROMPTS[level]}\n\n原文：\n{text}\n\n只输出改写后的正文，不要解释。"
+    )
     generated = ai.generate(prompt, fallback=text)  # type: ignore[attr-defined]
     answer = (generated.response or "").strip()
     if answer and generated.source == "ai":
@@ -378,21 +446,25 @@ def parse_batch(answer: str, count: int) -> list[str | None]:
     return [found.get(index) for index in range(count)]
 
 
-def polish_batch(ai: object, texts: list[str], level: int,
-                 batch_size: int = 10) -> tuple[list[str], int, int]:
+def polish_batch(
+    ai: object, texts: list[str], level: int, batch_size: int = 10
+) -> tuple[list[str], int, int]:
     """Rewrite *texts* in batches; returns (texts, applied, failed_batches)."""
     out = list(texts)
     applied = 0
     failed = 0
     size = max(1, batch_size)
     for start in range(0, len(texts), size):
-        chunk = texts[start:start + size]
+        chunk = texts[start : start + size]
         if level not in POLISH_PROMPTS:
             break
-        listing = "\n".join(f"{index}. {text}" for index, text in
-                             enumerate(chunk, start=1))
-        prompt = (f"{POLISH_PROMPTS[level]}\n\n待改写（按编号逐条返回，"
-                  f"每条一行，格式「编号. 正文」）：\n{listing}")
+        listing = "\n".join(
+            f"{index}. {text}" for index, text in enumerate(chunk, start=1)
+        )
+        prompt = (
+            f"{POLISH_PROMPTS[level]}\n\n待改写（按编号逐条返回，"
+            f"每条一行，格式「编号. 正文」）：\n{listing}"
+        )
         generated = ai.generate(prompt, fallback="")  # type: ignore[attr-defined]
         if generated.source != "ai":
             failed += 1
@@ -400,8 +472,10 @@ def polish_batch(ai: object, texts: list[str], level: int,
         answers = parse_batch(generated.response or "", len(chunk))
         if not any(answers):
             failed += 1
-            print(f"ai polish batch empty at {start + 1}.."
-                  f"{start + len(chunk)}/{len(texts)}")
+            print(
+                f"ai polish batch empty at {start + 1}.."
+                f"{start + len(chunk)}/{len(texts)}"
+            )
             continue
         for offset, answer in enumerate(answers):
             if answer:
@@ -410,8 +484,9 @@ def polish_batch(ai: object, texts: list[str], level: int,
     return out, applied, failed
 
 
-def polish_plan(plans: list[TargetPlan], ai: object, level: int,
-                batch_size: int = 10) -> int:
+def polish_plan(
+    plans: list[TargetPlan], ai: object, level: int, batch_size: int = 10
+) -> int:
     """Rewrite the kept messages of every plan; returns how many changed.
 
     The plans share one capture, so a message is rewritten once and then sent
@@ -441,8 +516,7 @@ def polish_plan(plans: list[TargetPlan], ai: object, level: int,
 
 
 def _split(value: object) -> list[str]:
-    return [part.strip() for part in ",".join(_lines(value)).split(",")
-            if part.strip()]
+    return [part.strip() for part in ",".join(_lines(value)).split(",") if part.strip()]
 
 
 #: The page's Copy Mode: how sources are paired with targets. Mixed (every
@@ -480,8 +554,9 @@ class TargetPlan:
     accounts: list[str]
 
 
-def sources_for_target(messages: list[SourceMessage], sources: list[str],
-                       per_target: int) -> list[SourceMessage]:
+def sources_for_target(
+    messages: list[SourceMessage], sources: list[str], per_target: int
+) -> list[SourceMessage]:
     """``sourcesPerTarget``: split the capture so each target sees its slice.
 
     The page's multi-to-one mode gives a target a fixed number of sources
@@ -490,14 +565,16 @@ def sources_for_target(messages: list[SourceMessage], sources: list[str],
     """
     if per_target <= 0 or not sources:
         return messages
-    chunks = [sources[index:index + per_target]
-              for index in range(0, len(sources), per_target)]
+    chunks = [
+        sources[index : index + per_target]
+        for index in range(0, len(sources), per_target)
+    ]
     return chunks
 
 
-def sources_for_pairing(config: CopyConfig, index: int,
-                        all_sources: list[SourceMessage],
-                        target_count: int) -> list[SourceMessage]:
+def sources_for_pairing(
+    config: CopyConfig, index: int, all_sources: list[SourceMessage], target_count: int
+) -> list[SourceMessage]:
     """The sources one target sees, under the page's Copy Mode.
 
     - mixed: every source, which is the old behaviour and stays the default;
@@ -521,13 +598,15 @@ def sources_for_pairing(config: CopyConfig, index: int,
     elif mode == "multi_to_one":
         per_target = max(1, config.sources_per_target or 1)
         start = (index * per_target) % len(peers)
-        chosen = [peers[(start + step) % len(peers)]
-                  for step in range(min(per_target, len(peers)))]
+        chosen = [
+            peers[(start + step) % len(peers)]
+            for step in range(min(per_target, len(peers)))
+        ]
     else:  # grouped
         blocks = max(1, min(target_count, len(peers)))
         size = max(1, -(-len(peers) // blocks))
         block = index % blocks
-        chosen = peers[block * size:(block + 1) * size]
+        chosen = peers[block * size : (block + 1) * size]
     allowed = set(chosen)
     return [message for message in all_sources if message.peer in allowed]
 
@@ -538,21 +617,26 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
     if config.crossover_message_id:
         # Passive mode starts after the crossover: everything up to and
         # including it was already handled by the previous run.
-        all_sources = [message for message in all_sources
-                       if message.message_id > config.crossover_message_id]
-    chunks = sources_for_target(all_sources, config.sources,
-                                config.sources_per_target) \
-        if config.sources_per_target else None
+        all_sources = [
+            message
+            for message in all_sources
+            if message.message_id > config.crossover_message_id
+        ]
+    chunks = (
+        sources_for_target(all_sources, config.sources, config.sources_per_target)
+        if config.sources_per_target
+        else None
+    )
     plans: list[TargetPlan] = []
     for index, target in enumerate(config.targets):
         sources = all_sources
         if config.pairing != "mixed":
-            sources = sources_for_pairing(config, index, all_sources,
-                                          len(config.targets))
+            sources = sources_for_pairing(
+                config, index, all_sources, len(config.targets)
+            )
         if chunks:
             allowed = set(chunks[index % len(chunks)])
-            sources = [message for message in all_sources
-                       if message.peer in allowed]
+            sources = [message for message in all_sources if message.peer in allowed]
         keywords = rule_for(config.groups, index)
         collected = Collected(scanned=len(sources))
         for message in sources:
@@ -560,20 +644,21 @@ def plan_targets(config: CopyConfig, labels: list[str]) -> list[TargetPlan]:
             if reason:
                 collected.drop(reason)
                 continue
-            rules = (rule_for(config.replacement_groups, index)
-                     or config.replacements)
-            if (rules and message.text and not config.lightweight_mode):
+            rules = rule_for(config.replacement_groups, index) or config.replacements
+            if rules and message.text and not config.lightweight_mode:
                 # Replace on a copy: the same capture feeds every target, and
                 # a second pass would apply the rules twice.
-                message = replace(
-                    message, text=replace_keywords(message.text, rules))
+                message = replace(message, text=replace_keywords(message.text, rules))
             collected.kept.append(message)
         if index < len(config.account_groups) and config.account_groups[index]:
             accounts = config.account_groups[index]
         else:
             accounts = labels
-        plans.append(TargetPlan(target=target, keywords=keywords,
-                                collected=collected, accounts=accounts))
+        plans.append(
+            TargetPlan(
+                target=target, keywords=keywords, collected=collected, accounts=accounts
+            )
+        )
     return plans
 
 
@@ -586,15 +671,20 @@ def effective_limit(config: CopyConfig, is_text: bool) -> int:
     counts text. A text message therefore obeys whichever is smaller, and media
     obeys the task cap alone.
     """
-    limits = [value for value in (
-        config.daily_limit,
-        config.daily_text_limit_per_account if is_text else 0,
-    ) if value > 0]
+    limits = [
+        value
+        for value in (
+            config.daily_limit,
+            config.daily_text_limit_per_account if is_text else 0,
+        )
+        if value > 0
+    ]
     return min(limits) if limits else 0
 
 
-def pick(accounts: list[str], budget: dict[str, int], limit: int,
-         offset: int) -> str | None:
+def pick(
+    accounts: list[str], budget: dict[str, int], limit: int, offset: int
+) -> str | None:
     """The next account of this target that still has budget today."""
     if not accounts:
         return None
@@ -618,10 +708,15 @@ def poll_count(minutes: int, interval: int) -> int:
     return max(1, -(-minutes // interval))
 
 
-def capture(sender: object, account: str, sources: list[str], minutes: int,
-            limit: int = CAPTURE_LIMIT, interval: int = 0,
-            sleep: object = time.sleep) -> tuple[list[SourceMessage],
-                                                 list[tuple[str, str]]]:
+def capture(
+    sender: object,
+    account: str,
+    sources: list[str],
+    minutes: int,
+    limit: int = CAPTURE_LIMIT,
+    interval: int = 0,
+    sleep: object = time.sleep,
+) -> tuple[list[SourceMessage], list[tuple[str, str]]]:
     """Read the source chats live; ``(messages, failures)``.
 
     The capture window is the page's ``copy back for N minutes``; the limit is
@@ -641,24 +736,29 @@ def capture(sender: object, account: str, sources: list[str], minutes: int,
     window = interval if interval > 0 else minutes
     for index in range(polls):
         if index:
-            print(f"collector: sleeping {interval} min before poll "
-                  f"{index + 1}/{polls}")
+            print(f"collector: sleeping {interval} min before poll {index + 1}/{polls}")
             sleep(interval * 60)  # type: ignore[operator]
         entries: list[str] = []
         for source in sources:
             target = parse_many([source], "group")[0]
-            result = sender.history(account, target,  # type: ignore[attr-defined]
-                                    minutes=window, limit=limit,
-                                    media_dir=media_dir)
+            result = sender.history(
+                account,
+                target,  # type: ignore[attr-defined]
+                minutes=window,
+                limit=limit,
+                media_dir=media_dir,
+            )
             if not result.ok:
                 if (source, result.code) not in failures:
                     failures.append((source, result.code))
                 print(f"source={source} capture failed: {result.code}")
                 continue
             entries.extend(result.items)
-            print(f"source={source} captured {len(result.items)}/{result.count} "
-                  f"minutes={window} limit={limit}"
-                  + (f" poll={index + 1}/{polls}" if polls > 1 else ""))
+            print(
+                f"source={source} captured {len(result.items)}/{result.count} "
+                f"minutes={window} limit={limit}"
+                + (f" poll={index + 1}/{polls}" if polls > 1 else "")
+            )
         fresh = 0
         for message in parse_source_messages(entries):
             key = (message.peer, message.message_id)
@@ -678,15 +778,20 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     sender = ctx.sender()
     failures: list[tuple[str, str]] = []
     if ctx.live and not config.messages and config.sources and accounts:
-        messages, failures = capture(sender, labels[0], config.sources,
-                                     config.capture_minutes,
-                                     limit=config.capture_limit
-                                     or CAPTURE_LIMIT,
-                                     interval=config.collection_interval_minutes)
+        messages, failures = capture(
+            sender,
+            labels[0],
+            config.sources,
+            config.capture_minutes,
+            limit=config.capture_limit or CAPTURE_LIMIT,
+            interval=config.collection_interval_minutes,
+        )
         config = replace(config, messages=messages)
         if not messages and failures:
-            print("ERROR: no source history was captured: "
-                  + ", ".join(f"{source}={code}" for source, code in failures))
+            print(
+                "ERROR: no source history was captured: "
+                + ", ".join(f"{source}={code}" for source, code in failures)
+            )
             return 1
     plans = plan_targets(config, labels)
     total = sum(len(plan.collected.kept) for plan in plans) * config.multiplier
@@ -694,7 +799,7 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     header(
         config.task_name,
         accounts=f"{len(accounts)}"
-                 + (" (no account bound, plan only)" if not accounts else ""),
+        + (" (no account bound, plan only)" if not accounts else ""),
         targets=len(config.targets),
         sources=f"{len(config.sources)}/{SOURCE_LIMIT}",
         captured=len(config.messages),
@@ -709,16 +814,21 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
         queue=total,
         sources_per_target=config.sources_per_target or "-",
         daily_text_limit=config.daily_text_limit_per_account or "-",
-        collection_interval=(f"{config.collection_interval_minutes} min"
-                             if config.collection_interval_minutes else "-"),
+        collection_interval=(
+            f"{config.collection_interval_minutes} min"
+            if config.collection_interval_minutes
+            else "-"
+        ),
         crossover=(config.crossover_message_id or "-"),
     )
     if config.pairing in GATED_MODES:
         # The reference refuses these two modes without a permission. This
         # rebuild has no licence layer at all, so the gate is reported instead
         # of enforced - and the mode still behaves as the page describes.
-        print(f"permission: {GATED_MODES[config.pairing]} "
-              f"(reference gate, not enforced here)")
+        print(
+            f"permission: {GATED_MODES[config.pairing]} "
+            f"(reference gate, not enforced here)"
+        )
     on = [name for name, value in config.ignores.items() if value]
     print("忽略开关：" + ("  ".join(on) if on else "全部关闭"))
     level = polish_level(config)
@@ -730,23 +840,42 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
     if config.lightweight_mode:
         print("lightweight mode: no rewrite, no replacements")
 
-    task = open_task(ctx, config.task_name, FEATURE,
-                     {"targets": config.targets,
-                      "sources": config.sources}, total)
+    task = open_task(
+        ctx,
+        config.task_name,
+        FEATURE,
+        {"targets": config.targets, "sources": config.sources},
+        total,
+    )
     if ctx.live and level:
-        polished = polish_plan(plans, AIClient(ctx.settings.ai,
-                                              ctx.settings.ai.timeout),
-                               level, config.ai_polish_batch_size)
+        polished = polish_plan(
+            plans,
+            AIClient(ctx.settings.ai, ctx.settings.ai.timeout),
+            level,
+            config.ai_polish_batch_size,
+        )
         print(f"polished: {polished} message(s) at level {level}")
     rng = random.Random()
     ok = failed = skipped = 0
     waited = 0.0
     index = 0
+    # The daily budget reads the disk counters (the QuotaDiskWriter machine)
+    # and live successes write them back, so a restart does not hand a spent
+    # account a fresh day. A dry run spends nothing.
     budget: dict[str, int] = {}
+    if ctx.live:
+        budget = {
+            account: success
+            for account, (success, _attempt) in seed_budget(
+                ctx.store, COPY_CHAT, labels
+            ).items()
+        }
 
     for plan in plans:
-        print(f"target={plan.target} keywords={plan.keywords or '-'} "
-              f"{plan.collected.summary()}")
+        print(
+            f"target={plan.target} keywords={plan.keywords or '-'} "
+            f"{plan.collected.summary()}"
+        )
         target: Target = parse_many([plan.target], "custom")[0]
         for message in plan.collected.kept:
             for _ in range(config.multiplier):
@@ -755,8 +884,10 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                 if account is None:
                     skipped += 1
                     index += 1
-                    print(f"skipped: no account under the daily limit "
-                          f"({limit}) for {target.display()}")
+                    print(
+                        f"skipped: no account under the daily limit "
+                        f"({limit}) for {target.display()}"
+                    )
                     continue
                 index += 1
                 delay = rng.uniform(config.interval_min, config.interval_max)
@@ -768,29 +899,47 @@ def run(config: CopyConfig, ctx: RunContext) -> int:
                 body = Content(text=message.text, media=message.media)
                 pause(ctx, delay)
                 outcome = sender.send(account, target, body)
+                if ctx.live:
+                    record_send(ctx.store, COPY_CHAT, account, ok=outcome.ok)
                 if outcome.ok:
                     ok += 1
                     budget[account] = budget.get(account, 0) + 1
-                    record(ctx, task, account, target.display(), True,
-                           detail=message.sender)
+                    record(
+                        ctx,
+                        task,
+                        account,
+                        target.display(),
+                        True,
+                        detail=message.sender,
+                    )
                     state = "ok"
                 else:
                     failed += 1
-                    record(ctx, task, account, target.display(), False,
-                           outcome.code, detail=message.sender)
+                    record(
+                        ctx,
+                        task,
+                        account,
+                        target.display(),
+                        False,
+                        outcome.code,
+                        detail=message.sender,
+                    )
                     state = outcome.code
                 marker = "✅ SENT" if state == "ok" else "❌ FAIL"
-                print(f"{marker} [{index:03d}/{total:03d}] target={target.display()} "
-                      f"account={account} source={message.sender} "
-                      f"delay={delay:.0f}s text={message.text[:40]} -> {state}")
+                print(
+                    f"{marker} [{index:03d}/{total:03d}] target={target.display()} "
+                    f"account={account} source={message.sender} "
+                    f"delay={delay:.0f}s text={message.text[:40]} -> {state}"
+                )
 
     print(f"Processed: {ok + failed + skipped} / {total}")
     print(f"ok: {ok}")
     print(f"failed: {failed}")
     print(f"skipped: {skipped}")
     print(f"waited: {format_duration(waited)}")
-    print(f"PLAN: {total} messages, {len(labels)} accounts, "
-          f"ETA {format_duration(waited)}")
+    print(
+        f"PLAN: {total} messages, {len(labels)} accounts, ETA {format_duration(waited)}"
+    )
     close_task(ctx, task, ok=ok, failed=failed)
     return 0 if not failed else 1
 
@@ -815,4 +964,3 @@ __all__ = [
     "run",
     "select",
 ]
-

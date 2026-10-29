@@ -209,6 +209,14 @@ CREATE TABLE IF NOT EXISTS group_mgr (
     chat_type   INTEGER NOT NULL DEFAULT 1,
     old_owner   TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS daily_quota (
+    namespace TEXT NOT NULL,
+    account   TEXT NOT NULL,
+    day       TEXT NOT NULL,
+    success   INTEGER NOT NULL DEFAULT 0,
+    attempt   INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (namespace, account, day)
+);
 CREATE INDEX IF NOT EXISTS idx_translation_created
     ON translation(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
@@ -964,6 +972,97 @@ class Store:
                ORDER BY last_active DESC, group_id""",
             (owner_phone,),
         ).fetchall()
+
+    def bump_daily_quota(
+        self, namespace: str, account: str, day: str, *, success: bool
+    ) -> None:
+        """One send counted into the ``daily_quota`` table.
+
+        The reference's ``QuotaDiskWriter`` keeps the per-account counters on
+        disk so a restart does not hand a spent account a fresh budget
+        (:2241358 ``flushToDisk``). ``success`` and ``attempt`` are separate
+        columns because the reference checks both
+        (:1737953 "Success limit: %2, Attempt limit: %3").
+        """
+        self._conn.execute(
+            """INSERT INTO daily_quota (namespace, account, day, success, attempt)
+               VALUES (?, ?, ?, ?, 1)
+               ON CONFLICT(namespace, account, day) DO UPDATE SET
+                   success = success + excluded.success,
+                   attempt = attempt + 1""",
+            (namespace, account, day, int(success)),
+        )
+        self._conn.commit()
+
+    def daily_quota_counts(
+        self, namespace: str, account: str, day: str
+    ) -> tuple[int, int]:
+        """The (success, attempt) pair one account has spent in a namespace."""
+        row = self._conn.execute(
+            """SELECT success, attempt FROM daily_quota
+               WHERE namespace = ? AND account = ? AND day = ?""",
+            (namespace, account, day),
+        ).fetchone()
+        return (int(row["success"]), int(row["attempt"])) if row else (0, 0)
+
+    def daily_quota_all(self, namespace: str, day: str) -> dict[str, tuple[int, int]]:
+        """Every account's (success, attempt) pair for one namespace day."""
+        rows = self._conn.execute(
+            """SELECT account, success, attempt FROM daily_quota
+               WHERE namespace = ? AND day = ?""",
+            (namespace, day),
+        ).fetchall()
+        return {
+            row["account"]: (int(row["success"]), int(row["attempt"])) for row in rows
+        }
+
+    def prune_daily_quota(self, before_day: str, keep_days: int = 2) -> int:
+        """Drop quota days nobody needs anymore; returns the rows removed.
+
+        Yesterday's counts are still readable (the reference's own pages say
+        "wait until tomorrow"), so the default keeps two days.
+        """
+        days = self._conn.execute(
+            """SELECT DISTINCT day FROM daily_quota ORDER BY day""",
+        ).fetchall()
+        stale = [row["day"] for row in days if row["day"] < before_day][
+            : max(0, len(days) - keep_days)
+        ]
+        for day in stale:
+            self._conn.execute("DELETE FROM daily_quota WHERE day = ?", (day,))
+        if stale:
+            self._conn.commit()
+        return len(stale)
+
+    def reset_daily_quota(
+        self, namespace: str = "", account: str = "", day: str = ""
+    ) -> int:
+        """Clear the selected counters; at least one filter is required.
+
+        The day key is what makes the budget roll over, so a reset is an
+        operator's repair, not part of the machine - refusing the unfiltered
+        delete keeps it that way.
+        """
+        clauses: list[str] = []
+        params: list[str] = []
+        if namespace:
+            clauses.append("namespace = ?")
+            params.append(namespace)
+        if account:
+            clauses.append("account = ?")
+            params.append(account)
+        if day:
+            clauses.append("day = ?")
+            params.append(day)
+        if not clauses:
+            raise ValueError(
+                "a quota reset needs at least one filter: namespace, account or day"
+            )
+        cursor = self._conn.execute(
+            f"DELETE FROM daily_quota WHERE {' AND '.join(clauses)}", params
+        )
+        self._conn.commit()
+        return cursor.rowcount
 
     def count_sent_today(
         self,

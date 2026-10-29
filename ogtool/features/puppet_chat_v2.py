@@ -58,34 +58,61 @@ STATS_DIR = "puppet_chat"
 
 FLAGS = (
     Flag("--targets", "targets", str, "own groups/channels, comma separated"),
-    Flag("--targets-file", "files", str, "file with one target per line",
-         action="append"),
+    Flag(
+        "--targets-file", "files", str, "file with one target per line", action="append"
+    ),
     Flag("--pattern", "pattern", str, "script file (话术文件)"),
-    Flag("--patterns", "patterns", str, "extra script files (repeatable)",
-         action="append"),
+    Flag(
+        "--patterns",
+        "patterns",
+        str,
+        "extra script files (repeatable)",
+        action="append",
+    ),
     Flag("--mode-file", "mode_file", str, "mode file, optional"),
     Flag("--mode", "mode", str, "mode name inside the mode file"),
-    Flag("--startup-interval", "startup_interval", float,
-         "seconds between two accounts starting"),
-    Flag("--loop-interval", "loop_interval", float,
-         "minutes between two loops"),
+    Flag(
+        "--startup-interval",
+        "startup_interval",
+        float,
+        "seconds between two accounts starting",
+    ),
+    Flag("--loop-interval", "loop_interval", float, "minutes between two loops"),
     Flag("--loops", "loops", int, "how many times the script plays"),
-    Flag("--cycles", "cycles", int,
-         "executor cycles over every group and pattern"),
-    Flag("--cycle-interval", "cycle_interval", float,
-         "seconds between two cycles"),
-    Flag("--message-wait", "message_wait", float,
-         "seconds before next message (floor between sends)"),
+    Flag("--cycles", "cycles", int, "executor cycles over every group and pattern"),
+    Flag("--cycle-interval", "cycle_interval", float, "seconds between two cycles"),
+    Flag(
+        "--message-wait",
+        "message_wait",
+        float,
+        "seconds before next message (floor between sends)",
+    ),
     Flag("--multiplier", "multiplier", int, "message multiplier"),
-    Flag("--daily-limit", "daily_limit", int,
-         "text messages one account may send per day"),
-    Flag("--stats-dir", "stats_dir", str,
-         "where cycle stats are written (default data/puppet_chat)"),
-    Flag("--resume/--no-resume", "resume", None,
-         "skip lines the receipts already recorded as sent",
-         action="bool_pair"),
-    Flag("--listen", "listen", int,
-         "log incoming speech for N seconds after the run (0 = off)"),
+    Flag(
+        "--daily-limit",
+        "daily_limit",
+        int,
+        "text messages one account may send per day",
+    ),
+    Flag(
+        "--stats-dir",
+        "stats_dir",
+        str,
+        "where cycle stats are written (default data/puppet_chat)",
+    ),
+    Flag(
+        "--resume/--no-resume",
+        "resume",
+        None,
+        "skip lines the receipts already recorded as sent",
+        action="bool_pair",
+    ),
+    Flag(
+        "--listen",
+        "listen",
+        int,
+        "log incoming speech for N seconds after the run (0 = off)",
+    ),
 )
 
 
@@ -124,7 +151,8 @@ class PuppetV2Config:
         if not text(data, "pattern") and not text(data, "mode_file"):
             raise ConfigError(f"{SECTION}: no script or mode file given")
         pictures = text(data, "pictures") or str(
-            chat_pattern.default_picture_dir(settings.data_dir))
+            chat_pattern.default_picture_dir(settings.data_dir)
+        )
         return cls(
             account_labels=accounts_of(raw, data),
             targets=targets,
@@ -156,18 +184,19 @@ def _as_list(value: object) -> list[str]:
         return []
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
-    return [part.strip() for part in str(value).replace(",", "\n").splitlines()
-            if part.strip()]
+    return [
+        part.strip()
+        for part in str(value).replace(",", "\n").splitlines()
+        if part.strip()
+    ]
 
 
 def startup_offsets(labels: list[str], interval: float) -> dict[str, float]:
     """Account ``i`` starts ``i * interval`` seconds after the first one."""
-    return {label: index * max(0.0, interval)
-            for index, label in enumerate(labels)}
+    return {label: index * max(0.0, interval) for index, label in enumerate(labels)}
 
 
-def load_patterns(config: PuppetV2Config, base: Path) -> list[tuple[Path,
-                                                                     list]]:
+def load_patterns(config: PuppetV2Config, base: Path) -> list[tuple[Path, list]]:
     """Every script of the task, main one first, loaded and checked.
 
     The main pattern still resolves through the mode file the way #0 does;
@@ -200,15 +229,24 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
     loaded = load_patterns(config, base)
     offsets = startup_offsets(labels, config.startup_interval)
     stats_dir = Path(config.stats_dir or base / STATS_DIR)
-    slot_map = SlotMap(labels, daily_limit=config.daily_limit)
+    # The mapping's daily budget reads the disk counters and live sends
+    # write them back, so remapping decisions survive a restart (the
+    # QuotaDiskWriter machine); a dry run passes no store and spends nothing.
+    slot_map = SlotMap(
+        labels, daily_limit=config.daily_limit, store=ctx.store if ctx.live else None
+    )
 
-    per_cycle = len(config.targets) * sum(len(messages)
-                                          for _path, messages in loaded) \
-        * config.loops * config.multiplier
+    per_cycle = (
+        len(config.targets)
+        * sum(len(messages) for _path, messages in loaded)
+        * config.loops
+        * config.multiplier
+    )
     total = per_cycle * config.cycles
 
     wait, when = schedule_wait(
-        PuppetConfig(schedule_at=config.schedule_at), datetime.now(UTC))
+        PuppetConfig(schedule_at=config.schedule_at), datetime.now(UTC)
+    )
     if wait:
         print(f"schedule: {when} (waiting {format_duration(wait)})")
         pause(ctx, wait)
@@ -216,15 +254,14 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
     header(
         config.task_name,
         accounts=f"{len(accounts)}"
-                 + (" (no account bound, plan only)" if not accounts else ""),
+        + (" (no account bound, plan only)" if not accounts else ""),
         targets=len(config.targets),
         script=loaded[0][0].name,
         patterns=len(loaded),
         lines=sum(len(messages) for _path, messages in loaded),
         cycles=config.cycles,
         cycle_interval=f"{config.cycle_interval:.0f}s",
-        message_wait=f"{config.message_wait:.0f}s" if config.message_wait
-        else "off",
+        message_wait=f"{config.message_wait:.0f}s" if config.message_wait else "off",
         startup_interval=f"{config.startup_interval:.0f}s",
         loop_interval=f"{config.loop_interval:.0f} min",
         loops=config.loops,
@@ -236,22 +273,29 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
         preview="off" if config.disable_link_preview else "on",
     )
 
-    task = open_task(ctx, config.task_name, FEATURE,
-                     {"patterns": [str(path) for path, _ in loaded],
-                      "targets": config.targets, "cycles": config.cycles},
-                     total)
-    print(f"PuppetChatExecutor started - Task ID: {task.id}, "
-          f"{len(config.targets)} groups, {config.cycles} cycles, "
-          f"{len(loaded)} patterns")
+    task = open_task(
+        ctx,
+        config.task_name,
+        FEATURE,
+        {
+            "patterns": [str(path) for path, _ in loaded],
+            "targets": config.targets,
+            "cycles": config.cycles,
+        },
+        total,
+    )
+    print(
+        f"PuppetChatExecutor started - Task ID: {task.id}, "
+        f"{len(config.targets)} groups, {config.cycles} cycles, "
+        f"{len(loaded)} patterns"
+    )
 
     # ``--resume`` walks the receipts, not the stats file: the pairs the
     # feature already delivered as "sent" are skipped wherever they sit, the
     # way batch_join's restore works. The stats file records the cycles.
-    done = frozenset(ctx.store.sent_pairs(FEATURE)) if config.resume \
-        else frozenset()
+    done = frozenset(ctx.store.sent_pairs(FEATURE)) if config.resume else frozenset()
     if config.resume and done:
-        print(f"restore: {len(done)} already-sent pair(s) on file, "
-              f"skipping them")
+        print(f"restore: {len(done)} already-sent pair(s) on file, skipping them")
 
     ok_sum = failed_sum = skipped_sum = 0
     waited = 0.0
@@ -262,8 +306,9 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
             if ctx.live:
                 time.sleep(config.cycle_interval)
             else:
-                print(f"cycle {cycle}/{config.cycles} after "
-                      f"{config.cycle_interval:.0f}s")
+                print(
+                    f"cycle {cycle}/{config.cycles} after {config.cycle_interval:.0f}s"
+                )
         print(f"CYCLE {cycle}/{config.cycles}")
         cycle_ok = cycle_failed = cycle_skipped = 0
         for path, messages in loaded:
@@ -271,21 +316,31 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
                 account_labels=config.account_labels,
                 targets=config.targets,
                 pattern=str(path),
-                mode_file="", mode="",
+                mode_file="",
+                mode="",
                 loop_interval=config.loop_interval,
                 loops=config.loops,
                 multiplier=config.multiplier,
                 daily_limit=config.daily_limit,
-                polish=0, ai_polish=False,
+                polish=0,
+                ai_polish=False,
                 pictures=config.pictures,
                 disable_link_preview=config.disable_link_preview,
                 task_name=config.task_name,
             )
-            outcome = play(ctx, task, messages, playback, labels,
-                           startup_offsets=offsets, slot_map=slot_map,
-                           resume_pairs=done, index_base=index,
-                           message_wait=config.message_wait,
-                           total_override=total)
+            outcome = play(
+                ctx,
+                task,
+                messages,
+                playback,
+                labels,
+                startup_offsets=offsets,
+                slot_map=slot_map,
+                resume_pairs=done,
+                index_base=index,
+                message_wait=config.message_wait,
+                total_override=total,
+            )
             index += outcome.ok + outcome.failed + outcome.skipped
             cycle_ok += outcome.ok
             cycle_failed += outcome.failed
@@ -294,11 +349,18 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
         ok_sum += cycle_ok
         failed_sum += cycle_failed
         skipped_sum += cycle_skipped
-        entry = StatsFile(task=config.task_name, cycle=cycle, ok=cycle_ok,
-                          failed=cycle_failed, skipped=cycle_skipped)
+        entry = StatsFile(
+            task=config.task_name,
+            cycle=cycle,
+            ok=cycle_ok,
+            failed=cycle_failed,
+            skipped=cycle_skipped,
+        )
         written = entry.dump(stats_dir)
-        print(f"stats: {written.name} cycle={cycle} ok={cycle_ok} "
-              f"failed={cycle_failed} skipped={cycle_skipped}")
+        print(
+            f"stats: {written.name} cycle={cycle} ok={cycle_ok} "
+            f"failed={cycle_failed} skipped={cycle_skipped}"
+        )
 
     heard = 0
     if config.listen:
@@ -311,14 +373,21 @@ def run(config: PuppetV2Config, ctx: RunContext) -> int:
     print(f"started accounts: {', '.join(labels) or '-'}")
     if config.listen:
         print(f"speech: heard {heard} message(s)")
-    print(f"PLAN: {total} messages, {max(1, len(labels))} accounts, "
-          f"ETA {format_duration(waited)}")
+    print(
+        f"PLAN: {total} messages, {max(1, len(labels))} accounts, "
+        f"ETA {format_duration(waited)}"
+    )
     close_task(ctx, task, ok=ok_sum, failed=failed_sum)
     return 0 if not failed_sum else 1
 
 
-def _listen(config: PuppetV2Config, ctx: RunContext, labels: list[str],
-            targets: list[str], seconds: int) -> int:
+def _listen(
+    config: PuppetV2Config,
+    ctx: RunContext,
+    labels: list[str],
+    targets: list[str],
+    seconds: int,
+) -> int:
     """Keep the speech log open for ``seconds``; return what was heard.
 
     ``handleReceivedMessage`` / ``speechLogged``: after the puppet lines are
@@ -358,22 +427,26 @@ def _listen(config: PuppetV2Config, ctx: RunContext, labels: list[str],
     async def handler(event):  # noqa: ANN001, ANN202 - Telethon callback
         nonlocal heard
         client = getattr(event, "client", None)
-        sender_id = getattr(getattr(event, "message", None), "sender_id",
-                            None) or getattr(event, "sender_id", None)
+        sender_id = getattr(
+            getattr(event, "message", None), "sender_id", None
+        ) or getattr(event, "sender_id", None)
         if sender_id and sender_id == own.get(id(client)):
-            print(f"speech: dropped internal puppet message "
-                  f"(sender {sender_id})")
+            print(f"speech: dropped internal puppet message (sender {sender_id})")
             return
         heard += 1
         body = (getattr(event, "raw_text", "") or "").replace("\n", " ")
-        print(f"speech: account={owner.get(id(client), '-')} "
-              f"peer={getattr(event, 'chat_id', '')} sender={sender_id} "
-              f"text={body}")
+        print(
+            f"speech: account={owner.get(id(client), '-')} "
+            f"peer={getattr(event, 'chat_id', '')} sender={sender_id} "
+            f"text={body}"
+        )
 
     for _label, client in clients:
         client.add_event_handler(handler)
-    print(f"listen: {len(clients)} account(s) logging speech for "
-          f"{seconds}s, Ctrl+C to stop early")
+    print(
+        f"listen: {len(clients)} account(s) logging speech for "
+        f"{seconds}s, Ctrl+C to stop early"
+    )
     import asyncio
     import contextlib
 
@@ -395,5 +468,12 @@ def main(raw: dict, ctx: RunContext) -> int:
     return run(PuppetV2Config.from_dict(raw, ctx.settings), ctx)
 
 
-__all__ = ["PuppetV2Config", "STATS_DIR", "SlotMap", "TITLE", "main", "run",
-           "startup_offsets"]
+__all__ = [
+    "PuppetV2Config",
+    "STATS_DIR",
+    "SlotMap",
+    "TITLE",
+    "main",
+    "run",
+    "startup_offsets",
+]

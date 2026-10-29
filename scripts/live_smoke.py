@@ -180,7 +180,7 @@ CASES: tuple[Case, ...] = (
     Case("copy", ("copy_chat", "--live", "--accounts", "{account}",
                   "--sources", "{self}", "--targets", "{self}",
                   "--capture-minutes", "1440", "--capture-limit", "1",
-                  "--daily-limit", "1", "--interval-min", "1",
+                  "--daily-limit", "0", "--interval-min", "1",
                   "--interval-max", "1", "--copy-mode", "copy"),
          None, "copy_chat", "ok:", cli_write=True, min_rows=1),
     # Cloning the account's own broadcast channel into its own fixture group,
@@ -261,7 +261,7 @@ CASES: tuple[Case, ...] = (
     Case("puppet", ("puppet_chat_v2", "--live", "--accounts", "{account}",
                     "--targets", "{fixture}",
                     "--pattern", "data/patterns/puppet_one.txt",
-                    "--loops", "1", "--daily-limit", "1",
+                    "--loops", "1", "--daily-limit", "0",
                     "--startup-interval", "0"),
          None, "puppet_chat_v2", "PLAN: 1 messages", cli_write=True,
          min_rows=1),
@@ -273,7 +273,7 @@ CASES: tuple[Case, ...] = (
     Case("puppet1", ("puppet_chat", "--live", "--accounts", "t1", "a",
                      "--targets", "{fixture}",
                      "--pattern", "patterns/puppet_two.txt",
-                     "--loops", "1", "--daily-limit", "1"),
+                     "--loops", "1", "--daily-limit", "0"),
          None, "puppet_chat", "ok: 2", cli_write=True, min_rows=2),
     # The dialog listing is how a real chat reference is found at all, so it is
     # worth proving that the call still works and still reports unread counts.

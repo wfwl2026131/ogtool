@@ -10,7 +10,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 
 25 项里有 3 项不做（充值码 / licence / AI 计费结算，绑他们的服务端），
 按总方案的口径是 **22 个功能模块**；加上账号池与设置页参数，一共
-**27 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 全绿，
+**28 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 全绿，
 `ruff check .` 无告警。MIT 许可，见 [LICENSE](LICENSE)。
 
 > 本仓库不带任何账号、会话或私群链接：`config.yaml`、`data/`、会话文件
@@ -50,8 +50,8 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | T1 | 🌐 翻译工作台 | `translate` | `--text --texts-file --lg-from --lg-to --strategy --azure-key --quota-total --batch-size --list` | 否 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | T2 | 👑 群管家 | `group_manage` | `--groups --groups-file --from-store --target --password --password-env --interval-ms` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 
-底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
-**27 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
+底座命令 `accounts`（`add` / `list` / `test`）与运维命令 `runs` / `quota`（日限落盘的读表与修复）不在左栏 25 项里，但每个功能都靠它们。
+**28 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
 
 ## 对齐参考客户端的四个进阶能力（v1.1.1+）
 
@@ -67,6 +67,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 混市工作流编排（v1.2.1+） | `mix_market --contacts-file data/inputs/contacts.txt --group-title "A" --stop-after 5` | 对齐参考端 MixMarket（:1741560-1741650）：启动打 `Workflow:` 五步原文块 + `Workflow started`/`Workflow stopped`；`--contacts-file` 即 `inputFilePath`，文件缺/空按页面文案报 `Input file not found: %1` / `Input file is empty`，行并进 `--contact` 之后；五步各带权限门——某步零成功且失败码全是权限类（CHAT_WRITE_FORBIDDEN 等）时打 `<步名>: No permission` 并把失败转为 skipped（步没跑，不是干砸）；`heldTargets` 落盘 `mix_market_held_targets.json`：建群失败的标题留档，下次启动先重试再清档（`held: N target(s) restored` / `heldTargets: N kept on file`）；`--create-rest-min > --create-rest-max` 报 `Invalid rest range`；逐步日志照抄参考端 `A%1 add contacts/added/failed (%3)`、`A%1 creating owned %2`/`target created`、`[Speech]`、`[Invite]`、`Batch Pull v2 error: %1`、`Mass Send DM v2 completed`、`Dead targets detected, rebuild accounts: %1`、`GroupMgr config missing, use defaults.` |
 | 翻译工作台（v1.3.0+） | `translate --text "你好" --lg-to en --strategy ai`；批量 `--texts-file lines.txt --batch-size 20`；Azure `--strategy azure --azure-key KEY` | 对齐参考端右侧工具栏翻译页（:1740461 RightToolBar，10 类全家桶）：手动框（`setupManualTranslateSection`/`onTranslateClicked`）对应 `--text`；`TranslationBatchManager` 对应 `--texts-file` 分块批量 + 批量缓存查询 `input IN (%1) AND lg_to = ?`（:1723889）；历史表沿用参考端主键 `(input, lg_to)`（:1723409），重译覆盖不增行；配额状态机三句判决照抄（`Translation quota is sufficient` / `WARNING: Translation quota running low...` / `CRITICAL: Translation quota exhausted! Translation will be blocked.`，:1737723-1737725），预算耗尽打 `Translation continuation blocked due to quota issues`（:1737735）并跳过余量；用量跟踪带 FromCache 拆分（`Recorded usage - Length: %1, FromCache: %2...`，:1737659）+ 周期上报（`Usage reported successfully`，失败 `data preserved for next retry` :1737734）；周期到期 `Current period usage reset`（:1737726）；`--strategy azure` 走真 Azure REST，映射其自家错误词 `Quota exceeded`/`Subscription disabled`（:1737778-1737779）；无钥匙打 `No keys available, translation service will use fallback`（:1737741）+ 维护横幅 |
 | 群主转让（v1.3.1+） | `group_manage --groups "@g1,-1001234" --target acc2 --password "$TWOPASS"`；存量 `--from-store`；批量 `--groups-file groups.txt` | 对齐参考端 Group Manager 页（控制台 "Open Group Manager" 打开的 ex 页，:1742778）：原子端点 `tg.answer_group.transfer_owner_and_leave`（:1743915）自带退群语义，`auto_transfer_ok`/`auto_transfer_failed` 日志行照抄（:1743960-1743961），落库沿用参考端 `group_mgr` 表（:1723421，group_id PK / owner_phone / invite_link / status / chat_type / old_owner）。每群三步：新 owner 先入群——目标是自有账号就自己 join、是外部用户就源账号 invite，失败打 `Target account failed to join group %1 before transfer.`；转让要源账号二步密码（`EditCreator`/`messages.editChatCreator`，SRP `compute_check`），缺密码整号跳过打 `Skip account %1: missing second password.`；成功后原 owner 退群 `Original owner left group %1.`（退群失败不影响转让，`left=0`）。无效群 id 打 `Invalid group id %1, skip transfer.`；`--from-store` 按 `owner_phone` 从 `group_mgr` 表取名下群，与手填去重 |
+| 日限落盘（v1.3.2+） | `quota --namespace puppet_chat --account acc1`；修复 `quota --reset --namespace puppet_chat --account acc1 --yes` | 对齐参考端 QuotaDiskWriter（:2265509）——`flushToDisk`（:2241358）/`isLimitReachedForNamespace`（:2241357），实例化为 `ChatDailyQuota`（:2184666）与 `MassSendDailyQuota`（:2184694）。per-account 日限计数落 `daily_quota` 表（namespace/account/day 主键，success/attempt 两列——:1737953 的 `Success limit: %2, Attempt limit: %3` 两帽检查），重启读表不归零。接线的页：`puppet_chat`/`puppet_chat_v2`（SlotMap 预算种子化 + live 结果写回）、`copy_chat`（budget 种子化 + 写回）；`mass_send`/`mass_send_v2` 原本就走 results 表兜底。全耗尽判决行照抄：`All %1 accounts reached per-account daily limits (success=%2, attempt=%3), wait until tomorrow`（:1737966）、`All selected accounts reached today's limits; will retry at %1...`（:1737953）。`quota --reset` 至少要一个过滤器（namespace/account），不带 --yes 只打计划；干跑永不写计数 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -345,6 +346,11 @@ ogtool group_manage --groups-file data/inputs/groups.txt \
   --target acc2 --password-env TWOPASS --interval-ms 2000
 ogtool group_manage --from-store --target acc2 --password "$TWOPASS"
 
+# 底座 quota（v1.3.2）：日限计数落盘，重启不归零（QuotaDiskWriter 语义）
+ogtool quota --namespace puppet_chat
+ogtool quota --day 2026-10-29 --account acc1
+ogtool quota --reset --namespace puppet_chat --account acc1 --yes
+
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list
 ogtool auto_script --script warm_up --var greeting="hello all" --target "@demo_chat"
@@ -543,7 +549,7 @@ prompt 不写在代码里：模板在 `prompts/*.txt`（`ai_chat` / `ai_comment`
 
 ```
 ogtool/
-  cli.py          argparse 入口，27 个子命令
+  cli.py          argparse 入口，28 个子命令
   config.py       YAML + ${VAR} 展开
   accounts.py     账号池
   store.py        SQLite，九张表
