@@ -28,6 +28,7 @@ _ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::([^}]*))?\}")
 
 def _expand(value: Any) -> Any:
     if isinstance(value, str):
+
         def replace(match: re.Match[str]) -> str:
             name, default = match.group(1), match.group(2)
             if name in os.environ:
@@ -84,6 +85,28 @@ class AIConfig:
 
 
 @dataclass(slots=True)
+class CheckmeConfig:
+    """The post-join verification service (the reference's checkme keys).
+
+    The four knobs are the reference client's own global settings
+    (``checkmeBaseUrl`` / ``checkmeEnabled`` / ``checkmeMaxRound`` /
+    ``checkmeDelaySec``, og-strings.txt :1743074-1743077): a small HTTP
+    service the client polls at ``<base>/api/__checkme__`` (:1739935) after
+    each join, following the decision it answers with. ``enabled`` and an
+    empty ``base_url`` mean the whole chain is off.
+    """
+
+    base_url: str = ""
+    enabled: bool = False
+    max_round: int = 5
+    delay_sec: float = 5.0
+
+    @property
+    def active(self) -> bool:
+        return self.enabled and bool(self.base_url.strip())
+
+
+@dataclass(slots=True)
 class ProxyConfig:
     """One proxy, in the shape Telethon expects."""
 
@@ -103,8 +126,14 @@ class ProxyConfig:
         """
         kind = self.kind.lower()
         if kind in ("socks5", "socks4"):
-            return (kind, self.host, self.port, True,
-                    self.username or None, self.password or None)
+            return (
+                kind,
+                self.host,
+                self.port,
+                True,
+                self.username or None,
+                self.password or None,
+            )
         raise ConfigError(f"unsupported proxy kind: {self.kind}")
 
 
@@ -195,6 +224,7 @@ class Settings:
     log_dir: Path = field(default_factory=lambda: Path("logs"))
     proxy: ProxyConfig | None = None
     ai: AIConfig = field(default_factory=AIConfig)
+    checkme: CheckmeConfig = field(default_factory=CheckmeConfig)
     runtime: GlobalConfig = field(default_factory=GlobalConfig)
     raw: dict[str, Any] = field(default_factory=dict)
 
@@ -236,6 +266,12 @@ class Settings:
                 timeout=float(ai_raw.get("timeout", 60.0)),
             ),
             runtime=GlobalConfig.from_dict(raw),
+            checkme=CheckmeConfig(
+                base_url=str((raw.get("checkme") or {}).get("base_url", "")),
+                enabled=bool((raw.get("checkme") or {}).get("enabled", False)),
+                max_round=int((raw.get("checkme") or {}).get("max_round", 5)),
+                delay_sec=float((raw.get("checkme") or {}).get("delay_sec", 5.0)),
+            ),
             raw=raw,
         )
         settings.ensure_dirs()

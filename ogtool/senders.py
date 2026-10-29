@@ -1014,6 +1014,17 @@ class TelethonSender:
 
         return self._on_target(account, target, "send", call)
 
+    def client_for(self, account: str) -> Any:
+        """The connected client for ``account``, for checkme's action executor.
+
+        The checkme protocol answers a join with server-chosen actions
+        (``SEND_MESSAGE`` / ``CLICK_BUTTON`` / ``VOTE_POLL`` / ...) that run
+        in the joining account's session; those need the real client rather
+        than one of the send-shaped wrappers. Connection caching, the proxy
+        assignment and the reconnect logic stay in one place.
+        """
+        return self._client(account)
+
     def ping(self, account: str) -> SendResult:
         """Ask the server for our own user, which also refreshes our presence."""
 

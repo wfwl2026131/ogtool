@@ -11,6 +11,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from functools import partial
+from typing import Any
 
 from ..config import ConfigError, Settings
 from ..flags import Flag
@@ -39,48 +40,103 @@ TITLE = "#8 批量加群"
 
 FLAGS = (
     Flag("--targets", "targets", str, "group links, comma separated"),
-    Flag("--targets-file", "files", str, "file with one link per line",
-         action="append"),
-    Flag("--request-interval", "request_interval", float,
-         "seconds between two requests of the whole pool"),
-    Flag("--request-timeout", "request_timeout", float,
-         "seconds before a request is called a timeout (validated, shown in "
-         "the plan; Telethon has no per-request timeout to wire it to)"),
-    Flag("--account-interval", "account_interval", float,
-         "seconds between two joins of the same account"),
-    Flag("--per-account-cap", "per_account_cap", int,
-         "joins one account may perform"),
-    Flag("--threads", "threads", int,
-         "one lane per account, lanes join at the same time"),
+    Flag(
+        "--targets-file", "files", str, "file with one link per line", action="append"
+    ),
+    Flag(
+        "--request-interval",
+        "request_interval",
+        float,
+        "seconds between two requests of the whole pool",
+    ),
+    Flag(
+        "--request-timeout",
+        "request_timeout",
+        float,
+        "seconds before a request is called a timeout (validated, shown in "
+        "the plan; Telethon has no per-request timeout to wire it to)",
+    ),
+    Flag(
+        "--account-interval",
+        "account_interval",
+        float,
+        "seconds between two joins of the same account",
+    ),
+    Flag("--per-account-cap", "per_account_cap", int, "joins one account may perform"),
+    Flag(
+        "--threads", "threads", int, "one lane per account, lanes join at the same time"
+    ),
     Flag("--success-cap", "success_cap", int, "stop after this many joins"),
     Flag("--exec-cap", "exec_cap", int, "stop after this many attempts"),
     Flag("--flood-cap", "flood_cap", int, "PEER_FLOOD retries per target"),
     Flag("--operation-type", "operation_type", str, "join or leave"),
-    Flag("--leave-targets", "leave_targets", str,
-         "groups a leave run works on, comma separated"),
+    Flag(
+        "--leave-targets",
+        "leave_targets",
+        str,
+        "groups a leave run works on, comma separated",
+    ),
     Flag("--join-mode", "join_mode", str, "the page's joinMode"),
     Flag("--max-join-count", "max_join_count", int, "join count cap"),
-    Flag("--per-account-interval-min", "per_account_join_interval_min", float,
-         "per-account gap, seconds"),
-    Flag("--per-account-interval-max", "per_account_join_interval_max", float,
-         "per-account gap upper bound, seconds"),
-    Flag("--max-joined-chats", "max_joined_chats_per_account", int,
-         "stop joining once an account holds this many groups"),
+    Flag(
+        "--per-account-interval-min",
+        "per_account_join_interval_min",
+        float,
+        "per-account gap, seconds",
+    ),
+    Flag(
+        "--per-account-interval-max",
+        "per_account_join_interval_max",
+        float,
+        "per-account gap upper bound, seconds",
+    ),
+    Flag(
+        "--max-joined-chats",
+        "max_joined_chats_per_account",
+        int,
+        "stop joining once an account holds this many groups",
+    ),
     Flag("--join-concurrency", "join_concurrency", int, "lanes (overrides --threads)"),
-    Flag("--mute-channels", "mute_channels", None, "mute joined channels",
-         action="store_true"),
-    Flag("--mute-private", "mute_private", None, "mute joined private chats",
-         action="store_true"),
+    Flag(
+        "--mute-channels",
+        "mute_channels",
+        None,
+        "mute joined channels",
+        action="store_true",
+    ),
+    Flag(
+        "--mute-private",
+        "mute_private",
+        None,
+        "mute joined private chats",
+        action="store_true",
+    ),
     Flag("--mute-interval", "mute_interval", float, "gap between mutes, seconds"),
-    Flag("--resume/--no-resume", "resume", None,
-         "skip (account, target) pairs this feature already joined"),
-    Flag("--verify-url", "verify_url", str,
-         "post-join verification webhook (POST {account,target,feature,task}; "
-         "HTTP 200 = verified)"),
-    Flag("--verify-rounds", "verify_rounds", int,
-         "verification attempts per join (default 3)"),
-    Flag("--verify-delay", "verify_delay", float,
-         "seconds between verification rounds (default 5)"),
+    Flag(
+        "--resume/--no-resume",
+        "resume",
+        None,
+        "skip (account, target) pairs this feature already joined",
+    ),
+    Flag(
+        "--verify-url",
+        "verify_url",
+        str,
+        "post-join verification webhook (POST {account,target,feature,task}; "
+        "HTTP 200 = verified)",
+    ),
+    Flag(
+        "--verify-rounds",
+        "verify_rounds",
+        int,
+        "verification attempts per join (default 3)",
+    ),
+    Flag(
+        "--verify-delay",
+        "verify_delay",
+        float,
+        "seconds between verification rounds (default 5)",
+    ),
     Flag("--leave-interval", "leave_interval", float, "gap between leaves, seconds"),
 )
 
@@ -92,7 +148,8 @@ def _operation(data: dict) -> str:
     value = str(data.get("operation_type") or "join").strip().lower()
     if value not in OPERATIONS:
         raise ConfigError(
-            f"{SECTION}: operation_type must be join or leave, is {value}")
+            f"{SECTION}: operation_type must be join or leave, is {value}"
+        )
     return value
 
 
@@ -176,20 +233,23 @@ class JoinConfig:
             exec_cap=num(data, "exec_cap", 0, kind=int),
             flood_cap=num(data, "flood_cap", 2, kind=int),
             operation_type=_operation(data),
-            leave_targets=(targets_of({"targets": data.get("leave_targets")},
-                                      kind="group")
-                           if data.get("leave_targets") else []),
+            leave_targets=(
+                targets_of({"targets": data.get("leave_targets")}, kind="group")
+                if data.get("leave_targets")
+                else []
+            ),
             join_mode=text(data, "join_mode"),
-            max_join_count=num(data, "max_join_count", 0, kind=int,
-                               minimum=0),
+            max_join_count=num(data, "max_join_count", 0, kind=int, minimum=0),
             per_account_interval_min=_seconds(
-                data, "per_account_join_interval_min", 0.0),
+                data, "per_account_join_interval_min", 0.0
+            ),
             per_account_interval_max=_seconds(
-                data, "per_account_join_interval_max", 0.0),
-            max_joined_chats=num(data, "max_joined_chats_per_account", 0,
-                                 kind=int, minimum=0),
-            join_concurrency=num(data, "join_concurrency", 0, kind=int,
-                                 minimum=0),
+                data, "per_account_join_interval_max", 0.0
+            ),
+            max_joined_chats=num(
+                data, "max_joined_chats_per_account", 0, kind=int, minimum=0
+            ),
+            join_concurrency=num(data, "join_concurrency", 0, kind=int, minimum=0),
             mute_channels=bool(data.get("mute_channels", False)),
             mute_private=bool(data.get("mute_private", False)),
             mute_interval=_seconds(data, "mute_interval", 0.0),
@@ -205,22 +265,28 @@ class JoinConfig:
 
     def validate(self) -> None:
         """The page's own configuration errors, in the page's own words."""
-        if self.per_account_interval_max and \
-                self.per_account_interval_max < self.per_account_interval_min:
+        if (
+            self.per_account_interval_max
+            and self.per_account_interval_max < self.per_account_interval_min
+        ):
             raise ConfigError(
-                f"{SECTION}: per-account join interval max must be >= min")
+                f"{SECTION}: per-account join interval max must be >= min"
+            )
         if 0 < self.per_account_interval_min < 1:
             raise ConfigError(
-                f"{SECTION}: per-account join interval must be at least "
-                f"1 second")
+                f"{SECTION}: per-account join interval must be at least 1 second"
+            )
         if 0 < self.request_timeout < 1:
-            raise ConfigError(
-                f"{SECTION}: request timeout must be at least 1 second")
+            raise ConfigError(f"{SECTION}: request timeout must be at least 1 second")
 
 
-def every_account(accounts: list[str], targets: list[Target],
-                  per_account_cap: int, exec_cap: int,
-                  max_join_count: int = 0) -> list[tuple[str, Target]]:
+def every_account(
+    accounts: list[str],
+    targets: list[Target],
+    per_account_cap: int,
+    exec_cap: int,
+    max_join_count: int = 0,
+) -> list[tuple[str, Target]]:
     """``Each account joins all groups``: the cross product, not a rotation."""
     pairs: list[tuple[str, Target]] = []
     for account in accounts:
@@ -235,9 +301,13 @@ def every_account(accounts: list[str], targets: list[Target],
     return pairs
 
 
-def assign(accounts: list[str], targets: list[Target],
-           per_account_cap: int, exec_cap: int,
-           max_join_count: int = 0) -> list[tuple[str, Target]]:
+def assign(
+    accounts: list[str],
+    targets: list[Target],
+    per_account_cap: int,
+    exec_cap: int,
+    max_join_count: int = 0,
+) -> list[tuple[str, Target]]:
     """Round robin, honouring the per account cap and the overall one.
 
     ``maxJoinCount`` is the page's own ceiling on how many chats one run may
@@ -251,8 +321,9 @@ def assign(accounts: list[str], targets: list[Target],
     for position, target in enumerate(targets):
         if max_join_count and len(pairs) >= max_join_count:
             break
-        candidates = [a for a in accounts if not per_account_cap
-                      or used[a] < per_account_cap]
+        candidates = [
+            a for a in accounts if not per_account_cap or used[a] < per_account_cap
+        ]
         if not candidates:
             break
         account = candidates[position % len(candidates)]
@@ -263,8 +334,9 @@ def assign(accounts: list[str], targets: list[Target],
     return pairs
 
 
-def gap(config: JoinConfig, job: Job, previous: Job | None = None,
-        leaving: bool = False) -> float:
+def gap(
+    config: JoinConfig, job: Job, previous: Job | None = None, leaving: bool = False
+) -> float:
     """Seconds before one join - or one leave, which has its own number.
 
     The pool wide request interval always applies; two operations in a row by
@@ -280,15 +352,20 @@ def gap(config: JoinConfig, job: Job, previous: Job | None = None,
             # ``perAccountJoinIntervalMin/Max``: a range, not a number - the
             # account's own gap is drawn from it so a pool does not move in
             # lockstep.
-            wait = max(wait, random.uniform(config.per_account_interval_min,
-                                            config.per_account_interval_max))
+            wait = max(
+                wait,
+                random.uniform(
+                    config.per_account_interval_min, config.per_account_interval_max
+                ),
+            )
         else:
             wait = max(wait, config.account_interval)
     return wait
 
 
-def _verify_join(config: JoinConfig, ctx: RunContext, account: str,
-                 target: str) -> bool:
+def _verify_join(
+    config: JoinConfig, ctx: RunContext, account: str, target: str
+) -> bool:
     """Generic post-join verification webhook (the checkme idea, unbound).
 
     ``verify_url`` gets one POST per round with the join facts; a 200 is
@@ -300,33 +377,88 @@ def _verify_join(config: JoinConfig, ctx: RunContext, account: str,
     import urllib.error
     import urllib.request
 
-    payload = _json.dumps({
-        "feature": FEATURE,
-        "task": config.task_name,
-        "account": account,
-        "target": target,
-    }).encode("utf-8")
+    payload = _json.dumps(
+        {
+            "feature": FEATURE,
+            "task": config.task_name,
+            "account": account,
+            "target": target,
+        }
+    ).encode("utf-8")
     for attempt in range(1, max(1, config.verify_rounds) + 1):
         try:
             request = urllib.request.Request(
-                config.verify_url, data=payload,
-                headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(request,
-                                        timeout=30) as answer:
+                config.verify_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=30) as answer:
                 if answer.status == 200:
-                    print(f"✅ VERIFIED {account} {target}"
-                          + (f" (round {attempt})" if attempt > 1 else ""))
+                    print(
+                        f"✅ VERIFIED {account} {target}"
+                        + (f" (round {attempt})" if attempt > 1 else "")
+                    )
                     return True
-                print(f"VERIFY http {answer.status} {account} {target} "
-                      f"(round {attempt}/{config.verify_rounds})")
+                print(
+                    f"VERIFY http {answer.status} {account} {target} "
+                    f"(round {attempt}/{config.verify_rounds})"
+                )
         except (urllib.error.URLError, OSError) as error:
-            print(f"VERIFY unreachable {account} {target} "
-                  f"(round {attempt}/{config.verify_rounds}): {error}")
+            print(
+                f"VERIFY unreachable {account} {target} "
+                f"(round {attempt}/{config.verify_rounds}): {error}"
+            )
         if attempt < config.verify_rounds and config.verify_delay:
             pause(ctx, config.verify_delay)
-    print(f"❌ VERIFY FAILED {account} {target} "
-          f"after {config.verify_rounds} round(s)")
+    print(f"❌ VERIFY FAILED {account} {target} after {config.verify_rounds} round(s)")
     return False
+
+
+def post_join_verify(
+    config: JoinConfig, ctx: RunContext, task: Any, job: Job, labels: list[str]
+) -> None:
+    """The post-join chain one joined pair walks through, live only.
+
+    The checkme chain replaces the bare webhook when it is configured (the
+    reference's own keys, :1743074-1743077): the service decides, the rounds
+    follow its answers, and a GIVEUP marks the join failed the same way the
+    webhook's silence did.
+    """
+    joined = job.extra.get("ok") == "1"
+    if not (joined and ctx.live):
+        return
+    if ctx.settings.checkme.active and job.extra.get("code") == "ok":
+        from .checkme import TelegramExecutor, verify_join
+
+        outcome = verify_join(
+            ctx.settings.checkme,
+            ctx,
+            job.account,
+            labels.index(job.account) if job.account in labels else 0,
+            job.subject,
+            task.id,
+            executor=TelegramExecutor(ctx.sender(), job.account, job.subject),
+        )
+        if not outcome.ok:
+            record(
+                ctx,
+                task,
+                job.account,
+                job.subject,
+                False,
+                f"CHECKME_{outcome.status}",
+                f"checkme: {outcome.reason} ({outcome.rounds} round(s))",
+            )
+    elif config.verify_url and not _verify_join(config, ctx, job.account, job.subject):
+        record(
+            ctx,
+            task,
+            job.account,
+            job.subject,
+            False,
+            "VERIFY_FAILED",
+            "post-join webhook never said 200",
+        )
 
 
 def run(config: JoinConfig, ctx: RunContext) -> int:
@@ -335,29 +467,47 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
     if not targets:
         # A leave run with no leaveTargets is the same mistake as a join run
         # with no groups, so it fails the same way rather than doing nothing.
-        print(f"ERROR: no {'leave ' if leaving else ''}targets "
-              f"(use --targets or --targets-file)")
+        print(
+            f"ERROR: no {'leave ' if leaving else ''}targets "
+            f"(use --targets or --targets-file)"
+        )
         return 2
     accounts = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
     mode = config.join_mode.strip().lower().replace("-", "_").replace(" ", "_")
-    all_groups = mode in ("all", "each", "each_account_all_groups",
-                          "all_groups", "every")
+    all_groups = mode in (
+        "all",
+        "each",
+        "each_account_all_groups",
+        "all_groups",
+        "every",
+    )
     build = every_account if all_groups else assign
-    pairs = build(labels, targets, config.per_account_cap,
-                  config.exec_cap, config.max_join_count) if labels else []
+    pairs = (
+        build(
+            labels,
+            targets,
+            config.per_account_cap,
+            config.exec_cap,
+            config.max_join_count,
+        )
+        if labels
+        else []
+    )
     if all_groups and len(pairs) > 1:
-        print(f"join mode: each account joins all groups ({len(pairs)} "
-              f"join(s))")
+        print(f"join mode: each account joins all groups ({len(pairs)} join(s))")
     if config.max_join_count and len(targets) > config.max_join_count:
-        print(f"max_join_count: {config.max_join_count} of "
-              f"{len(targets)} target(s) planned")
+        print(
+            f"max_join_count: {config.max_join_count} of "
+            f"{len(targets)} target(s) planned"
+        )
     if not labels:
         pairs = [("-", target) for target in targets]
 
-    header(config.task_name,
+    header(
+        config.task_name,
         accounts=f"{len(labels)}"
-                 + (" (no account bound, plan only)" if not labels else ""),
+        + (" (no account bound, plan only)" if not labels else ""),
         operation=config.operation_type,
         groups=len(targets),
         request_interval=f"{config.request_interval:.0f}s",
@@ -369,18 +519,25 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
             f"{config.per_account_interval_min:.0f}-"
             f"{config.per_account_interval_max:.0f}s"
             if config.per_account_interval_max
-            else f"{config.per_account_interval_min:.0f}s"),
+            else f"{config.per_account_interval_min:.0f}s"
+        ),
         max_joined=config.max_joined_chats or "-",
         max_join_count=config.max_join_count or "-",
         join_mode=config.join_mode or "-",
         mute=("channels" if config.mute_channels else "")
-             + ("+private" if config.mute_private else "") or "off",
+        + ("+private" if config.mute_private else "")
+        or "off",
         leave_interval=f"{config.leave_interval:.0f}s",
         total=len(pairs),
     )
 
-    task = open_task(ctx, config.task_name, FEATURE,
-                     {"targets": [t.ref for t in config.targets]}, len(pairs))
+    task = open_task(
+        ctx,
+        config.task_name,
+        FEATURE,
+        {"targets": [t.ref for t in config.targets]},
+        len(pairs),
+    )
     sender = ctx.sender()
 
     if config.max_joined_chats and ctx.live and labels:
@@ -393,14 +550,17 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
                 continue
             if counted.count >= config.max_joined_chats:
                 full.add(label)
-                print(f"account full: {label} already in {counted.count} "
-                      f"chat(s) (max_joined_chats={config.max_joined_chats})")
+                print(
+                    f"account full: {label} already in {counted.count} "
+                    f"chat(s) (max_joined_chats={config.max_joined_chats})"
+                )
         kept = [pair for pair in pairs if pair[0] not in full]
         for account, target in pairs:
             if account in full:
                 record(ctx, task, account, target.ref, False, "ACCOUNT_FULL")
                 print(f"skipped {target.ref} for {account} (account full)")
         pairs = kept
+
     def wants_mute(config: JoinConfig, target: Target) -> bool:
         """``muteChannels`` / ``mutePrivate``: which joins get silenced."""
         if target.kind == "channel":
@@ -419,34 +579,44 @@ def run(config: JoinConfig, ctx: RunContext) -> int:
             job.extra["mute"] = "ok" if muted.ok else muted.code
         return result
 
-    jobs = [Job(account=account, subject=target.ref, target=target)
-            for account, target in pairs]
+    jobs = [
+        Job(account=account, subject=target.ref, target=target)
+        for account, target in pairs
+    ]
     if config.resume:
         done = ctx.store.sent_pairs(FEATURE)
         before = len(jobs)
-        jobs = [job for job in jobs
-                if (job.account, job.subject) not in done]
+        jobs = [job for job in jobs if (job.account, job.subject) not in done]
         skipped = before - len(jobs)
         if skipped:
-            print(f"RESUME: skipping {skipped} already-done pair(s); "
-                  f"{len(jobs)} left")
-    outcome = execute(jobs, ctx, call, total=len(jobs),
-                      success_cap=config.success_cap, exec_cap=config.exec_cap,
-                      flood_cap=config.flood_cap, retry_cap=1, label="group",
-                      interval=partial(gap, config, leaving=leaving),
-                      lanes=config.join_concurrency or config.threads)
+            print(f"RESUME: skipping {skipped} already-done pair(s); {len(jobs)} left")
+    outcome = execute(
+        jobs,
+        ctx,
+        call,
+        total=len(jobs),
+        success_cap=config.success_cap,
+        exec_cap=config.exec_cap,
+        flood_cap=config.flood_cap,
+        retry_cap=1,
+        label="group",
+        interval=partial(gap, config, leaving=leaving),
+        lanes=config.join_concurrency or config.threads,
+    )
 
     muted = 0
     for job in jobs:
         if "ok" not in job.extra:
             continue
-        record(ctx, task, job.account, job.subject, job.extra["ok"] == "1",
-               job.extra["code"])
-        if (config.verify_url and job.extra.get("ok") == "1" and ctx.live
-                and not _verify_join(config, ctx, job.account,
-                                     job.subject)):
-            record(ctx, task, job.account, job.subject, False,
-                   "VERIFY_FAILED", "post-join webhook never said 200")
+        record(
+            ctx,
+            task,
+            job.account,
+            job.subject,
+            job.extra["ok"] == "1",
+            job.extra["code"],
+        )
+        post_join_verify(config, ctx, task, job, labels)
         mute_state = job.extra.get("mute", "")
         if mute_state:
             muted += mute_state == "ok"

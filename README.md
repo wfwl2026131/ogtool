@@ -71,6 +71,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
  | 批量改密码（v1.3.3+） | `accounts password --accounts acc1 --new-password-file np.txt`；带旧密码 `--current-password-file op.txt`；真改加 `--live --allow-write` | 对齐参考端批量改密码页（console ex 页 `batch_modify_password`，:1737291-1737305）。旧密码走页面自己的三源模型：`--current-password-file` 的箱内默认先答（`input old password`），没有就读库里的 per-account 记录（`metadata old password`，accounts 表新 `password` 列），都没有就当账号无 2FA（`empty old password`，`current_password=None`）。成功行照抄 `Account %1 modify successfully via %2`（%2 = 答对的那个源），同步判决照抄三句：库记录写回 = `password updated and metadata synced.`（:1737302）、session 旁有 sidecar `.json` 一并写回 = `and JSON synced.`（:1737303）、库写失败 = `(metadata sync skipped).`（:1737304）——下次运行同一账号就能用自己的记录答 `via metadata old password`。失败行照抄 `Account %1 failed to change password.` + `Account %1 (%2) error: %3`；任务守卫照抄 `Password change task started.` / `Password change task is running, please stop it first.`（:1737294-1737295，live 且 10 分钟内有同任务在跑才拦，防崩溃残行锁死）；Ctrl+C = 页面的 Stop，打 `Stop requested...` 按整批计划收 `Success: %1/%2`。密码值永不进日志/回执/终端 |
  | passkey 导出（v1.3.3+） | `accounts passkey --accounts acc1 --out-dir data/passkeys --live --allow-write` | 同一页的第二个任务（:1737294 `Passkey export task started.`）：每账号一个 `.passkey` JSON 元数据文件（`passkey<label>_<时间戳>.passkey`，:1737371 `passkey%1_%2` 命名式），横幅照抄 `System WebAuthn is unavailable in this build; exporting metadata-only passkey files.`（:1737382）——本构建只做 metadata 导出、私钥回放未实现（:1737375），无手机号整号跳 `Account %1 has no phone number, skipped.`（:1737379）；空池打页面守卫 `Please select at least one account.`（:1737293）；收尾 `Passkey export finished. Success: %1/%2`（:1737385）。文件字段用参考端登录侧校验的键名 `PhoneNumber`（:1737361），导出可直接喂登录任务 |
   | passkey 登录（v1.3.4+） | `accounts passkey-login --files a.passkey b.passkey`；整夹扫描 `--folder data/passkeys`；真跑加 `--live --allow-write` | 对齐参考端 batch_login 页的 passkey 分支。Start 门分类器（:1737360-1737363 `passkey`/`json`/`session/json`/`mixed`/`none`）：空选 `Please select account files or folder`（:1742494）、文件不存在 `Account file does not exist: %1`（:1742500）、混选 `Mixed .passkey and session/json inputs are not supported.`（:1742499）全部开跑前拒绝；纯 session/json 仍然开任务并收 `No .passkey files found.` + `Passkey login finished with no files.`（:1737372-1737373）。读到文件：横幅 `Starting passkey login task`（:1742503）→ `Detected %1 .passkey file(s).`（:1737374）→ 构建边界两行照抄（:1737375-1737376）→ 每文件读校验三线（`Failed to open passkey file: %1` / `Invalid passkey file format: %1` / `Passkey file missing PhoneNumber: %1`，:1737357-1737361）→ 合法记录仍拦 `Passkey login blocked for %1.passkey: secure replay is not implemented in this build.`（:1737377）→ 收尾 `Passkey login finished. Success: %1/%2`（:1737378）。dry-run 一行计划不建目录 |
+  | checkme 加群后验证（v1.3.5+） | config.yaml `checkme: {enabled: true, base_url: http://svc:8080, max_round: 5, delay_sec: 5.0}`，随 `batch_join --live` 自动生效 | 对齐参考端 CheckmeGroupMgr 全链（`/api/__checkme__` :1739935、决策键表 :1739958-1739980、六判决 STOP/GIVEUP/WAIT/NEED_ACTION/NEED_MANUAL/UNKNOWN、四配置键 checkmeBaseUrl/checkmeEnabled/checkmeMaxRound/checkmeDelaySec :1743074-1743077）。每 join 成功后向 `<base>/api/__checkme__` POST {account/account_index/stage/round/trace_id/peer_id}，按答案轮转：STOP=VERIFIED、WAIT=睡 delay_ms/`delay_sec` 再问、NEED_ACTION=跑 actions 数组（SEND_MESSAGE/CLICK_BUTTON/VOTE_POLL/FETCH_* 在本会话真执行，OPEN_*/无执行器 = 本构建 manual-only）+need_resubmit 立即重问、NEED_MANUAL 原样收场、答案缺 checkme 键按 UNKNOWN 宽容。两条本地放弃线照抄：`maxRound reached (%2), give up.`（:1740027）、`state_token expired, give up.`（:1740029，ttl_sec 到期）；submit/status/finish 日志行照抄（:1740039-1740047）。GIVEUP/FAILED 记 `CHECKME_<status>` 行打回该 (账号, 目标)。checkme 配置优先于旧 `--verify-url` webhook；dry-run 全程不联网 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -365,6 +366,13 @@ ogtool accounts passkey --accounts acc1 --out-dir data/passkeys --live --allow-w
 # 底座 accounts passkey-login（v1.3.4）：batch_login 页的 passkey 分支（读取+构建边界）
 ogtool accounts passkey-login --files a.passkey b.passkey
 ogtool accounts passkey-login --folder data/passkeys --live --allow-write
+
+# checkme 加群后验证（v1.3.5）：config.yaml 配 checkme 节，batch_join --live 自动走
+#   checkme:
+#     enabled: true
+#     base_url: http://svc:8080
+#     max_round: 5
+#     delay_sec: 5.0
 
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list
