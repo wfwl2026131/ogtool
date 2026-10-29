@@ -85,13 +85,16 @@ HELP = {
     "export_accounts": "#22 高级功能: export the accounts and their sessions",
     "settings": "#24 设置: the global knobs, shown and validated",
     "translate": "#T1 翻译工作台: manual + batch translation with a quota",
+    "group_manage": "#T2 群管家: batch transfer ownership and leave",
 }
 
 #: The reference's second surface: pages of the right toolbar (:1740461),
 #: which has no console index. Order here is the reference's own toolbar
 #: order (Unread Messages / Translation / Client List / QuickReply) minus
-#: the pages nothing maps to yet.
-TOOLBAR_ORDER = ["translate"]
+#: the pages nothing maps to yet. The Group Manager is the toolbar surface's
+#: own page - the console only opens it ("Open Group Manager") - so it sits
+#: here as T2 rather than in ORDER.
+TOOLBAR_ORDER = ["translate", "group_manage"]
 
 
 def build_parser() -> argparse.ArgumentParser:

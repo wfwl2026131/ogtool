@@ -78,9 +78,20 @@ CLIENT_NOT_AWAITED = "CLIENT_NOT_AWAITED"
 #: counted against these only: ``results.status`` says "sent" for every page that
 #: succeeded, and exports or heartbeats are not messages.
 SENDING_FEATURES: tuple[str, ...] = (
-    "mass_send", "mass_send_v2", "auto_reply", "ai_chat", "ai_clone",
-    "ai_comment", "ai_script", "copy_chat", "batch_invite", "batch_invite_v2",
-    "batch_join", "batch_rename", "forwarder", "add_contact",
+    "mass_send",
+    "mass_send_v2",
+    "auto_reply",
+    "ai_chat",
+    "ai_clone",
+    "ai_comment",
+    "ai_script",
+    "copy_chat",
+    "batch_invite",
+    "batch_invite_v2",
+    "batch_join",
+    "batch_rename",
+    "forwarder",
+    "add_contact",
 )
 
 __all__ = [
@@ -176,8 +187,11 @@ _UNRESOLVED = (
 
 
 def _unresolved(error: BaseException) -> bool:
-    if type(error).__name__ in ("ValueError", "PeerIdInvalidError",
-                                "UserIdInvalidError"):
+    if type(error).__name__ in (
+        "ValueError",
+        "PeerIdInvalidError",
+        "UserIdInvalidError",
+    ):
         return True
     lowered = str(error).lower()
     return any(marker in lowered for marker in _UNRESOLVED)
@@ -220,13 +234,13 @@ def _kind_of(entity: Any) -> str:
     """
     if entity.__class__.__name__ == "User":
         return "USER"
-    if getattr(entity, "broadcast", False) and not getattr(entity, "megagroup",
-                                                           False):
+    if getattr(entity, "broadcast", False) and not getattr(entity, "megagroup", False):
         return "CHANNEL"
     if getattr(entity, "join_request", False):
         return "JOIN_REQUEST"
-    rights = (getattr(entity, "default_banned_rights", None)
-              or getattr(entity, "banned_rights", None))
+    rights = getattr(entity, "default_banned_rights", None) or getattr(
+        entity, "banned_rights", None
+    )
     if rights is not None and getattr(rights, "send_messages", False):
         return CHAT_WRITE_FORBIDDEN
     return ""
@@ -256,20 +270,21 @@ def _resolve_link(client: Any, target: Target) -> SendResult:
         # Not joined: the server still shows the group's face, which is all a
         # sort needs, and says whether it is a channel or needs approval.
         if getattr(checked, "broadcast", False):
-            return SendResult(ok=True, code="CHANNEL", count=count,
-                              detail=detail)
+            return SendResult(ok=True, code="CHANNEL", count=count, detail=detail)
         if getattr(checked, "request_needed", False):
-            return SendResult(ok=True, code=JOIN_REQUEST, count=count,
-                              detail=detail)
+            return SendResult(ok=True, code=JOIN_REQUEST, count=count, detail=detail)
         return SendResult(ok=True, count=count, detail=detail)
-    return SendResult(ok=False, code=TARGET_INVALID,
-                      detail="the link answered with nothing readable")
+    return SendResult(
+        ok=False, code=TARGET_INVALID, detail="the link answered with nothing readable"
+    )
 
 
 def _is_already_joined(error: BaseException) -> bool:
     """Importing a link we are already a member of answers with these."""
-    return type(error).__name__ in ("UserAlreadyParticipantError",
-                                    "InviteRequestSentError")
+    return type(error).__name__ in (
+        "UserAlreadyParticipantError",
+        "InviteRequestSentError",
+    )
 
 
 def chat_entity(client: Any, target: Target) -> Any:
@@ -358,8 +373,13 @@ def result_for(code: str, detail: str = "") -> SendResult:
         return SendResult(ok=True)
     if name in CLASSIFIED:
         return SendResult(ok=True, code=name, detail=detail or text)
-    return SendResult(ok=False, code=name, detail=detail or text,
-                      retryable=retryable, retry_after=wait)
+    return SendResult(
+        ok=False,
+        code=name,
+        detail=detail or text,
+        retryable=retryable,
+        retry_after=wait,
+    )
 
 
 def _code_from_class(name: str) -> str:
@@ -412,12 +432,23 @@ def code_from_exception(error: BaseException) -> tuple[str, str, bool]:
     # keep_online runs for hours: a dropped socket surfaces as ConnectionError
     # (or an OSError naming the socket). It is the same class of problem as
     # TIMEOUT - the network broke, not the target - so it is retryable too.
-    if name in ("ConnectionError", "ConnectionResetError",
-                "ConnectionRefusedError", "BrokenPipeError") \
-            or "CONNECTION" in upper or "BROKEN PIPE" in upper:
+    if (
+        name
+        in (
+            "ConnectionError",
+            "ConnectionResetError",
+            "ConnectionRefusedError",
+            "BrokenPipeError",
+        )
+        or "CONNECTION" in upper
+        or "BROKEN PIPE" in upper
+    ):
         return NETWORK_ERROR, text, True
-    if name == "CancelledError" or "CONNECTION CLOSED" in upper \
-            or "DISCONNECTED" in upper:
+    if (
+        name == "CancelledError"
+        or "CONNECTION CLOSED" in upper
+        or "DISCONNECTED" in upper
+    ):
         # A disconnect racing an in-flight request: keep_online's kill probe
         # surfaced it. Same class of problem as a dropped socket.
         return NETWORK_ERROR, text or "the connection was cancelled", True
@@ -472,8 +503,9 @@ class _AwaitedClient:
             return value
         if inspect.iscoroutine(value):
             value.close()
-        raise ClientNotAwaited(f"{name} returned a coroutine; the async client "
-                               f"was used without await")
+        raise ClientNotAwaited(
+            f"{name} returned a coroutine; the async client was used without await"
+        )
 
 
 class DryRunSender:
@@ -513,27 +545,36 @@ class DryRunSender:
 
     # sending ---------------------------------------------------------
 
-    def react(self, account: str, target: Target, message_id: int,
-              emoji: str = "\U0001F44D") -> SendResult:
+    def react(
+        self, account: str, target: Target, message_id: int, emoji: str = "\U0001f44d"
+    ) -> SendResult:
         self.calls.append(("react", f"{account}:{target.ref}#{message_id}"))
         return SendResult(ok=True)
 
-    def send_sticker(self, account: str, target: Target, sets: list[str],
-                     reply_to: int = 0, emoji: str = "") -> SendResult:
+    def send_sticker(
+        self,
+        account: str,
+        target: Target,
+        sets: list[str],
+        reply_to: int = 0,
+        emoji: str = "",
+    ) -> SendResult:
         """A sticker from the enabled sets; a dry run sends nothing."""
         self.calls.append(("sticker", f"{account}:{target.ref}"))
         if not sets:
-            return SendResult(ok=False, code="STICKER_SET_MISSING",
-                              detail="no sticker set is enabled")
-        return SendResult(ok=True,
-                          detail=f"set={random.choice(sets)}"
-                                 + (f" emoji={emoji}" if emoji else ""))
+            return SendResult(
+                ok=False, code="STICKER_SET_MISSING", detail="no sticker set is enabled"
+            )
+        return SendResult(
+            ok=True,
+            detail=f"set={random.choice(sets)}" + (f" emoji={emoji}" if emoji else ""),
+        )
 
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         self.sent.append((account, target, content))
-        return self._answer("send", account,
-                            f"target={target.display()} "
-                            f"content={content.describe()}")
+        return self._answer(
+            "send", account, f"target={target.display()} content={content.describe()}"
+        )
 
     def ping(self, account: str) -> SendResult:
         """Heartbeat: a dry run only says the account exists."""
@@ -549,8 +590,9 @@ class DryRunSender:
         return self._answer("leave", account, f"target={target.display()}")
 
     def mute(self, account: str, target: Target, until: int = 0) -> SendResult:
-        return self._answer("mute", account,
-                            f"target={target.display()} until={until or 'forever'}")
+        return self._answer(
+            "mute", account, f"target={target.display()} until={until or 'forever'}"
+        )
 
     def chat_count(self, account: str) -> SendResult:
         """How many chats the account is in; a dry run counts zero."""
@@ -564,40 +606,45 @@ class DryRunSender:
 
     def start_bot(self, account: str, bot: str, param: str = "") -> SendResult:
         """Open a bot link, with its ``start`` parameter when there is one."""
-        return self._answer("start_bot", account,
-                            f"bot=@{bot} param={param or '-'}")
+        return self._answer("start_bot", account, f"bot=@{bot} param={param or '-'}")
 
-    def request_mini_app(self, account: str, bot: str, param: str = "",
-                         app: str = "") -> SendResult:
+    def request_mini_app(
+        self, account: str, bot: str, param: str = "", app: str = ""
+    ) -> SendResult:
         """Trigger a mini app, the ``startapp`` half of the same link."""
-        return self._answer("mini_app", account,
-                            f"bot=@{bot} app={app or '-'} param={param or '-'}")
+        return self._answer(
+            "mini_app", account, f"bot=@{bot} app={app or '-'} param={param or '-'}"
+        )
 
-    def join_call(self, account: str, target: Target,
-                  muted: bool = False) -> SendResult:
+    def join_call(
+        self, account: str, target: Target, muted: bool = False
+    ) -> SendResult:
         """Enter the group call, muted or speaking, like the page's two actions."""
         return self._answer(
-            "call", account,
-            f"target={target.display()} muted={1 if muted else 0}")
+            "call", account, f"target={target.display()} muted={1 if muted else 0}"
+        )
 
     def invite(self, account: str, group: Target, member: Target) -> SendResult:
-        return self._answer("invite", account,
-                            f"group={group.display()} member={member.display()}")
+        return self._answer(
+            "invite", account, f"group={group.display()} member={member.display()}"
+        )
 
-    def get_participants(self, account: str, target: Target,
-                         limit: int = 0) -> SendResult:
-        result = self._answer("participants", account,
-                              f"target={target.display()} limit={limit}")
+    def get_participants(
+        self, account: str, target: Target, limit: int = 0
+    ) -> SendResult:
+        result = self._answer(
+            "participants", account, f"target={target.display()} limit={limit}"
+        )
         if result.ok:
             result.count = limit or 0
         return result
 
     # account and profile ---------------------------------------------
 
-    def update_profile(self, account: str, first: str,
-                       last: str = "") -> SendResult:
-        return self._answer("profile", account,
-                            f"first={first or '-'} last={last or '-'}")
+    def update_profile(self, account: str, first: str, last: str = "") -> SendResult:
+        return self._answer(
+            "profile", account, f"first={first or '-'} last={last or '-'}"
+        )
 
     def update_about(self, account: str, text: str) -> SendResult:
         return self._answer("about", account, f"about={text or '-'}")
@@ -608,10 +655,10 @@ class DryRunSender:
     def update_avatar(self, account: str, path: str) -> SendResult:
         return self._answer("avatar", account, f"path={path or '-'}")
 
-    def add_contact(self, account: str, target: Target,
-                    first: str = "") -> SendResult:
-        return self._answer("contact", account,
-                            f"target={target.display()} first={first or '-'}")
+    def add_contact(self, account: str, target: Target, first: str = "") -> SendResult:
+        return self._answer(
+            "contact", account, f"target={target.display()} first={first or '-'}"
+        )
 
     def resolve(self, account: str, target: Target) -> SendResult:
         result = self._answer("resolve", account, f"target={target.display()}")
@@ -621,8 +668,7 @@ class DryRunSender:
 
     def invite_link(self, account: str, target: Target) -> SendResult:
         """A dry run writes no link: exporting one needs a real session."""
-        return self._answer("invite_link", account,
-                            f"target={target.display()}")
+        return self._answer("invite_link", account, f"target={target.display()}")
 
     def set_proxy(self, account: str, proxy: str) -> SendResult:
         return self._answer("proxy", account, f"proxy={proxy or '-'}")
@@ -634,29 +680,48 @@ class DryRunSender:
 
     def get_contacts(self, account: str) -> SendResult:
         """The contacts of one account, as ``name|user_id`` strings."""
-        result = self._answer("contacts", account,
-                              f"count={len(self.contacts.get(account) or [])}")
+        result = self._answer(
+            "contacts", account, f"count={len(self.contacts.get(account) or [])}"
+        )
         if result.ok:
             result.items = list(self.contacts.get(account) or [])
             result.count = len(result.items)
         return result
 
-    def create_group(self, account: str, title: str, about: str = "",
-                     megagroup: bool = True) -> SendResult:
-        result = self._answer("create_group", account,
-                              f"title={title or '-'} megagroup={megagroup}")
+    def create_group(
+        self, account: str, title: str, about: str = "", megagroup: bool = True
+    ) -> SendResult:
+        result = self._answer(
+            "create_group", account, f"title={title or '-'} megagroup={megagroup}"
+        )
         if result.ok:
             kind = "channel" if megagroup else "group"
             result.detail = f"{kind}:{title}"
             self.created[title] = result.detail
         return result
 
+    def edit_creator(
+        self, account: str, target: Target, new_owner: str, password: str
+    ) -> SendResult:
+        """Hand the group's creator role to ``new_owner`` (simulated)."""
+        result = self._answer(
+            "edit_creator",
+            account,
+            f"group={target.display()}"
+            f" new_owner={new_owner or '-'}"
+            f" password={'set' if password else 'missing'}",
+        )
+        if result.ok:
+            result.detail = "channel"
+        return result
+
     def last_activity(self, account: str, target: Target) -> SendResult:
         """Hours since the chat's last message; ``-1`` when it looks empty."""
         hours = self.activity.get(target.ref)
         note = f"target={target.display()}"
-        result = self._answer("activity", account,
-                              f"{note} hours={'-' if hours is None else hours}")
+        result = self._answer(
+            "activity", account, f"{note} hours={'-' if hours is None else hours}"
+        )
         if result.ok:
             result.count = -1 if hours is None else int(hours)
         return result
@@ -664,12 +729,15 @@ class DryRunSender:
     def close(self) -> None:
         """Nothing to release; kept so both backends share one interface."""
 
-    def history(self, account: str, target: Target, minutes: int = 0,
-                limit: int = 0) -> SendResult:
+    def history(
+        self, account: str, target: Target, minutes: int = 0, limit: int = 0
+    ) -> SendResult:
         """Source messages a live run would read; offline there are none."""
         result = self._answer(
-            "history", account,
-            f"target={target.display()} minutes={minutes} limit={limit}")
+            "history",
+            account,
+            f"target={target.display()} minutes={minutes} limit={limit}",
+        )
         if result.ok:
             result.items = []
         return result
@@ -681,12 +749,11 @@ def _deliver(client: Any, peer: Any, content: Content) -> Any:
     if content.forward_from:
         return client.forward_messages(peer, content.forward_from)
     if content.sticker and Path(content.sticker).exists():
-        return client.send_file(peer, content.sticker,
-                                caption=content.text or None)
+        return client.send_file(peer, content.sticker, caption=content.text or None)
     if content.media:
-        return client.send_file(peer, content.media,
-                                caption=content.text or None,
-                                reply_to=reply_to)
+        return client.send_file(
+            peer, content.media, caption=content.text or None, reply_to=reply_to
+        )
     return client.send_message(peer, content.text, reply_to=reply_to)
 
 
@@ -752,8 +819,14 @@ def _proxy_tuple(url: str) -> Any:
         raise ValueError(f"unsupported proxy kind: {kind}")
     if not parts.hostname:
         raise ValueError("proxy URL has no host")
-    return (kind, parts.hostname, parts.port or 1080, True,
-            parts.username or None, parts.password or None)
+    return (
+        kind,
+        parts.hostname,
+        parts.port or 1080,
+        True,
+        parts.username or None,
+        parts.password or None,
+    )
 
 
 @dataclass(slots=True)
@@ -879,19 +952,18 @@ class TelethonSender:
             return action()
         except Exception as error:  # noqa: BLE001 - mapped below
             code, detail, retryable = code_from_exception(error)
-            return SendResult(ok=False, code=code, detail=detail,
-                              retryable=retryable)
+            return SendResult(ok=False, code=code, detail=detail, retryable=retryable)
         except asyncio.CancelledError as error:
             # Python 3.8+: CancelledError is a BaseException, so the except
             # above misses it. A disconnect racing an in-flight call (the
             # keep_online kill probe hit exactly this) must come back as a
             # retryable failure, not crash the whole run.
             code, detail, retryable = code_from_exception(error)
-            return SendResult(ok=False, code=code, detail=detail,
-                              retryable=retryable)
+            return SendResult(ok=False, code=code, detail=detail, retryable=retryable)
 
-    def _on_target(self, account: str, target: Target, operation: str,
-                   call: Any) -> SendResult:
+    def _on_target(
+        self, account: str, target: Target, operation: str, call: Any
+    ) -> SendResult:
         """Run ``call(client, peer)`` for the first peer form that resolves."""
 
         def action() -> Any:
@@ -909,8 +981,9 @@ class TelethonSender:
 
         return self._guard(operation, account, action)
 
-    def react(self, account: str, target: Target, message_id: int,
-              emoji: str = "\U0001F44D") -> SendResult:
+    def react(
+        self, account: str, target: Target, message_id: int, emoji: str = "\U0001f44d"
+    ) -> SendResult:
         """One reaction on one message: an account may add at most one."""
 
         def call(client: Any, peer: Any) -> SendResult:
@@ -918,11 +991,18 @@ class TelethonSender:
             from telethon.tl.types import ReactionEmoji
 
             if not message_id:
-                return SendResult(ok=False, code=TARGET_INVALID,
-                                  detail="a reaction needs a message id")
-            client(SendReactionRequest(
-                peer=peer, msg_id=int(message_id),
-                reaction=[ReactionEmoji(emoticon=emoji)]))
+                return SendResult(
+                    ok=False,
+                    code=TARGET_INVALID,
+                    detail="a reaction needs a message id",
+                )
+            client(
+                SendReactionRequest(
+                    peer=peer,
+                    msg_id=int(message_id),
+                    reaction=[ReactionEmoji(emoticon=emoji)],
+                )
+            )
             return SendResult(ok=True, message_id=int(message_id))
 
         return self._on_target(account, target, "react", call)
@@ -930,8 +1010,7 @@ class TelethonSender:
     def send(self, account: str, target: Target, content: Content) -> SendResult:
         def call(client: Any, peer: Any) -> SendResult:
             message = _deliver(client, peer, content)
-            return SendResult(ok=True,
-                              message_id=int(getattr(message, "id", 0)))
+            return SendResult(ok=True, message_id=int(getattr(message, "id", 0)))
 
         return self._on_target(account, target, "send", call)
 
@@ -941,12 +1020,16 @@ class TelethonSender:
         def action() -> SendResult:
             client = self._client(account)
             if not client.is_user_authorized():
-                return SendResult(ok=False, code=SESSION_NOT_FOUND,
-                                  detail="the session is not authorized")
+                return SendResult(
+                    ok=False,
+                    code=SESSION_NOT_FOUND,
+                    detail="the session is not authorized",
+                )
             me = client.get_me()
             if me is None:
-                return SendResult(ok=False, code=SESSION_NOT_FOUND,
-                                  detail="get_me() returned nothing")
+                return SendResult(
+                    ok=False, code=SESSION_NOT_FOUND, detail="get_me() returned nothing"
+                )
             return SendResult(ok=True, detail=str(getattr(me, "id", "")))
 
         return self._guard("ping", account, action)
@@ -964,12 +1047,14 @@ class TelethonSender:
                     client(ImportChatInviteRequest(target.invite_hash))
                 except Exception as error:  # noqa: BLE001 - joined already
                     if type(error).__name__ == "InviteRequestSentError":
-                        return SendResult(ok=True, code=JOIN_REQUEST,
-                                          detail="the group needs an approval")
+                        return SendResult(
+                            ok=True,
+                            code=JOIN_REQUEST,
+                            detail="the group needs an approval",
+                        )
                     if not _is_already_joined(error):
                         raise
-                    return SendResult(ok=True,
-                                      code=USER_ALREADY_PARTICIPANT)
+                    return SendResult(ok=True, code=USER_ALREADY_PARTICIPANT)
                 return SendResult(ok=True)
             chat = chat_entity(client, target)
             try:
@@ -1015,8 +1100,11 @@ class TelethonSender:
             client = self._client(account)
             peer = chat_entity(client, target)
             settings = InputPeerNotifySettings(mute_until=until or 0x7FFFFFFF)
-            client(UpdateNotifySettingsRequest(
-                peer=InputNotifyPeer(peer), settings=settings))
+            client(
+                UpdateNotifySettingsRequest(
+                    peer=InputNotifyPeer(peer), settings=settings
+                )
+            )
             return SendResult(ok=True)
 
         return self._guard("mute", account, action)
@@ -1033,9 +1121,15 @@ class TelethonSender:
             from telethon.tl.types import InputPeerEmpty
 
             client = self._client(account)
-            result = client(GetDialogsRequest(
-                offset_date=None, offset_id=0, offset_peer=InputPeerEmpty(),
-                limit=0, hash=0))
+            result = client(
+                GetDialogsRequest(
+                    offset_date=None,
+                    offset_id=0,
+                    offset_peer=InputPeerEmpty(),
+                    limit=0,
+                    hash=0,
+                )
+            )
             answer = SendResult(ok=True)
             answer.count = int(getattr(result, "count", 0) or 0)
             return answer
@@ -1058,11 +1152,19 @@ class TelethonSender:
             rows: list[str] = []
             for user in getattr(found, "users", []) or []:
                 handle = getattr(user, "username", "") or ""
-                name = " ".join(part for part in (
-                    getattr(user, "first_name", "") or "",
-                    getattr(user, "last_name", "") or "") if part).strip()
-                rows.append(f"{name or '-'}|@{handle}" if handle
-                            else f"{name or '-'}|{getattr(user, 'id', '')}")
+                name = " ".join(
+                    part
+                    for part in (
+                        getattr(user, "first_name", "") or "",
+                        getattr(user, "last_name", "") or "",
+                    )
+                    if part
+                ).strip()
+                rows.append(
+                    f"{name or '-'}|@{handle}"
+                    if handle
+                    else f"{name or '-'}|{getattr(user, 'id', '')}"
+                )
             return SendResult(ok=True, detail="\n".join(rows))
 
         return self._guard("pull_contacts", account, action)
@@ -1081,16 +1183,21 @@ class TelethonSender:
 
             client = self._client(account)
             peer = client.get_input_entity("me")
-            client(StartBotRequest(bot=bot, peer=peer,
-                                   random_id=int.from_bytes(
-                                       os.urandom(8), "big", signed=True),
-                                   start_param=param or ""))
+            client(
+                StartBotRequest(
+                    bot=bot,
+                    peer=peer,
+                    random_id=int.from_bytes(os.urandom(8), "big", signed=True),
+                    start_param=param or "",
+                )
+            )
             return SendResult(ok=True)
 
         return self._guard("start_bot", account, action)
 
-    def request_mini_app(self, account: str, bot: str, param: str = "",
-                         app: str = "") -> SendResult:
+    def request_mini_app(
+        self, account: str, bot: str, param: str = "", app: str = ""
+    ) -> SendResult:
         """A ``startapp`` link is a start with the app name in the parameter.
 
         Telegram has one entry point for both, so this reuses ``start_bot`` and
@@ -1101,8 +1208,9 @@ class TelethonSender:
             combined = f"{app}___{param}"
         return self.start_bot(account, bot, combined)
 
-    def join_call(self, account: str, target: Target,
-                  muted: bool = False) -> SendResult:
+    def join_call(
+        self, account: str, target: Target, muted: bool = False
+    ) -> SendResult:
         """Join the group call, then set the microphone state.
 
         ``JoinGroupCallRequest`` needs the call itself, which is a
@@ -1130,8 +1238,11 @@ class TelethonSender:
                 if call is not None:
                     self._calls[key] = call
             if call is None:
-                return SendResult(ok=False, code="GROUP_CALL_NOT_FOUND",
-                                  detail="no group call on this chat")
+                return SendResult(
+                    ok=False,
+                    code="GROUP_CALL_NOT_FOUND",
+                    detail="no group call on this chat",
+                )
             # The params carry this client's WebRTC SSRC. An empty "{}" joins
             # once and then the server starts answering
             # GROUPCALL_SSRC_DUPLICATE_MUCH: every attempt must present a
@@ -1139,18 +1250,25 @@ class TelethonSender:
             for attempt in range(4):
                 ssrc = random.randrange(1, 2**31 - 1)
                 try:
-                    client(JoinGroupCallRequest(
-                        call=call, join_as="me",
-                        params=DataJSON(data=json.dumps({"ssrc": ssrc})),
-                        muted=muted, video_stopped=True))
+                    client(
+                        JoinGroupCallRequest(
+                            call=call,
+                            join_as="me",
+                            params=DataJSON(data=json.dumps({"ssrc": ssrc})),
+                            muted=muted,
+                            video_stopped=True,
+                        )
+                    )
                     break
                 except Exception as error:  # noqa: BLE001 - mapped below
-                    if "SSRC_DUPLICATE" not in str(error).upper() \
-                            or attempt == 3:
+                    if "SSRC_DUPLICATE" not in str(error).upper() or attempt == 3:
                         raise
             if not muted:
-                client(EditGroupCallParticipantRequest(
-                    call=call, participant="me", muted=False))
+                client(
+                    EditGroupCallParticipantRequest(
+                        call=call, participant="me", muted=False
+                    )
+                )
             return SendResult(ok=True)
 
         return self._guard("call", account, action)
@@ -1163,8 +1281,7 @@ class TelethonSender:
             resolved = client(GetFullChannelRequest(chat))
         except Exception:  # noqa: BLE001 - the call may simply not exist
             return None
-        call_holder = getattr(getattr(resolved, "full_chat", None), "call",
-                              None)
+        call_holder = getattr(getattr(resolved, "full_chat", None), "call", None)
         if call_holder is None:
             return None
         return getattr(call_holder, "call", None) or call_holder
@@ -1183,27 +1300,29 @@ class TelethonSender:
 
         return self._guard("invite", account, action)
 
-    def get_participants(self, account: str, target: Target,
-                         limit: int = 0) -> SendResult:
+    def get_participants(
+        self, account: str, target: Target, limit: int = 0
+    ) -> SendResult:
         def call(client: Any, peer: Any) -> SendResult:
             users = client.get_participants(peer, limit=limit or None)
             rows: list[str] = []
             for user in users:
                 username = getattr(user, "username", "") or ""
-                rows.append(f"@{username}" if username
-                            else str(getattr(user, "id", "")))
+                rows.append(
+                    f"@{username}" if username else str(getattr(user, "id", ""))
+                )
             return SendResult(ok=True, count=len(users), items=rows)
 
         return self._on_target(account, target, "participants", call)
 
-    def update_profile(self, account: str, first: str,
-                       last: str = "") -> SendResult:
+    def update_profile(self, account: str, first: str, last: str = "") -> SendResult:
         def action() -> SendResult:
             from telethon.tl.functions.account import UpdateProfileRequest
 
             client = self._client(account)
-            client(UpdateProfileRequest(first_name=first or None,
-                                        last_name=last or None))
+            client(
+                UpdateProfileRequest(first_name=first or None, last_name=last or None)
+            )
             return SendResult(ok=True)
 
         return self._guard("profile", account, action)
@@ -1243,21 +1362,22 @@ class TelethonSender:
 
         return self._guard("avatar", account, action)
 
-    def add_contact(self, account: str, target: Target,
-                    first: str = "") -> SendResult:
+    def add_contact(self, account: str, target: Target, first: str = "") -> SendResult:
         def action() -> SendResult:
             from telethon.tl.functions.contacts import AddContactRequest
 
             client = self._client(account)
             user = user_input(client, target)
             phone = target.ref if target.ref.startswith("+") else ""
-            client(AddContactRequest(
-                id=user,
-                first_name=first or target.display(),
-                last_name="",
-                phone=phone,
-                add_phone_privacy_exception=False,
-            ))
+            client(
+                AddContactRequest(
+                    id=user,
+                    first_name=first or target.display(),
+                    last_name="",
+                    phone=phone,
+                    add_phone_privacy_exception=False,
+                )
+            )
             return SendResult(ok=True)
 
         return self._guard("contact", account, action)
@@ -1276,12 +1396,14 @@ class TelethonSender:
                         raise
                     last = error
                     continue
-                title = (getattr(entity, "title", "")
-                         or getattr(entity, "username", ""))
+                title = getattr(entity, "title", "") or getattr(entity, "username", "")
                 count = int(getattr(entity, "participants_count", 0) or 0)
-                return SendResult(ok=True, code=_kind_of(entity),
-                                  detail=str(title or target.ref),
-                                  count=count)
+                return SendResult(
+                    ok=True,
+                    code=_kind_of(entity),
+                    detail=str(title or target.ref),
+                    count=count,
+                )
             # Same bare-id problem as chat_entity: one dialog listing turns a
             # user id into an entity, and without it a live user reads invalid.
             if _bare_id(target):
@@ -1294,13 +1416,15 @@ class TelethonSender:
                             raise
                         last = error
                         continue
-                    title = (getattr(entity, "title", "")
-                             or getattr(entity, "username", ""))
+                    title = getattr(entity, "title", "") or getattr(
+                        entity, "username", ""
+                    )
                     return SendResult(
-                        ok=True, code=_kind_of(entity),
+                        ok=True,
+                        code=_kind_of(entity),
                         detail=str(title or target.ref),
-                        count=int(getattr(entity,
-                                          "participants_count", 0) or 0))
+                        count=int(getattr(entity, "participants_count", 0) or 0),
+                    )
             assert last is not None
             raise last
 
@@ -1323,8 +1447,12 @@ class TelethonSender:
             items: list[str] = []
             for user in getattr(answer, "users", None) or []:
                 name = " ".join(
-                    part for part in (getattr(user, "first_name", ""),
-                                      getattr(user, "last_name", "")) if part
+                    part
+                    for part in (
+                        getattr(user, "first_name", ""),
+                        getattr(user, "last_name", ""),
+                    )
+                    if part
                 )
                 username = getattr(user, "username", "") or ""
                 ref = f"@{username}" if username else str(getattr(user, "id", ""))
@@ -1333,21 +1461,62 @@ class TelethonSender:
 
         return self._guard("contacts", account, action)
 
-    def create_group(self, account: str, title: str, about: str = "",
-                     megagroup: bool = True) -> SendResult:
+    def create_group(
+        self, account: str, title: str, about: str = "", megagroup: bool = True
+    ) -> SendResult:
         def action() -> SendResult:
             from telethon.tl.functions.channels import CreateChannelRequest
 
             client = self._client(account)
-            created = client(CreateChannelRequest(
-                title=title, about=about, megagroup=megagroup,
-            ))
+            created = client(
+                CreateChannelRequest(
+                    title=title,
+                    about=about,
+                    megagroup=megagroup,
+                )
+            )
             entity = created.chats[0]
             username = getattr(entity, "username", "") or ""
             ref = f"@{username}" if username else str(getattr(entity, "id", ""))
             return SendResult(ok=True, detail=ref, count=int(entity.id))
 
         return self._guard("create_group", account, action)
+
+    def edit_creator(
+        self, account: str, target: Target, new_owner: str, password: str
+    ) -> SendResult:
+        """Transfer the group's creator role (``channels.editCreator``).
+
+        Telegram only allows the handover for channels and megagroups, and it
+        requires the source account's two-factor password inline - exactly
+        what the reference's 2FA box asks for. The new owner must already sit
+        in the chat, which the run loop guarantees before calling this.
+        """
+
+        def action() -> SendResult:
+            from telethon.functions import account as account_fn
+            from telethon.password import compute_check
+            from telethon.tl.functions.messages import (
+                EditChatCreatorRequest,
+            )
+
+            client = self._client(account)
+            from .targets import parse_many
+
+            chat = chat_entity(client, target)
+            user = user_input(client, parse_many([new_owner], "user")[0])
+            pwd = client(account_fn.GetPasswordRequest())
+            client(
+                EditChatCreatorRequest(
+                    peer=chat,
+                    user_id=user,
+                    password=compute_check(pwd, password),
+                )
+            )
+            kind = "megagroup" if getattr(chat, "megagroup", False) else "channel"
+            return SendResult(ok=True, detail=kind)
+
+        return self._guard("edit_creator", account, action)
 
     def last_activity(self, account: str, target: Target) -> SendResult:
         def call(client: Any, peer: Any) -> SendResult:
@@ -1362,8 +1531,9 @@ class TelethonSender:
             if stamp.tzinfo is None:
                 stamp = stamp.replace(tzinfo=UTC)
             hours = (datetime.now(UTC) - stamp).total_seconds() / 3600.0
-            return SendResult(ok=True, count=int(hours),
-                              detail=f"last message {int(hours)}h ago")
+            return SendResult(
+                ok=True, count=int(hours), detail=f"last message {int(hours)}h ago"
+            )
 
         return self._on_target(account, target, "activity", call)
 
@@ -1372,15 +1542,22 @@ class TelethonSender:
             client = self._client(account)
             done = client.log_out()
             if not done:
-                return SendResult(ok=False, code=UNKNOWN,
-                                  detail="log_out() returned False")
+                return SendResult(
+                    ok=False, code=UNKNOWN, detail="log_out() returned False"
+                )
             self._clients.pop(account, None)
             return SendResult(ok=True)
 
         return self._guard("logout", account, action)
 
-    def history(self, account: str, target: Target, minutes: int = 0,
-                limit: int = 0, media_dir: str = "") -> SendResult:
+    def history(
+        self,
+        account: str,
+        target: Target,
+        minutes: int = 0,
+        limit: int = 0,
+        media_dir: str = "",
+    ) -> SendResult:
         """The recent messages of one chat, oldest first, as source strings.
 
         Each item is ``peer|sender|text``, the shape ``sources.parse_many``
@@ -1403,8 +1580,9 @@ class TelethonSender:
             # past: iterate newest first and stop at the first older message.
             # Passing it as ``offset_date`` would read everything *before* that
             # point -- the opposite set, and on a busy chat a 200 message replay.
-            cutoff = (datetime.now(UTC) - timedelta(minutes=minutes)
-                      if minutes > 0 else None)
+            cutoff = (
+                datetime.now(UTC) - timedelta(minutes=minutes) if minutes > 0 else None
+            )
             scanned = 0
             captured: list[tuple[int, str, str, str, tuple[str, ...]]] = []
             for message in client.iter_messages(peer, limit=limit or None):
@@ -1422,20 +1600,25 @@ class TelethonSender:
                     saved = _save_media(message, media_dir)
                 flags = _forward_flags(message)
                 if body or saved:
-                    captured.append((int(message.id), _sender_ref(message),
-                                     body, saved, flags))
+                    captured.append(
+                        (int(message.id), _sender_ref(message), body, saved, flags)
+                    )
             captured.reverse()  # Telethon yields newest first
             return SendResult(
-                ok=True, count=scanned,
-                items=[f"{target.ref}|{sender}|{body}"
-                       + (f"|{saved}" if saved else "")
-                       + (f"|flags={','.join(flags)}" if flags else "")
-                       for _mid, sender, body, saved, flags in captured],
-                posts=[(mid, body) for mid, _sender, body, _saved, _f
-                       in captured],
-                post_flags={mid: flags
-                            for mid, _sender, _body, _saved, flags in captured
-                            if flags},
+                ok=True,
+                count=scanned,
+                items=[
+                    f"{target.ref}|{sender}|{body}"
+                    + (f"|{saved}" if saved else "")
+                    + (f"|flags={','.join(flags)}" if flags else "")
+                    for _mid, sender, body, saved, flags in captured
+                ],
+                posts=[(mid, body) for mid, _sender, body, _saved, _f in captured],
+                post_flags={
+                    mid: flags
+                    for mid, _sender, _body, _saved, flags in captured
+                    if flags
+                },
             )
 
         return self._on_target(account, target, "history", call)

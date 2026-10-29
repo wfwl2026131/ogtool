@@ -52,6 +52,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "export_accounts": "live",
     "filter_group": "live",
     "filter_phone": "live",
+    "group_manage": "write",
     "keep_online": "live",
     "mass_send": "write",
     "mass_send_v2": "write",

@@ -118,6 +118,15 @@ GENERIC: dict[str, dict] = {
             ("--stop-after", "跑几轮停", "10", "int"),
         ],
     },
+    "group_manage": {
+        "label": "👑 群管家(批量转让群主并退群)",
+        "steps": [
+            ("--groups", "要转让的群(链接/@用户名,逗号分隔)", "", "str"),
+            ("--target", "新群主(账号池里的标号或 @用户名)", "", "str"),
+            ("--password", "源账号的两步验证密码", "", "str"),
+            ("--interval-ms", "两个群之间隔多少毫秒", "1000", "int"),
+        ],
+    },
     "auto_script": {
         "label": "📜 自动脚本(跑自定义步骤脚本)",
         "steps": [

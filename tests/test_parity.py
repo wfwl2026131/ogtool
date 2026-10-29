@@ -55,6 +55,7 @@ CLIENT_SOURCE = (Path.home()
 #: numbers them T1, T2, ... in the toolbar's own order.
 TOOLBAR: tuple[tuple[str, str], ...] = (
     ("T1", "translate"),
+    ("T2", "group_manage"),
 )
 
 

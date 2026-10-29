@@ -32,6 +32,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "batch_join",
         "batch_rename",
         "copy_chat",
+        "group_manage",
         "mass_send",
         "mass_send_v2",
         "mix_market",
@@ -79,8 +80,11 @@ _MODULE_NAMES = [
     "mix_market",
     # The right toolbar (:1740461) is the reference's second surface: the
     # translation workbench lives there, not in the console nav, so it
-    # carries a T-number instead of a console index.
+    # carries a T-number instead of a console index. The Group Manager is
+    # the other second-surface page - the console opens it with its own
+    # "Open Group Manager" command, so it takes T2.
     "translate",
+    "group_manage",
     # P3
     "settings",
 ]

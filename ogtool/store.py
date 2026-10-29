@@ -199,6 +199,16 @@ CREATE TABLE IF NOT EXISTS translation_usage (
     chars_cache  INTEGER NOT NULL DEFAULT 0,
     updated_at   TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS group_mgr (
+    group_id    TEXT PRIMARY KEY,
+    owner_phone TEXT NOT NULL DEFAULT '',
+    invite_link TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    last_active TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT '',
+    chat_type   INTEGER NOT NULL DEFAULT 1,
+    old_owner   TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_translation_created
     ON translation(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
@@ -895,6 +905,65 @@ class Store:
             (period_start, utcnow()),
         )
         self._conn.commit()
+
+    def upsert_group_owner(
+        self,
+        group_id: str,
+        owner_phone: str,
+        old_owner: str = "",
+        chat_type: int = 1,
+        status: str = "transferred",
+        invite_link: str = "",
+    ) -> None:
+        """One ``group_mgr`` row after a transfer (:1723421).
+
+        The reference's own transfer path updates ``owner_phone`` and
+        ``old_owner`` together (:1723909); a group the page has not seen
+        before gets its first row.
+        """
+        now = utcnow()
+        self._conn.execute(
+            """INSERT INTO group_mgr
+               (group_id, owner_phone, invite_link, created_at, last_active,
+                status, chat_type, old_owner)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(group_id) DO UPDATE SET
+                   owner_phone = excluded.owner_phone,
+                   old_owner = excluded.old_owner,
+                   status = excluded.status,
+                   chat_type = excluded.chat_type,
+                   invite_link = CASE WHEN excluded.invite_link != ''
+                                      THEN excluded.invite_link
+                                      ELSE group_mgr.invite_link END,
+                   last_active = excluded.last_active""",
+            (
+                group_id,
+                owner_phone,
+                invite_link,
+                now,
+                now,
+                status,
+                int(chat_type),
+                old_owner,
+            ),
+        )
+        self._conn.commit()
+
+    def group_owner(self, group_id: str) -> sqlite3.Row | None:
+        """The ``group_mgr`` row of one group, when the page has seen it."""
+        row = self._conn.execute(
+            "SELECT * FROM group_mgr WHERE group_id = ?",
+            (group_id,),
+        ).fetchone()
+        return row
+
+    def groups_for_owner(self, owner_phone: str) -> list[sqlite3.Row]:
+        """Every group the phone currently owns, newest activity first."""
+        return self._conn.execute(
+            """SELECT * FROM group_mgr WHERE owner_phone = ?
+               ORDER BY last_active DESC, group_id""",
+            (owner_phone,),
+        ).fetchall()
 
     def count_sent_today(
         self,

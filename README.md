@@ -10,7 +10,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 
 25 项里有 3 项不做（充值码 / licence / AI 计费结算，绑他们的服务端），
 按总方案的口径是 **22 个功能模块**；加上账号池与设置页参数，一共
-**26 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 全绿，
+**27 个子命令**。P0 / P1 / P2 / P3 四批已全部落地，`pytest` 全绿，
 `ruff check .` 无告警。MIT 许可，见 [LICENSE](LICENSE)。
 
 > 本仓库不带任何账号、会话或私群链接：`config.yaml`、`data/`、会话文件
@@ -48,9 +48,10 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 24 | ⚙️ 设置 | `settings` | `--json`（只读展示 `globals:` 六个键） | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | T1 | 🌐 翻译工作台 | `translate` | `--text --texts-file --lg-from --lg-to --strategy --azure-key --quota-total --batch-size --list` | 否 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| T2 | 👑 群管家 | `group_manage` | `--groups --groups-file --from-store --target --password --password-env --interval-ms` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 
 底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
-**26 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
+**27 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
 
 ## 对齐参考客户端的四个进阶能力（v1.1.1+）
 
@@ -65,6 +66,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 傀儡聊天执行器（v1.2.0+） | `puppet_chat_v2 --patterns a.txt --patterns b.txt --cycles 3 --message-wait 7 --stats-dir data/puppet_chat --resume --listen 120` | 对齐参考端 `PuppetChatExecutor`：一个任务吃多份脚本、整组循环 N 轮（轮间停 `--cycle-interval` 秒）、每轮写统计 `puppet_chat_<task>_<cycle>.json`；`--message-wait` 是两条消息之间的保底秒数（对齐 `Waiting %1 seconds before next message`）；`--resume` 以回执库为准跳过已发出的（槽位， 目标）对，中断重跑不重发；槽位映射带日限自动换号与死号整组迁移（对齐 `Daily speech limit reached` / `mark account unavailable`）；`--listen N` 收尾开 N 秒收音窗，每个绑定号挂 handler 记录进群消息，本方傀儡号自己的消息丢弃（对齐 `speechLogged` / `Filter messages from internal puppet accounts`） |
 | 混市工作流编排（v1.2.1+） | `mix_market --contacts-file data/inputs/contacts.txt --group-title "A" --stop-after 5` | 对齐参考端 MixMarket（:1741560-1741650）：启动打 `Workflow:` 五步原文块 + `Workflow started`/`Workflow stopped`；`--contacts-file` 即 `inputFilePath`，文件缺/空按页面文案报 `Input file not found: %1` / `Input file is empty`，行并进 `--contact` 之后；五步各带权限门——某步零成功且失败码全是权限类（CHAT_WRITE_FORBIDDEN 等）时打 `<步名>: No permission` 并把失败转为 skipped（步没跑，不是干砸）；`heldTargets` 落盘 `mix_market_held_targets.json`：建群失败的标题留档，下次启动先重试再清档（`held: N target(s) restored` / `heldTargets: N kept on file`）；`--create-rest-min > --create-rest-max` 报 `Invalid rest range`；逐步日志照抄参考端 `A%1 add contacts/added/failed (%3)`、`A%1 creating owned %2`/`target created`、`[Speech]`、`[Invite]`、`Batch Pull v2 error: %1`、`Mass Send DM v2 completed`、`Dead targets detected, rebuild accounts: %1`、`GroupMgr config missing, use defaults.` |
 | 翻译工作台（v1.3.0+） | `translate --text "你好" --lg-to en --strategy ai`；批量 `--texts-file lines.txt --batch-size 20`；Azure `--strategy azure --azure-key KEY` | 对齐参考端右侧工具栏翻译页（:1740461 RightToolBar，10 类全家桶）：手动框（`setupManualTranslateSection`/`onTranslateClicked`）对应 `--text`；`TranslationBatchManager` 对应 `--texts-file` 分块批量 + 批量缓存查询 `input IN (%1) AND lg_to = ?`（:1723889）；历史表沿用参考端主键 `(input, lg_to)`（:1723409），重译覆盖不增行；配额状态机三句判决照抄（`Translation quota is sufficient` / `WARNING: Translation quota running low...` / `CRITICAL: Translation quota exhausted! Translation will be blocked.`，:1737723-1737725），预算耗尽打 `Translation continuation blocked due to quota issues`（:1737735）并跳过余量；用量跟踪带 FromCache 拆分（`Recorded usage - Length: %1, FromCache: %2...`，:1737659）+ 周期上报（`Usage reported successfully`，失败 `data preserved for next retry` :1737734）；周期到期 `Current period usage reset`（:1737726）；`--strategy azure` 走真 Azure REST，映射其自家错误词 `Quota exceeded`/`Subscription disabled`（:1737778-1737779）；无钥匙打 `No keys available, translation service will use fallback`（:1737741）+ 维护横幅 |
+| 群主转让（v1.3.1+） | `group_manage --groups "@g1,-1001234" --target acc2 --password "$TWOPASS"`；存量 `--from-store`；批量 `--groups-file groups.txt` | 对齐参考端 Group Manager 页（控制台 "Open Group Manager" 打开的 ex 页，:1742778）：原子端点 `tg.answer_group.transfer_owner_and_leave`（:1743915）自带退群语义，`auto_transfer_ok`/`auto_transfer_failed` 日志行照抄（:1743960-1743961），落库沿用参考端 `group_mgr` 表（:1723421，group_id PK / owner_phone / invite_link / status / chat_type / old_owner）。每群三步：新 owner 先入群——目标是自有账号就自己 join、是外部用户就源账号 invite，失败打 `Target account failed to join group %1 before transfer.`；转让要源账号二步密码（`EditCreator`/`messages.editChatCreator`，SRP `compute_check`），缺密码整号跳过打 `Skip account %1: missing second password.`；成功后原 owner 退群 `Original owner left group %1.`（退群失败不影响转让，`left=0`）。无效群 id 打 `Invalid group id %1, skip transfer.`；`--from-store` 按 `owner_phone` 从 `group_mgr` 表取名下群，与手填去重 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -337,6 +339,12 @@ ogtool translate --strategy azure --azure-key "$AZURE_KEY" \
   --texts-file data/inputs/lines.txt --lg-to zh
 ogtool translate --list --search hello --limit 50
 
+# #T2 群管家（v1.3.1）：把群主转给自己的号，转完原号退群
+ogtool group_manage --groups "@g1,-1001234" --target acc2 --password "$TWOPASS"
+ogtool group_manage --groups-file data/inputs/groups.txt \
+  --target acc2 --password-env TWOPASS --interval-ms 2000
+ogtool group_manage --from-store --target acc2 --password "$TWOPASS"
+
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list
 ogtool auto_script --script warm_up --var greeting="hello all" --target "@demo_chat"
@@ -535,7 +543,7 @@ prompt 不写在代码里：模板在 `prompts/*.txt`（`ai_chat` / `ai_comment`
 
 ```
 ogtool/
-  cli.py          argparse 入口，26 个子命令
+  cli.py          argparse 入口，27 个子命令
   config.py       YAML + ${VAR} 展开
   accounts.py     账号池
   store.py        SQLite，九张表
@@ -601,6 +609,7 @@ tests/            295 条
 | `video_manage` | `join()`/`leave()` 真调用；操作间隔真等 | 真 | `video_manage.py:97/101` |
 | `watch_chat` | `add_event_handler()` + `run_forever()`，命中后 `await send_message()` | 真（本轮修） | `watch_chat.py:260/266/284` |
 | `translate` | live 读聊天历史（`sender.history()`）→ 真翻译（AI 端点 / Azure REST）→ `translation` 表落缓存；`--auto-received/--auto-sent` 分流收/发消息 | 真 | `translate.py:482/418/258/212`；缓存落 `store.py:721`，批量查询 `store.py:739` |
+| `group_manage` | 转让三步全走 sender：新 owner `join()`/`invite()` → `edit_creator()`（`GetPasswordRequest` + `compute_check` + `messages.editChatCreator`）→ 源账号 `leave()`；`--from-store` 读 `group_mgr` 表，转成即落库 | 真 | `group_manage.py:207/219/234`；原语 `senders.py:654/1364`，表 `store.py:909/951` |
 
 **本轮修掉的 7 处假 live**（每处都有能在旧代码上变红的测试）：
 

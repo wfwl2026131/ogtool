@@ -64,6 +64,11 @@ FIXTURES: dict[str, list[str]] = {
     # The workbench translates one text through the template fallback and
     # reports zero usage: a sweep run must stay exactly reproducible.
     "translate": ["--text", "sweep line", "--lg-to", "zh"],
+    # The transfer plans one group with a 2FA password present, so the plan
+    # is deterministic (the missing-password skip would also be, but the
+    # happy path proves more of the page).
+    "group_manage": ["--groups", "https://t.me/sweep", "--target", "t1",
+                     "--password", "sweep"],
 }
 
 
