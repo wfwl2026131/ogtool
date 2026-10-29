@@ -21,6 +21,7 @@ runner takes after a group could not be created.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass, field
@@ -62,6 +63,34 @@ STAGES = (
     ("mass_send_v2", "message own contacts"),
 )
 
+#: The workflow block the page prints, word for word.
+WORKFLOW_STEPS = (
+    "Batch Contacts",
+    "Create owned group/channel",
+    "Puppet Chat v2",
+    "Batch Pull v2 (pull own contacts)",
+    "Mass Send DM v2 (to own contacts)",
+)
+
+#: What each step is called on a permission gate
+#: (``Batch Contacts: No permission`` & friends). Note the second one is
+#: "Group Manager", not the workflow block's "Create owned group/channel".
+GATE_STEPS = (
+    "Batch Contacts",
+    "Group Manager",
+    "Puppet Chat v2",
+    "Batch Pull v2",
+    "Mass Send DM v2",
+)
+
+#: A stage that produced nothing but these codes is gated, not failed.
+PERMISSION_CODES = frozenset({
+    "CHAT_WRITE_FORBIDDEN", "CHAT_ADMIN_REQUIRED", "CHANNEL_PRIVATE",
+    "USER_PRIVACY_RESTRICTED", "CHAT_RESTRICTED",
+})
+
+HELD_FILE = "mix_market_held_targets.json"
+
 FLAGS = (
     Flag("--group-title", "group_title", str,
          "a group to create (repeatable)", action="append"),
@@ -71,6 +100,8 @@ FLAGS = (
     Flag("--media", "media", str, "message media for the last stage"),
     Flag("--contact", "contact", str,
          "contact: name|ref (repeatable)", action="append"),
+    Flag("--contacts-file", "contacts_file", str,
+         "file with one contact per line (inputFilePath)"),
     Flag("--dead-check-interval", "dead_check_interval", float,
          "seconds between two dead chat checks"),
     Flag("--dead-after-hours", "dead_after_hours", float,
@@ -94,6 +125,7 @@ class MixConfig:
     text: str = ""
     media: str = ""
     contacts: list[str] = field(default_factory=list)
+    contacts_file: str = ""
     dead_check_interval: float = 30.0
     dead_after_hours: float = 72.0
     activity: dict[str, float] = field(default_factory=dict)
@@ -122,6 +154,7 @@ class MixConfig:
             text=text(data, "text"),
             media=text(data, "media"),
             contacts=_unique(_as_list(data.get("contact"))),
+            contacts_file=text(data, "contacts_file"),
             dead_check_interval=num(data, "dead_check_interval", 30.0),
             dead_after_hours=num(data, "dead_after_hours", 72.0),
             activity=_activity(_as_list(data.get("activity"))),
@@ -174,6 +207,74 @@ def slug(title: str) -> str:
     return f"@og_{cleaned[:24] or 'group'}"
 
 
+class HeldTargets:
+    """``heldTargets``: the create-failed titles the page keeps aside.
+
+    The key is a workflow config field (:1741587), and persisting it is what
+    makes a target survive the run: the next start retries the held titles
+    first instead of the operator re-typing them by hand. A run that creates
+    them clears the file; one that fails again re-holds exactly the leftovers.
+    """
+
+    def __init__(self, base: Path) -> None:
+        self.path = base / HELD_FILE
+        self.items: list[str] = []
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if isinstance(data, dict):
+            self.items = [str(item) for item in data.get("held", [])
+                          if str(item).strip()]
+
+    def save(self, titles: list[str]) -> None:
+        self.items = _unique([str(item) for item in titles])
+        self.path.write_text(
+            json.dumps({"held": self.items}, ensure_ascii=False, indent=1),
+            encoding="utf-8")
+
+    def clear(self) -> None:
+        self.items = []
+        if self.path.exists():
+            self.path.unlink()
+
+
+def merge_contacts_file(config: MixConfig) -> None:
+    """``inputFilePath``: stage 1's input file, one contact per line.
+
+    The page refuses to start on a file it cannot use and says which one:
+    ``Input file not found: %1`` / ``Input file is empty``. A usable file is
+    merged behind the ``--contact`` entries, first occurrence wins.
+    """
+    if not config.contacts_file:
+        return
+    path = Path(config.contacts_file)
+    if not path.exists():
+        raise ConfigError(f"{SECTION}: Input file not found: {path}")
+    lines = [line.strip() for line in
+             path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        raise ConfigError(f"{SECTION}: Input file is empty")
+    config.contacts = _unique(config.contacts + lines)
+
+
+def permission_gate(result: StageResult, index: int) -> bool:
+    """Print the step's gate when the stage did nothing but hit permissions.
+
+    Every workflow step sits behind a permission in the reference
+    (``Batch Contacts: No permission`` ... ``Mass Send DM v2: No permission``);
+    a stage that produced zero successes and only permission refusals is
+    gated - the step did not run, it did not fail work that deserves retries.
+    """
+    if result.ok or not result.codes \
+            or not result.codes <= PERMISSION_CODES:
+        return False
+    print(f"{GATE_STEPS[index]}: No permission")
+    result.skipped += result.failed
+    result.failed = 0
+    return True
+
+
 @dataclass(slots=True)
 class StageResult:
     name: str
@@ -187,6 +288,8 @@ class StageResult:
     #: ``heldTargets``: work the page set aside to retry after a rest instead
     #: of failing outright ("Retry after %1 minute(s)").
     held: list[str] = field(default_factory=list)
+    #: every failure code the stage saw, for the permission gate
+    codes: set[str] = field(default_factory=set)
 
     def line(self, index: int, total: int) -> str:
         return (f"stage {index}/{total} {self.name}: ok={self.ok} "
@@ -217,26 +320,48 @@ def rest_after_failure(config: MixConfig, index: int) -> float:
     return config.create_rest_min + (span * min(index, 3) / 3.0)
 
 
+def _anumber(account: str, labels: list[str]) -> int:
+    """The 1-based account number behind ``A%1`` in the page's step logs."""
+    try:
+        return labels.index(account) + 1
+    except ValueError:
+        return 0
+
+
 def stage_add_contacts(config: MixConfig, ctx: RunContext, task: TaskRef,
                        labels: list[str]) -> tuple[StageResult, dict[str, str]]:
     """Add the contacts; returns who added whom, for the last stage."""
     result = StageResult("add_contact", STAGES[0][1])
     owners: dict[str, str] = {}
     contacts = [entry.split("|", 1)[-1] for entry in config.contacts]
+    entries = {ref: entry for entry, ref
+               in zip(config.contacts, contacts, strict=True)}
     jobs = add_contact.plan_jobs(contacts, labels or ["-"])
     sender = ctx.sender()
     for account, contact, _round in jobs:
         target = parse_many([contact], "custom")[0]
+        number = _anumber(account, labels)
+        shown = entries.get(contact, contact)
+        # A%1 add contacts: %2
+        print(f"A{number} add contacts: {shown}")
         answer = sender.add_contact(account, target)
         if answer.ok:
             result.ok += 1
             owners[contact] = account
+            # A%1 added: %2 / A%1 keep target: %2
+            print(f"A{number} added: {shown}")
+            print(f"A{number} keep target: {shown}")
         else:
             result.failed += 1
+            if answer.code:
+                result.codes.add(answer.code)
+            # A%1 failed: %2 (%3)
+            print(f"A{number} failed: {shown} ({answer.code})")
         # The stage counter says ok/failed; the row says which contact and
         # what the server answered. Without it the page's receipt is an
         # empty envelope under a PLAN line that claims work.
         record(ctx, task, account, target.ref, answer.ok, answer.code)
+    permission_gate(result, 0)
     return result, owners
 
 
@@ -246,15 +371,23 @@ def stage_create_groups(config: MixConfig, ctx: RunContext, task: TaskRef,
     sender = ctx.sender()
     account = labels[0] if labels else "-"
     for title in config.group_titles:
+        # A%1 creating owned %2...
+        print(f"A{_anumber(account, labels)} creating owned {title}...")
         answer = sender.create_group(account, title)
         record(ctx, task, account, title, answer.ok, answer.code)
         if answer.ok:
             result.ok += 1
             if answer.detail:
                 result.refs.append(answer.detail)
+            # A%1 target created: %2
+            print(f"A{_anumber(account, labels)} target created: {title}")
             continue
         result.failed += 1
+        if answer.code:
+            result.codes.add(answer.code)
         result.held.append(title)
+        # A%1 create failed: %2
+        print(f"A{_anumber(account, labels)} create failed: {title}")
         minutes = rest_after_failure(config, result.failed)
         result.rested += minutes * 60.0
         until = datetime.now(UTC).replace(microsecond=0) + timedelta(
@@ -279,8 +412,11 @@ def stage_create_groups(config: MixConfig, ctx: RunContext, task: TaskRef,
                     result.refs.append(answer.detail)
             else:
                 still.append(title)
+                if answer.code:
+                    result.codes.add(answer.code)
                 print(f"held: {title!r} failed again ({answer.code})")
         result.held = still
+    permission_gate(result, 1)
     return result
 
 
@@ -288,12 +424,18 @@ def stage_play(config: MixConfig, ctx: RunContext, refs: list[str],
                labels: list[str]) -> StageResult:
     result = StageResult("puppet_chat_v2", STAGES[2][1])
     if not config.pattern:
-        print("skip: stage 3 needs --pattern")
+        print("Puppet Chat v2: pattern file not set")
         result.skipped = len(refs)
+        return result
+    if not refs:
+        print("No valid targets")
         return result
     base = Path(ctx.settings.data_dir)
     path = resolve_pattern(config.pattern, "", "", base)
     messages = chat_pattern.load(path)
+    # [Speech] %1: the step's own speech log line, one per pattern load.
+    print(f"[Speech] {path.name}: {len(messages)} line(s) -> "
+          f"{len(refs)} group(s)")
     playback = PuppetConfig(
         account_labels=config.account_labels, targets=list(refs),
         pattern=config.pattern, mode_file="", mode="",
@@ -326,7 +468,10 @@ def stage_pull(config: MixConfig, ctx: RunContext, task: TaskRef,
                 if row.strip()] if answer.ok else []
         if not answer.ok:
             result.failed += 1
-            print(f"pull: account={label} failed {answer.code}")
+            if answer.code:
+                result.codes.add(answer.code)
+            # Batch Pull v2 error: %1
+            print(f"Batch Pull v2 error: account={label} {answer.code}")
             record(ctx, task, label, "own contacts", False, answer.code)
             continue
         for row in rows:
@@ -335,6 +480,8 @@ def stage_pull(config: MixConfig, ctx: RunContext, task: TaskRef,
             pulled.append(entry)
             owners[ref or name] = label
         result.ok += len(rows)
+        # [Invite] %1: the step's own log line, one per account read.
+        print(f"[Invite] {label}: {len(rows)} own contact(s)")
         record(ctx, task, label, "own contacts", True)
     if not pulled:
         # A plan has no address book to read: the configured contacts stand in,
@@ -342,6 +489,7 @@ def stage_pull(config: MixConfig, ctx: RunContext, task: TaskRef,
         pulled = list(config.contacts)
         print("pull: nothing returned, the configured contacts stand in")
     config.contacts = pulled
+    permission_gate(result, 3)
     return result
 
 
@@ -357,7 +505,7 @@ def stage_send(config: MixConfig, ctx: RunContext, task: TaskRef,
         book.setdefault(owner, []).append(
             mass_send_v2.Contact(owner, ref or name, name))
     if not config.text and not config.media:
-        print("skip: stage 5 needs --text or --media")
+        print("Mass Send DM v2: message/media not set")
         result.skipped = len(book)
         return result
     flat, _dropped = mass_send_v2.dedupe_contacts(book, False)
@@ -370,12 +518,26 @@ def stage_send(config: MixConfig, ctx: RunContext, task: TaskRef,
             result.ok += 1
         else:
             result.failed += 1
+            if answer.code:
+                result.codes.add(answer.code)
         record(ctx, task, contact.account, contact.ref, answer.ok,
                answer.code, answer.detail)
+    gated = permission_gate(result, 4)
+    if gated:
+        return result
+    if not result.failed:
+        print("Mass Send DM v2 completed")
+    else:
+        print(f"Mass Send DM v2 error: {result.failed} target(s) failed")
     return result
 
 
 def run(config: MixConfig, ctx: RunContext) -> int:
+    if config.create_rest_min > config.create_rest_max:
+        raise ConfigError(
+            f"{SECTION}: Invalid rest range "
+            f"({config.create_rest_min:.0f} > {config.create_rest_max:.0f})")
+    merge_contacts_file(config)
     accounts: list[Account] = ctx.bind(config.account_labels)
     labels = [account.label for account in accounts]
 
@@ -392,6 +554,11 @@ def run(config: MixConfig, ctx: RunContext) -> int:
         create_rest=f"{config.create_rest_min:.0f}-"
                     f"{config.create_rest_max:.0f} min",
     )
+
+    # The workflow block the page prints under its Start button, verbatim:
+    # "Workflow: 1) Batch Contacts 2) Create owned group/channel ..."
+    for number, step in enumerate(WORKFLOW_STEPS, 1):
+        print(f"{number}) {step}")
 
     # Stage 4 writes one "own contacts" row per account even when the address
     # book has nothing in it, so that row belongs in the plan: without it the
@@ -422,13 +589,35 @@ def run(config: MixConfig, ctx: RunContext) -> int:
         return outcome
 
     owners: dict[str, str] = {}
+    held = HeldTargets(Path(ctx.settings.data_dir))
     if config.stop_after >= 1:
+        print("Workflow started")
         started = time.perf_counter()
         contacts_stage, owners = stage_add_contacts(config, ctx, task, labels)
         contacts_stage.seconds = time.perf_counter() - started
         results.append(contacts_stage)
         print(contacts_stage.line(1, len(STAGES)))
+    # ``heldTargets`` from the last run come back first: a title that failed
+    # to create before is retried ahead of the fresh list, so a held target
+    # never needs the operator to retype it. Created titles clear the file.
+    retried = [title for title in held.items if title
+               and title not in config.group_titles]
+    if retried:
+        print(f"held: {len(retried)} target(s) restored from "
+              f"{HELD_FILE}: {', '.join(retried)}")
+    titles = retried + list(config.group_titles)
+    if titles != config.group_titles:
+        config.group_titles = titles
+    if not config.group_titles:
+        print("GroupMgr config missing, use defaults.")
     created = run_stage(2, stage_create_groups, config, ctx, task, labels)
+    if created is not None and not created.held:
+        held.clear()
+    elif created is not None:
+        # Whatever is still failing stays held for the next run.
+        held.save(created.held)
+        print(f"heldTargets: {len(created.held)} target(s) kept on file "
+              f"for the next run")
     # A new group has no username, so a slug of its title is not a reference to
     # anything: a live run has to follow what Telegram actually created.  A plan
     # that creates nothing keeps the slug, because there is nothing real to use.
@@ -452,6 +641,8 @@ def run(config: MixConfig, ctx: RunContext) -> int:
             # the table disagree (which the schema now refuses).
             ctx.note(f"{len(dead)} dead chat(s) were skipped: "
                      f"{', '.join(sorted(dead))}", "warn")
+            print(f"Dead targets detected, rebuild accounts: "
+                  f"{', '.join(sorted(dead))}")
     live_refs = [ref for ref in refs if ref not in dead]
 
     run_stage(3, stage_play, config, ctx, live_refs, labels)
@@ -469,6 +660,7 @@ def run(config: MixConfig, ctx: RunContext) -> int:
     print(f"dead chats: {len(dead)}")
     print(f"PLAN: {len(results)} stages, {len(config.contacts)} contacts, "
           f"ETA {format_duration(waited)}")
+    print("Workflow stopped")
     # The rows are contacts, the counters above are stages: take the totals from
     # the rows so the receipt cannot say two different things at once.
     close_task(ctx, task, derive=True)
@@ -481,13 +673,20 @@ def main(raw: dict, ctx: RunContext) -> int:
 
 
 __all__ = [
+    "GATE_STEPS",
+    "HELD_FILE",
+    "HeldTargets",
     "MixConfig",
+    "PERMISSION_CODES",
     "STAGES",
     "StageResult",
     "TITLE",
+    "WORKFLOW_STEPS",
     "create_refs",
     "dead_chats",
     "main",
+    "merge_contacts_file",
+    "permission_gate",
     "rest_after_failure",
     "run",
     "slug",

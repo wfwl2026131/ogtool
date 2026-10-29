@@ -84,7 +84,11 @@ def test_a_failed_pull_is_counted_not_swallowed(ctx, capsys):
     config = _config(["Ann|@ann"])
     result = stage_pull(config, _Ctx(Failing()), _TASK, ["acc1"], {})
     assert result.failed == 1
-    assert "failed FLOOD_WAIT_30" in capsys.readouterr().out
+    # v1.2.1 renamed the line to the reference's step log
+    # ("Batch Pull v2 error: %1"); the code stays visible either way.
+    out = capsys.readouterr().out
+    assert "Batch Pull v2 error" in out
+    assert "FLOOD_WAIT_30" in out
 
 
 def test_an_empty_pull_falls_back_to_the_configured_contacts(ctx, capsys):

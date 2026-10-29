@@ -42,7 +42,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 17 | 🧲 批量拉人v2 | `batch_invite_v2` | `--targets --contacts --success-cap --export-flood-timeout --resume --monitor-group/--monitor-seconds` | 是 | [场景5](docs/quickstart-试用指南.md#ex-batch-invite) |
 | 18 | 📨 群发私信v2 | `mass_send_v2` | `--contact account\|name\|ref --account-interval-min/max --daily-limit --allow-duplicates` | 是 | [场景1](docs/quickstart-试用指南.md#ex-mass-send) |
 | 19 | 🤖 话术炒群v2 | `puppet_chat_v2` | `--targets --pattern --startup-interval --loops --patterns --cycles --resume --listen` | 是 | [场景4](docs/quickstart-试用指南.md#ex-puppet-chat) |
-| 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --activity --stop-after N` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| 20 | 🧩 自动营销 | `mix_market` | `--group-title --pattern --contact --contacts-file --activity --stop-after N` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 21 | 🟢 保持在线 | `keep_online` | `--interval --loops` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 22 | ✨ 高级功能 | `export_accounts` | `--output-dir --profile label\|id\|username\|device\|2fa --format --no-sessions` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
@@ -62,6 +62,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 每账号代理绑定（v1.1.8+） | `proxy --add socks5://host:port --bind 账号=代理ID` | 代理页的"分配"落地：绑定后该账号的客户端直连绑定代理，未绑定的账号走 `config.yaml` 的全局 `proxy:`；绑定值解析不了就退回全局并打一行 PROXY 提示 |
 | 动态代理+轮换（v1.1.9+） | `proxy --add 'socks5://user:pwd_session-{SessionKey}_lifetime-10m@host:port' --bind 账号=ID`；`proxy --test --rotate` | `{SessionKey}` 模板按账号各自展开成粘性会话键（8 位字母数字；`#12`=12 位；`#d#12`=纯数字），一个账号一个出口 IP；`--rotate` 把测速超时代理上的账号挪到最快的可用代理（对齐参考端 ProxyRotationManager） |
 | 傀儡聊天执行器（v1.2.0+） | `puppet_chat_v2 --patterns a.txt --patterns b.txt --cycles 3 --message-wait 7 --stats-dir data/puppet_chat --resume --listen 120` | 对齐参考端 `PuppetChatExecutor`：一个任务吃多份脚本、整组循环 N 轮（轮间停 `--cycle-interval` 秒）、每轮写统计 `puppet_chat_<task>_<cycle>.json`；`--message-wait` 是两条消息之间的保底秒数（对齐 `Waiting %1 seconds before next message`）；`--resume` 以回执库为准跳过已发出的（槽位， 目标）对，中断重跑不重发；槽位映射带日限自动换号与死号整组迁移（对齐 `Daily speech limit reached` / `mark account unavailable`）；`--listen N` 收尾开 N 秒收音窗，每个绑定号挂 handler 记录进群消息，本方傀儡号自己的消息丢弃（对齐 `speechLogged` / `Filter messages from internal puppet accounts`） |
+| 混市工作流编排（v1.2.1+） | `mix_market --contacts-file data/inputs/contacts.txt --group-title "A" --stop-after 5` | 对齐参考端 MixMarket（:1741560-1741650）：启动打 `Workflow:` 五步原文块 + `Workflow started`/`Workflow stopped`；`--contacts-file` 即 `inputFilePath`，文件缺/空按页面文案报 `Input file not found: %1` / `Input file is empty`，行并进 `--contact` 之后；五步各带权限门——某步零成功且失败码全是权限类（CHAT_WRITE_FORBIDDEN 等）时打 `<步名>: No permission` 并把失败转为 skipped（步没跑，不是干砸）；`heldTargets` 落盘 `mix_market_held_targets.json`：建群失败的标题留档，下次启动先重试再清档（`held: N target(s) restored` / `heldTargets: N kept on file`）；`--create-rest-min > --create-rest-max` 报 `Invalid rest range`；逐步日志照抄参考端 `A%1 add contacts/added/failed (%3)`、`A%1 creating owned %2`/`target created`、`[Speech]`、`[Invite]`、`Batch Pull v2 error: %1`、`Mass Send DM v2 completed`、`Dead targets detected, rebuild accounts: %1`、`GroupMgr config missing, use defaults.` |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -320,6 +321,12 @@ ogtool mix_market --group-title "Market A" --group-title "Market B" \
 ogtool mix_market --group-title "Market A" --pattern patterns/example.txt \
   --text "hi" --contact "Ann|@ann" --stop-after 2
 
+# #20 工作流形态（v1.2.1）：对齐参考端 MixMarket 五步工作流
+#   联系人输入文件（inputFilePath）+ 建群失败目标跨轮持久（heldTargets）
+ogtool mix_market --group-title "Market A" \
+  --contacts-file data/inputs/contacts.txt --pattern patterns/example.txt \
+  --text "welcome" --stop-after 5
+
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list
 ogtool auto_script --script warm_up --var greeting="hello all" --target "@demo_chat"
@@ -577,7 +584,7 @@ tests/            295 条
 | `keep_online` | `ping` → `is_user_authorized()` + `get_me()` | 真 | `keep_online.py:91` |
 | `mass_send` | `send_message()`，message id 入库，间隔真等 | 真 | `mass_send.py:232/234` |
 | `mass_send_v2` | `get_contacts()` 取每个号自己的联系人 → 真发 | 真 | `mass_send_v2.py:337` |
-| `mix_market` | 五阶段全走 sender（加联系人/建群/炒群/拉人/私信） | 真 | `mix_market.py:230/249/274/367` |
+| `mix_market` | 五阶段全走 sender（加联系人/建群/炒群/拉人/私信） | 真 | `mix_market.py:347/376/407/515` |
 | `proxy` | `--test` 真 TCP connect；`--bind` 真 `set_proxy()` | 真 | `proxy.py:174/195` |
 | `puppet_chat` | `send_message()` + 间隔真 sleep | 真 | `puppet_chat.py:443/435` |
 | `puppet_chat_v2` | 复用 `play()` 真发，启动偏移已加进 delay；执行器：统计落盘 `puppet_chat_<task>_<cycle>.json`、`--resume` 读回执库、`--listen` 真 handler + `run_forever()` 收音 | 真 | `puppet_chat_v2.py:284` → `puppet_chat.py:443/435`；`puppet_chat_v2.py:297-299/250/374/383` |
