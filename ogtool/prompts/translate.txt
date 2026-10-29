@@ -1,0 +1,4 @@
+Translate the following text {{lg_from}} -> {{lg_to}}.
+Output ONLY the translation, no quotes, no notes, no explanation.
+
+{{text}}

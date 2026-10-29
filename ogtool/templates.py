@@ -25,7 +25,7 @@ DEFAULT_DIR = Path(__file__).resolve().parent / "prompts"
 _PLACEHOLDER = re.compile(r"\{\{\s*(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 #: The templates every page here expects to find.
-NAMES = ("ai_chat", "ai_comment", "ai_clone", "ai_polish")
+NAMES = ("ai_chat", "ai_comment", "ai_clone", "ai_polish", "translate")
 
 
 def directory(settings: Settings | None = None) -> Path:

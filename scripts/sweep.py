@@ -61,6 +61,9 @@ FIXTURES: dict[str, list[str]] = {
     "video_manage": ["--link", "https://t.me/sweep"],
     "watch_chat": ["--targets", "@sweep", "--relay", "@relaychat",
                    "--simulate", "@sweep|Sender|hello world"],
+    # The workbench translates one text through the template fallback and
+    # reports zero usage: a sweep run must stay exactly reproducible.
+    "translate": ["--text", "sweep line", "--lg-to", "zh"],
 }
 
 

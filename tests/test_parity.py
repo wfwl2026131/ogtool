@@ -49,6 +49,14 @@ PARITY: tuple[tuple[int, str, str], ...] = (
 CLIENT_SOURCE = (Path.home()
                  / "tg-src/tdesktop/Telegram/SourceFiles/og/og_console.cpp")
 
+#: The reference's second surface: the right toolbar (:1740461) carries
+#: pages that are not console nav entries (Unread Messages / Translation /
+#: Client List / QuickReply), so they cannot have a console index. ogtool
+#: numbers them T1, T2, ... in the toolbar's own order.
+TOOLBAR: tuple[tuple[str, str], ...] = (
+    ("T1", "translate"),
+)
+
 
 def client_labels() -> list[str]:
     """The console labels as the fork declares them, when the fork is there."""
@@ -73,7 +81,28 @@ def test_every_console_entry_has_a_module_in_its_own_position():
 
 def test_no_module_exists_that_the_console_does_not_show():
     load_defaults()
-    assert names() == sorted(module for _index, _label, module in PARITY)
+    console = [module for _index, _label, module in PARITY]
+    toolbar = [module for _tag, module in TOOLBAR]
+    assert names() == sorted(console + toolbar)
+
+
+def test_every_toolbar_entry_is_registered_under_its_tag():
+    load_defaults()
+    for tag, module_name in TOOLBAR:
+        assert callable(get(module_name)), module_name
+        help_text = cli.HELP.get(module_name, "")
+        assert help_text.startswith(f"#{tag} "), (module_name, help_text)
+
+
+@pytest.mark.parametrize(("tag", "module_name"), TOOLBAR)
+def test_the_toolbar_module_knows_its_position(tag: str, module_name: str):
+    """A toolbar module without its tag is a page the toolbar outgrew."""
+    from ogtool.features import module as loaded
+
+    load_defaults()
+    source = Path(loaded(module_name).__file__).read_text(encoding="utf-8")
+    assert f"#{tag} " in source, (
+        f"{module_name} does not carry #{tag} in its docstring")
 
 
 def test_every_module_is_registered_under_its_console_number():

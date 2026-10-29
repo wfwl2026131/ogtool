@@ -19,26 +19,28 @@ Feature = Callable[[dict, RunContext], int]
 #: ``--allow-write``, because "I typed --live" and "I meant to message a hundred
 #: strangers" are not the same sentence - and the sweep, the smoke suite and a
 #: half-remembered script are all one keystroke apart.
-WRITE_FEATURES: frozenset[str] = frozenset({
-    "add_contact",
-    "ai_chat",
-    "ai_clone",
-    "ai_comment",
-    "auto_reply",
-    "auto_script",
-    "batch_invite",
-    "batch_invite_v2",
-    "batch_join",
-    "batch_rename",
-    "copy_chat",
-    "mass_send",
-    "mass_send_v2",
-    "mix_market",
-    "puppet_chat",
-    "puppet_chat_v2",
-    "video_manage",
-    "watch_chat",
-})
+WRITE_FEATURES: frozenset[str] = frozenset(
+    {
+        "add_contact",
+        "ai_chat",
+        "ai_clone",
+        "ai_comment",
+        "auto_reply",
+        "auto_script",
+        "batch_invite",
+        "batch_invite_v2",
+        "batch_join",
+        "batch_rename",
+        "copy_chat",
+        "mass_send",
+        "mass_send_v2",
+        "mix_market",
+        "puppet_chat",
+        "puppet_chat_v2",
+        "video_manage",
+        "watch_chat",
+    }
+)
 
 FALLBACK_PAGES: dict[str, str] = {}
 
@@ -75,6 +77,10 @@ _MODULE_NAMES = [
     "export_accounts",
     "mass_send_v2",
     "mix_market",
+    # The right toolbar (:1740461) is the reference's second surface: the
+    # translation workbench lives there, not in the console nav, so it
+    # carries a T-number instead of a console index.
+    "translate",
     # P3
     "settings",
 ]

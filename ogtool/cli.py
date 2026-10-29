@@ -84,7 +84,14 @@ HELP = {
     "auto_script": "#23 自动脚本: run a YAML script of primitive steps",
     "export_accounts": "#22 高级功能: export the accounts and their sessions",
     "settings": "#24 设置: the global knobs, shown and validated",
+    "translate": "#T1 翻译工作台: manual + batch translation with a quota",
 }
+
+#: The reference's second surface: pages of the right toolbar (:1740461),
+#: which has no console index. Order here is the reference's own toolbar
+#: order (Unread Messages / Translation / Client List / QuickReply) minus
+#: the pages nothing maps to yet.
+TOOLBAR_ORDER = ["translate"]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -116,6 +123,12 @@ def build_parser() -> argparse.ArgumentParser:
     _pattern_parser(subs)
 
     for name in ORDER:
+        feature = subs.add_parser(name, help=HELP.get(name, name))
+        _common(feature)
+        for flag in getattr(module(name), "FLAGS", ()):
+            feature.add_argument(flag.name, **flag.to_kwargs())
+
+    for name in TOOLBAR_ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
         _common(feature)
         for flag in getattr(module(name), "FLAGS", ()):

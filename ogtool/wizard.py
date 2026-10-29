@@ -176,6 +176,18 @@ GENERIC: dict[str, dict] = {
              "str"),
         ],
     },
+    "translate": {
+        "label": "🌐 翻译工作台(手动/批量翻译,本地配额)",
+        "steps": [
+            ("--text", "要翻译的文本(可留空用下一项)", "", "str"),
+            ("--texts-file", "批量文本文件(每行一条,留空跳过)", "", "str"),
+            ("--lg-to", "目标语言", "zh", "str"),
+            ("--lg-from", "源语言(auto=自动检测)", "auto", "str"),
+            ("--strategy", "引擎 ai(配置的端点)/azure(需 --azure-key)",
+             "ai", "str"),
+            ("--quota-total", "本周期字符预算(0=不限)", "0", "int"),
+        ],
+    },
 }
 
 

@@ -67,6 +67,7 @@ def test_every_shipped_template_loads_and_is_filled():
         "ai_comment": {"post", "tone", "extra", "max_chars"},
         "ai_clone": {"text", "style", "author"},
         "ai_polish": {"level", "text"},
+        "translate": {"lg_from", "lg_to", "text"},
     }
     for name in prompts.NAMES:
         text = prompts.load(name)

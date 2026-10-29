@@ -60,6 +60,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "puppet_chat": "write",
     "puppet_chat_v2": "write",
     "settings": "local",
+    "translate": "live",
     "video_manage": "needs-data",
     "watch_chat": "live-silent",
 }

@@ -181,6 +181,26 @@ CREATE INDEX IF NOT EXISTS idx_todo_peer_id ON todo_list(peer_id);
 CREATE INDEX IF NOT EXISTS idx_todo_chat_type ON todo_list(chat_type);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_archive_key
     ON todo_archive(peer_id, msg_id, receiver_id);
+-- The workbench's two stores, straight from the dump (:1723409, :1737656):
+-- a cache keyed exactly like the reference's own table, and one usage row
+-- whose counters survive the process so a report can be retried.
+CREATE TABLE IF NOT EXISTS translation (
+    input      TEXT NOT NULL,
+    output     TEXT NOT NULL DEFAULT '',
+    lg_from    TEXT NOT NULL DEFAULT '',
+    lg_to      TEXT NOT NULL DEFAULT '',
+    is_out     INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (input, lg_to)
+);
+CREATE TABLE IF NOT EXISTS translation_usage (
+    period_start TEXT PRIMARY KEY,
+    chars_api    INTEGER NOT NULL DEFAULT 0,
+    chars_cache  INTEGER NOT NULL DEFAULT 0,
+    updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_translation_created
+    ON translation(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
 """
 
@@ -206,8 +226,10 @@ def local_day_bounds(now: datetime | None = None) -> tuple[str, str]:
     local = (now or datetime.now()).astimezone()
     start = local.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
-    return (start.astimezone(UTC).replace(microsecond=0).isoformat(),
-            end.astimezone(UTC).replace(microsecond=0).isoformat())
+    return (
+        start.astimezone(UTC).replace(microsecond=0).isoformat(),
+        end.astimezone(UTC).replace(microsecond=0).isoformat(),
+    )
 
 
 @dataclass(slots=True)
@@ -291,8 +313,7 @@ class Store:
         # A threaded run writes results from several lanes at once, so the
         # connection has to accept a call from any thread and be serialized
         # here: sqlite objects are not shareable on their own.
-        self._conn = sqlite3.connect(self.path, check_same_thread=False,
-                                     timeout=10.0)
+        self._conn = sqlite3.connect(self.path, check_same_thread=False, timeout=10.0)
         self._lock = threading.RLock()
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
@@ -314,11 +335,13 @@ class Store:
         ``CREATE TABLE IF NOT EXISTS`` leaves an existing table alone, so a new
         column has to be added explicitly or every read of it fails.
         """
-        known = {row["name"] for row in
-                 self._conn.execute("PRAGMA table_info(accounts)")}
+        known = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(accounts)")
+        }
         if "kind" not in known:
             self._conn.execute(
-                "ALTER TABLE accounts ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+                "ALTER TABLE accounts ADD COLUMN kind TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -340,8 +363,15 @@ class Store:
                    phone=excluded.phone, session=excluded.session,
                    proxy=excluded.proxy, status=excluded.status,
                    notes=excluded.notes""",
-            (account.label, account.phone, account.session, account.proxy,
-             account.status, utcnow(), account.notes),
+            (
+                account.label,
+                account.phone,
+                account.session,
+                account.proxy,
+                account.status,
+                utcnow(),
+                account.notes,
+            ),
         )
         self._conn.commit()
         return account
@@ -365,8 +395,9 @@ class Store:
     def set_account_kind(self, label: str, kind: str) -> None:
         """Record what the pool knows about a number: frozen, one or two way."""
         with self._lock:
-            self._conn.execute("UPDATE accounts SET kind = ? WHERE label = ?",
-                               (kind, label))
+            self._conn.execute(
+                "UPDATE accounts SET kind = ? WHERE label = ?", (kind, label)
+            )
             self._conn.commit()
 
     def count_accounts(self) -> int:
@@ -383,8 +414,12 @@ class Store:
     @staticmethod
     def _account(row: sqlite3.Row) -> Account:
         return Account(
-            label=row["label"], phone=row["phone"], session=row["session"],
-            proxy=row["proxy"], status=row["status"], notes=row["notes"],
+            label=row["label"],
+            phone=row["phone"],
+            session=row["session"],
+            proxy=row["proxy"],
+            status=row["status"],
+            notes=row["notes"],
             kind=row["kind"],
         )
 
@@ -398,8 +433,17 @@ class Store:
                ON CONFLICT(kind, host, port, user) DO UPDATE SET
                    password=excluded.password, note=excluded.note,
                    latency_ms=excluded.latency_ms, status=excluded.status""",
-            (proxy.kind, proxy.host, proxy.port, proxy.user, proxy.password,
-             proxy.latency_ms, proxy.status, proxy.note, utcnow()),
+            (
+                proxy.kind,
+                proxy.host,
+                proxy.port,
+                proxy.user,
+                proxy.password,
+                proxy.latency_ms,
+                proxy.status,
+                proxy.note,
+                utcnow(),
+            ),
         )
         self._conn.commit()
         row = self._conn.execute(
@@ -414,8 +458,7 @@ class Store:
         return [self._proxy(row) for row in rows]
 
     def delete_proxy(self, proxy_id: int) -> bool:
-        cursor = self._conn.execute("DELETE FROM proxies WHERE id = ?",
-                                    (proxy_id,))
+        cursor = self._conn.execute("DELETE FROM proxies WHERE id = ?", (proxy_id,))
         self._conn.commit()
         return cursor.rowcount > 0
 
@@ -424,8 +467,9 @@ class Store:
         self._conn.commit()
         return cursor.rowcount
 
-    def set_proxy_latency(self, proxy_id: int, latency_ms: int,
-                          status: str = "ok") -> None:
+    def set_proxy_latency(
+        self, proxy_id: int, latency_ms: int, status: str = "ok"
+    ) -> None:
         self._conn.execute(
             "UPDATE proxies SET latency_ms = ?, status = ? WHERE id = ?",
             (latency_ms, status, proxy_id),
@@ -434,17 +478,23 @@ class Store:
 
     def bind_proxy(self, label: str, proxy: Proxy | None) -> None:
         text = proxy.url() if proxy else ""
-        self._conn.execute("UPDATE accounts SET proxy = ? WHERE label = ?",
-                           (text, label))
+        self._conn.execute(
+            "UPDATE accounts SET proxy = ? WHERE label = ?", (text, label)
+        )
         self._conn.commit()
 
     @staticmethod
     def _proxy(row: sqlite3.Row) -> Proxy:
         return Proxy(
-            kind=row["kind"], host=row["host"], port=int(row["port"]),
-            user=row["user"], password=row["password"],
-            latency_ms=int(row["latency_ms"]), status=row["status"],
-            note=row["note"], id=int(row["id"]),
+            kind=row["kind"],
+            host=row["host"],
+            port=int(row["port"]),
+            user=row["user"],
+            password=row["password"],
+            latency_ms=int(row["latency_ms"]),
+            status=row["status"],
+            note=row["note"],
+            id=int(row["id"]),
         )
 
     # tasks ------------------------------------------------------------
@@ -461,8 +511,14 @@ class Store:
             """INSERT INTO tasks (name, feature, config, mode, status,
                                   created_at, planned)
                VALUES (?, ?, ?, ?, 'running', ?, ?)""",
-            (name, feature, json.dumps(config or {}, ensure_ascii=False),
-             mode, utcnow(), planned),
+            (
+                name,
+                feature,
+                json.dumps(config or {}, ensure_ascii=False),
+                mode,
+                utcnow(),
+                planned,
+            ),
         )
         self._conn.commit()
         return TaskRef(id=int(cursor.lastrowid), name=name, feature=feature)
@@ -473,8 +529,9 @@ class Store:
             "SELECT * FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
 
-    def finish_task(self, task_id: int, sent: int = 0, failed: int = 0,
-                    status: str = "done") -> None:
+    def finish_task(
+        self, task_id: int, sent: int = 0, failed: int = 0, status: str = "done"
+    ) -> None:
         self._conn.execute(
             """UPDATE tasks SET status = ?, finished_at = ?, sent = ?, failed = ?
                WHERE id = ?""",
@@ -484,8 +541,9 @@ class Store:
 
     # targets ----------------------------------------------------------
 
-    def save_target_list(self, name: str, kind: str,
-                         items: Iterable[tuple[str, str, str]]) -> int:
+    def save_target_list(
+        self, name: str, kind: str, items: Iterable[tuple[str, str, str]]
+    ) -> int:
         cursor = self._conn.execute(
             """INSERT INTO target_lists (name, kind, created_at) VALUES (?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET kind = excluded.kind""",
@@ -516,19 +574,27 @@ class Store:
         with rows in it would report every row as unaccounted.
         """
         with self._lock:
-            self._conn.execute("UPDATE tasks SET planned = ? WHERE id = ?",
-                               (int(planned), int(task_id)))
+            self._conn.execute(
+                "UPDATE tasks SET planned = ? WHERE id = ?",
+                (int(planned), int(task_id)),
+            )
             self._conn.commit()
 
-    def add_result(self, task_id: int | None, account: str, target: str,
-                   status: str, error_code: str = "", detail: str = "") -> None:
+    def add_result(
+        self,
+        task_id: int | None,
+        account: str,
+        target: str,
+        status: str,
+        error_code: str = "",
+        detail: str = "",
+    ) -> None:
         with self._lock:
             self._conn.execute(
                 """INSERT INTO results (task_id, account, target, status,
                                         error_code, detail, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (task_id, account, target, status, error_code, detail,
-                 utcnow()),
+                (task_id, account, target, status, error_code, detail, utcnow()),
             )
             self._conn.commit()
 
@@ -568,31 +634,45 @@ class Store:
                        status       = CASE WHEN todo_list.status = 3
                                            THEN todo_list.status
                                            ELSE 1 END""",
-                (row.get("from_id", ""), row.get("from_name", ""),
-                 row.get("peer_id", ""), row.get("peer_name", ""),
-                 str(row.get("receiver_id", "0")),
-                 int(row.get("chat_type", 1)), int(row.get("msg_type", 1)),
-                 int(row.get("msg_id", 0)), row.get("title", ""),
-                 row.get("msg", ""), row.get("media", ""),
-                 int(row.get("priority", 1)), int(row.get("status", 1)),
-                 int(bool(row.get("is_blacklist", False))),
-                 int(bool(row.get("is_service", False))),
-                 int(bool(row.get("is_bot", False))),
-                 int(row.get("unread_count", 1)),
-                 int(row.get("from_count", 1)),
-                 int(row.get("last_msg_at", now)), now, now),
+                (
+                    row.get("from_id", ""),
+                    row.get("from_name", ""),
+                    row.get("peer_id", ""),
+                    row.get("peer_name", ""),
+                    str(row.get("receiver_id", "0")),
+                    int(row.get("chat_type", 1)),
+                    int(row.get("msg_type", 1)),
+                    int(row.get("msg_id", 0)),
+                    row.get("title", ""),
+                    row.get("msg", ""),
+                    row.get("media", ""),
+                    int(row.get("priority", 1)),
+                    int(row.get("status", 1)),
+                    int(bool(row.get("is_blacklist", False))),
+                    int(bool(row.get("is_service", False))),
+                    int(bool(row.get("is_bot", False))),
+                    int(row.get("unread_count", 1)),
+                    int(row.get("from_count", 1)),
+                    int(row.get("last_msg_at", now)),
+                    now,
+                    now,
+                ),
             )
             self._conn.commit()
             found = self._conn.execute(
                 """SELECT id FROM todo_list
                    WHERE from_id = ? AND peer_id = ? AND receiver_id = ?""",
-                (row.get("from_id", ""), row.get("peer_id", ""),
-                 str(row.get("receiver_id", "0"))),
+                (
+                    row.get("from_id", ""),
+                    row.get("peer_id", ""),
+                    str(row.get("receiver_id", "0")),
+                ),
             ).fetchone()
         return int(found["id"]) if found else 0
 
-    def list_todos(self, status: int | None = None,
-                   limit: int = 200) -> list[dict[str, Any]]:
+    def list_todos(
+        self, status: int | None = None, limit: int = 200
+    ) -> list[dict[str, Any]]:
         query = "SELECT * FROM todo_list"
         args: list[Any] = []
         if status is not None:
@@ -607,12 +687,18 @@ class Store:
     def count_todos(self, status: int | None = None) -> int:
         if status is None:
             with self._lock:
-                return int(self._conn.execute(
-                    "SELECT COUNT(*) AS n FROM todo_list").fetchone()["n"])
+                return int(
+                    self._conn.execute(
+                        "SELECT COUNT(*) AS n FROM todo_list"
+                    ).fetchone()["n"]
+                )
         with self._lock:
-            return int(self._conn.execute(
-                "SELECT COUNT(*) AS n FROM todo_list WHERE status = ?",
-                (int(status),)).fetchone()["n"])
+            return int(
+                self._conn.execute(
+                    "SELECT COUNT(*) AS n FROM todo_list WHERE status = ?",
+                    (int(status),),
+                ).fetchone()["n"]
+            )
 
     def set_todo_status(self, ids: list[int], status: int) -> int:
         return self._todo_update("status", int(status), ids)
@@ -628,7 +714,8 @@ class Store:
             cursor = self._conn.execute(
                 f"UPDATE todo_list SET {column} = ?, updated_at = ? "
                 f"WHERE id IN ({placeholders})",
-                [value, int(time.time()), *ids])
+                [value, int(time.time()), *ids],
+            )
             self._conn.commit()
         return cursor.rowcount
 
@@ -646,7 +733,8 @@ class Store:
             else:
                 where, args = "WHERE status IN (2, 3)", []
             rows = self._conn.execute(
-                f"SELECT * FROM todo_list {where}", args).fetchall()
+                f"SELECT * FROM todo_list {where}", args
+            ).fetchall()
             now = int(time.time())
             moved = 0
             for row in rows:
@@ -657,13 +745,23 @@ class Store:
                             is_blacklist, last_msg_at, topic_msg_id,
                             archived_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (row["from_id"], row["from_name"], row["peer_id"],
-                     row["peer_name"], row["receiver_id"], row["msg_id"],
-                     row["msg"], row["media"], row["priority"],
-                     row["is_blacklist"], row["last_msg_at"], 0, now),
+                    (
+                        row["from_id"],
+                        row["from_name"],
+                        row["peer_id"],
+                        row["peer_name"],
+                        row["receiver_id"],
+                        row["msg_id"],
+                        row["msg"],
+                        row["media"],
+                        row["priority"],
+                        row["is_blacklist"],
+                        row["last_msg_at"],
+                        0,
+                        now,
+                    ),
                 )
-                self._conn.execute("DELETE FROM todo_list WHERE id = ?",
-                                   (row["id"],))
+                self._conn.execute("DELETE FROM todo_list WHERE id = ?", (row["id"],))
                 moved += 1
             self._conn.commit()
         return moved
@@ -671,23 +769,43 @@ class Store:
     def list_todo_archive(self, limit: int = 200) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM todo_archive ORDER BY archived_at DESC, id DESC "
-                "LIMIT ?", (int(limit),)).fetchall()
+                "SELECT * FROM todo_archive ORDER BY archived_at DESC, id DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     # ai calls ---------------------------------------------------------
 
-    def add_ai_call(self, task_id: int | None, *, account: str = "",
-                    kind: str = "", prompt: str = "", response: str = "",
-                    tokens: int = 0, elapsed_ms: int = 0, ok: bool = True,
-                    error: str = "") -> None:
+    def add_ai_call(
+        self,
+        task_id: int | None,
+        *,
+        account: str = "",
+        kind: str = "",
+        prompt: str = "",
+        response: str = "",
+        tokens: int = 0,
+        elapsed_ms: int = 0,
+        ok: bool = True,
+        error: str = "",
+    ) -> None:
         """One audit row per model call, whatever the outcome."""
         self._conn.execute(
             """INSERT INTO ai_calls (task_id, account, kind, prompt, response,
                                      tokens, elapsed_ms, ok, error, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (task_id, account, kind, prompt, response, int(tokens),
-             int(elapsed_ms), 1 if ok else 0, error, utcnow()),
+            (
+                task_id,
+                account,
+                kind,
+                prompt,
+                response,
+                int(tokens),
+                int(elapsed_ms),
+                1 if ok else 0,
+                error,
+                utcnow(),
+            ),
         )
         self._conn.commit()
 
@@ -696,8 +814,94 @@ class Store:
             "SELECT * FROM ai_calls WHERE task_id = ? ORDER BY id", (task_id,)
         ).fetchall()
 
-    def count_sent_today(self, account: str, now: datetime | None = None,
-                         features: Iterable[str] | None = None) -> int:
+    # translation workbench ---------------------------------------------
+
+    def add_translation(
+        self,
+        text: str,
+        output: str,
+        *,
+        lg_from: str = "",
+        lg_to: str = "",
+        is_out: bool = False,
+        created_at: str | None = None,
+    ) -> None:
+        """INSERT OR REPLACE into the reference's own cache shape.
+
+        The primary key is ``(input, lg_to)`` exactly as the dump declares it
+        (:1723409), so re-translating one text for one language replaces the
+        older row instead of growing the history.
+        """
+        self._conn.execute(
+            """INSERT OR REPLACE INTO translation
+               (input, output, lg_from, lg_to, is_out, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (text, output, lg_from, lg_to, 1 if is_out else 0, created_at or utcnow()),
+        )
+        self._conn.commit()
+
+    def translations_for(self, texts: list[str], lg_to: str) -> dict[str, str]:
+        """The batch cache lookup: ``input IN (%1) AND lg_to = ?`` (:1723889)."""
+        wanted = sorted({item for item in texts if item})
+        if not wanted or not lg_to:
+            return {}
+        marks = ",".join("?" * len(wanted))
+        rows = self._conn.execute(
+            f"SELECT input, output FROM translation "
+            f"WHERE input IN ({marks}) AND lg_to = ?",
+            (*wanted, lg_to),
+        ).fetchall()
+        return {row["input"]: row["output"] for row in rows}
+
+    def list_translations(
+        self, *, search: str = "", limit: int = 20
+    ) -> list[sqlite3.Row]:
+        """The page's history queries, newest first (:1723885-:1723888)."""
+        sql = "SELECT * FROM translation"
+        params: list[object] = []
+        if search:
+            sql += " WHERE input LIKE ?"
+            params.append(f"%{search}%")
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(int(limit))
+        return self._conn.execute(sql, params).fetchall()
+
+    def translation_usage(self) -> sqlite3.Row | None:
+        """The newest usage row, or None when the workbench never ran."""
+        return self._conn.execute(
+            "SELECT * FROM translation_usage ORDER BY period_start DESC LIMIT 1"
+        ).fetchone()
+
+    def add_translation_usage(self, period_start: str, api: int, cache: int) -> None:
+        """Accumulate the tracker's counters for one period (:1737656)."""
+        self._conn.execute(
+            """INSERT INTO translation_usage
+               (period_start, chars_api, chars_cache, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(period_start) DO UPDATE SET
+                   chars_api = chars_api + excluded.chars_api,
+                   chars_cache = chars_cache + excluded.chars_cache,
+                   updated_at = excluded.updated_at""",
+            (period_start, int(api), int(cache), utcnow()),
+        )
+        self._conn.commit()
+
+    def reset_translation_usage(self, period_start: str) -> None:
+        """``Current period usage reset`` (:1737726): a fresh, zeroed row."""
+        self._conn.execute(
+            """INSERT OR IGNORE INTO translation_usage
+               (period_start, chars_api, chars_cache, updated_at)
+               VALUES (?, 0, 0, ?)""",
+            (period_start, utcnow()),
+        )
+        self._conn.commit()
+
+    def count_sent_today(
+        self,
+        account: str,
+        now: datetime | None = None,
+        features: Iterable[str] | None = None,
+    ) -> int:
         """Successful rows today, optionally limited to the pages that send.
 
         ``status = 'sent'`` is this schema's word for "did the thing", so every
@@ -714,8 +918,10 @@ class Store:
         params: list[object] = [account, start, end]
         wanted = list(features or ())
         if wanted:
-            sql += " AND task_id IN (SELECT id FROM tasks WHERE feature IN " \
-                   f"({','.join('?' * len(wanted))}))"
+            sql += (
+                " AND task_id IN (SELECT id FROM tasks WHERE feature IN "
+                f"({','.join('?' * len(wanted))}))"
+            )
             params.extend(wanted)
         row = self._conn.execute(sql, params).fetchone()
         return int(row["n"])
@@ -773,8 +979,16 @@ class Store:
                    phone=excluded.phone, device=excluded.device,
                    twofa=excluded.twofa, last_active=excluded.last_active,
                    updated_at=excluded.updated_at""",
-            (profile.label, profile.user_id, profile.username, profile.phone,
-             profile.device, profile.twofa, profile.last_active, utcnow()),
+            (
+                profile.label,
+                profile.user_id,
+                profile.username,
+                profile.phone,
+                profile.device,
+                profile.twofa,
+                profile.last_active,
+                utcnow(),
+            ),
         )
         self._conn.commit()
         return profile
@@ -786,17 +1000,18 @@ class Store:
         return self._profile(row) if row else None
 
     def list_profiles(self) -> list[Profile]:
-        rows = self._conn.execute(
-            "SELECT * FROM profiles ORDER BY label"
-        ).fetchall()
+        rows = self._conn.execute("SELECT * FROM profiles ORDER BY label").fetchall()
         return [self._profile(row) for row in rows]
 
     @staticmethod
     def _profile(row: sqlite3.Row) -> Profile:
         return Profile(
-            label=row["label"], user_id=row["user_id"],
-            username=row["username"], phone=row["phone"],
-            device=row["device"], twofa=row["twofa"],
+            label=row["label"],
+            user_id=row["user_id"],
+            username=row["username"],
+            phone=row["phone"],
+            device=row["device"],
+            twofa=row["twofa"],
             last_active=row["last_active"],
         )
 

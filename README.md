@@ -47,6 +47,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 22 | ✨ 高级功能 | `export_accounts` | `--output-dir --profile label\|id\|username\|device\|2fa --format --no-sessions` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 23 | 📜 自动脚本 | `auto_script` | `--list --script NAME --var k=v --target --on-error stop\|continue` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | 24 | ⚙️ 设置 | `settings` | `--json`（只读展示 `globals:` 六个键） | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
+| T1 | 🌐 翻译工作台 | `translate` | `--text --texts-file --lg-from --lg-to --strategy --azure-key --quota-total --batch-size --list` | 否 | [指南](docs/quickstart-试用指南.md#ex-others) |
 
 底座命令 `accounts`（`add` / `list` / `test`）不在左栏 25 项里，但每个功能都靠它。
 **26 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
@@ -63,6 +64,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 动态代理+轮换（v1.1.9+） | `proxy --add 'socks5://user:pwd_session-{SessionKey}_lifetime-10m@host:port' --bind 账号=ID`；`proxy --test --rotate` | `{SessionKey}` 模板按账号各自展开成粘性会话键（8 位字母数字；`#12`=12 位；`#d#12`=纯数字），一个账号一个出口 IP；`--rotate` 把测速超时代理上的账号挪到最快的可用代理（对齐参考端 ProxyRotationManager） |
 | 傀儡聊天执行器（v1.2.0+） | `puppet_chat_v2 --patterns a.txt --patterns b.txt --cycles 3 --message-wait 7 --stats-dir data/puppet_chat --resume --listen 120` | 对齐参考端 `PuppetChatExecutor`：一个任务吃多份脚本、整组循环 N 轮（轮间停 `--cycle-interval` 秒）、每轮写统计 `puppet_chat_<task>_<cycle>.json`；`--message-wait` 是两条消息之间的保底秒数（对齐 `Waiting %1 seconds before next message`）；`--resume` 以回执库为准跳过已发出的（槽位， 目标）对，中断重跑不重发；槽位映射带日限自动换号与死号整组迁移（对齐 `Daily speech limit reached` / `mark account unavailable`）；`--listen N` 收尾开 N 秒收音窗，每个绑定号挂 handler 记录进群消息，本方傀儡号自己的消息丢弃（对齐 `speechLogged` / `Filter messages from internal puppet accounts`） |
 | 混市工作流编排（v1.2.1+） | `mix_market --contacts-file data/inputs/contacts.txt --group-title "A" --stop-after 5` | 对齐参考端 MixMarket（:1741560-1741650）：启动打 `Workflow:` 五步原文块 + `Workflow started`/`Workflow stopped`；`--contacts-file` 即 `inputFilePath`，文件缺/空按页面文案报 `Input file not found: %1` / `Input file is empty`，行并进 `--contact` 之后；五步各带权限门——某步零成功且失败码全是权限类（CHAT_WRITE_FORBIDDEN 等）时打 `<步名>: No permission` 并把失败转为 skipped（步没跑，不是干砸）；`heldTargets` 落盘 `mix_market_held_targets.json`：建群失败的标题留档，下次启动先重试再清档（`held: N target(s) restored` / `heldTargets: N kept on file`）；`--create-rest-min > --create-rest-max` 报 `Invalid rest range`；逐步日志照抄参考端 `A%1 add contacts/added/failed (%3)`、`A%1 creating owned %2`/`target created`、`[Speech]`、`[Invite]`、`Batch Pull v2 error: %1`、`Mass Send DM v2 completed`、`Dead targets detected, rebuild accounts: %1`、`GroupMgr config missing, use defaults.` |
+| 翻译工作台（v1.3.0+） | `translate --text "你好" --lg-to en --strategy ai`；批量 `--texts-file lines.txt --batch-size 20`；Azure `--strategy azure --azure-key KEY` | 对齐参考端右侧工具栏翻译页（:1740461 RightToolBar，10 类全家桶）：手动框（`setupManualTranslateSection`/`onTranslateClicked`）对应 `--text`；`TranslationBatchManager` 对应 `--texts-file` 分块批量 + 批量缓存查询 `input IN (%1) AND lg_to = ?`（:1723889）；历史表沿用参考端主键 `(input, lg_to)`（:1723409），重译覆盖不增行；配额状态机三句判决照抄（`Translation quota is sufficient` / `WARNING: Translation quota running low...` / `CRITICAL: Translation quota exhausted! Translation will be blocked.`，:1737723-1737725），预算耗尽打 `Translation continuation blocked due to quota issues`（:1737735）并跳过余量；用量跟踪带 FromCache 拆分（`Recorded usage - Length: %1, FromCache: %2...`，:1737659）+ 周期上报（`Usage reported successfully`，失败 `data preserved for next retry` :1737734）；周期到期 `Current period usage reset`（:1737726）；`--strategy azure` 走真 Azure REST，映射其自家错误词 `Quota exceeded`/`Subscription disabled`（:1737778-1737779）；无钥匙打 `No keys available, translation service will use fallback`（:1737741）+ 维护横幅 |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -327,6 +329,14 @@ ogtool mix_market --group-title "Market A" \
   --contacts-file data/inputs/contacts.txt --pattern patterns/example.txt \
   --text "welcome" --stop-after 5
 
+# #T1 翻译工作台（v1.3.0）：手动一条 → 批量文件 → 带配额防跑飞
+ogtool translate --text "hello there" --lg-to zh
+ogtool translate --texts-file data/inputs/lines.txt --lg-to zh \
+  --batch-size 20 --quota-total 500000 --report-interval 60
+ogtool translate --strategy azure --azure-key "$AZURE_KEY" \
+  --texts-file data/inputs/lines.txt --lg-to zh
+ogtool translate --list --search hello --limit 50
+
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list
 ogtool auto_script --script warm_up --var greeting="hello all" --target "@demo_chat"
@@ -590,6 +600,7 @@ tests/            295 条
 | `puppet_chat_v2` | 复用 `play()` 真发，启动偏移已加进 delay；执行器：统计落盘 `puppet_chat_<task>_<cycle>.json`、`--resume` 读回执库、`--listen` 真 handler + `run_forever()` 收音 | 真 | `puppet_chat_v2.py:284` → `puppet_chat.py:443/435`；`puppet_chat_v2.py:297-299/250/374/383` |
 | `video_manage` | `join()`/`leave()` 真调用；操作间隔真等 | 真 | `video_manage.py:97/101` |
 | `watch_chat` | `add_event_handler()` + `run_forever()`，命中后 `await send_message()` | 真（本轮修） | `watch_chat.py:260/266/284` |
+| `translate` | live 读聊天历史（`sender.history()`）→ 真翻译（AI 端点 / Azure REST）→ `translation` 表落缓存；`--auto-received/--auto-sent` 分流收/发消息 | 真 | `translate.py:482/418/258/212`；缓存落 `store.py:721`，批量查询 `store.py:739` |
 
 **本轮修掉的 7 处假 live**（每处都有能在旧代码上变红的测试）：
 
