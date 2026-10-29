@@ -50,7 +50,7 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | T1 | 🌐 翻译工作台 | `translate` | `--text --texts-file --lg-from --lg-to --strategy --azure-key --quota-total --batch-size --list` | 否 | [指南](docs/quickstart-试用指南.md#ex-others) |
 | T2 | 👑 群管家 | `group_manage` | `--groups --groups-file --from-store --target --password --password-env --interval-ms` | 是 | [指南](docs/quickstart-试用指南.md#ex-others) |
 
-底座命令 `accounts`（`add` / `list` / `test`）与运维命令 `runs` / `quota`（日限落盘的读表与修复）不在左栏 25 项里，但每个功能都靠它们。
+底座命令 `accounts`（`add` / `list` / `test` / `password` / `passkey`）与运维命令 `runs` / `quota`（日限落盘的读表与修复）不在左栏 25 项里，但每个功能都靠它们。
 **28 条命令全部默认 dry-run**：不传 `--live` 就走完整流程、只把真发那一步 stub 掉。
 
 ## 对齐参考客户端的四个进阶能力（v1.1.1+）
@@ -68,6 +68,8 @@ session→tdata→session 往返验证（`batch_login-4672` 回执）。
 | 翻译工作台（v1.3.0+） | `translate --text "你好" --lg-to en --strategy ai`；批量 `--texts-file lines.txt --batch-size 20`；Azure `--strategy azure --azure-key KEY` | 对齐参考端右侧工具栏翻译页（:1740461 RightToolBar，10 类全家桶）：手动框（`setupManualTranslateSection`/`onTranslateClicked`）对应 `--text`；`TranslationBatchManager` 对应 `--texts-file` 分块批量 + 批量缓存查询 `input IN (%1) AND lg_to = ?`（:1723889）；历史表沿用参考端主键 `(input, lg_to)`（:1723409），重译覆盖不增行；配额状态机三句判决照抄（`Translation quota is sufficient` / `WARNING: Translation quota running low...` / `CRITICAL: Translation quota exhausted! Translation will be blocked.`，:1737723-1737725），预算耗尽打 `Translation continuation blocked due to quota issues`（:1737735）并跳过余量；用量跟踪带 FromCache 拆分（`Recorded usage - Length: %1, FromCache: %2...`，:1737659）+ 周期上报（`Usage reported successfully`，失败 `data preserved for next retry` :1737734）；周期到期 `Current period usage reset`（:1737726）；`--strategy azure` 走真 Azure REST，映射其自家错误词 `Quota exceeded`/`Subscription disabled`（:1737778-1737779）；无钥匙打 `No keys available, translation service will use fallback`（:1737741）+ 维护横幅 |
 | 群主转让（v1.3.1+） | `group_manage --groups "@g1,-1001234" --target acc2 --password "$TWOPASS"`；存量 `--from-store`；批量 `--groups-file groups.txt` | 对齐参考端 Group Manager 页（控制台 "Open Group Manager" 打开的 ex 页，:1742778）：原子端点 `tg.answer_group.transfer_owner_and_leave`（:1743915）自带退群语义，`auto_transfer_ok`/`auto_transfer_failed` 日志行照抄（:1743960-1743961），落库沿用参考端 `group_mgr` 表（:1723421，group_id PK / owner_phone / invite_link / status / chat_type / old_owner）。每群三步：新 owner 先入群——目标是自有账号就自己 join、是外部用户就源账号 invite，失败打 `Target account failed to join group %1 before transfer.`；转让要源账号二步密码（`EditCreator`/`messages.editChatCreator`，SRP `compute_check`），缺密码整号跳过打 `Skip account %1: missing second password.`；成功后原 owner 退群 `Original owner left group %1.`（退群失败不影响转让，`left=0`）。无效群 id 打 `Invalid group id %1, skip transfer.`；`--from-store` 按 `owner_phone` 从 `group_mgr` 表取名下群，与手填去重 |
 | 日限落盘（v1.3.2+） | `quota --namespace puppet_chat --account acc1`；修复 `quota --reset --namespace puppet_chat --account acc1 --yes` | 对齐参考端 QuotaDiskWriter（:2265509）——`flushToDisk`（:2241358）/`isLimitReachedForNamespace`（:2241357），实例化为 `ChatDailyQuota`（:2184666）与 `MassSendDailyQuota`（:2184694）。per-account 日限计数落 `daily_quota` 表（namespace/account/day 主键，success/attempt 两列——:1737953 的 `Success limit: %2, Attempt limit: %3` 两帽检查），重启读表不归零。接线的页：`puppet_chat`/`puppet_chat_v2`（SlotMap 预算种子化 + live 结果写回）、`copy_chat`（budget 种子化 + 写回）；`mass_send`/`mass_send_v2` 原本就走 results 表兜底。全耗尽判决行照抄：`All %1 accounts reached per-account daily limits (success=%2, attempt=%3), wait until tomorrow`（:1737966）、`All selected accounts reached today's limits; will retry at %1...`（:1737953）。`quota --reset` 至少要一个过滤器（namespace/account），不带 --yes 只打计划；干跑永不写计数 |
+ | 批量改密码（v1.3.3+） | `accounts password --accounts acc1 --new-password-file np.txt`；带旧密码 `--current-password-file op.txt`；真改加 `--live --allow-write` | 对齐参考端批量改密码页（console ex 页 `batch_modify_password`，:1737291-1737305）。旧密码走页面自己的三源模型：`--current-password-file` 的箱内默认先答（`input old password`），没有就读库里的 per-account 记录（`metadata old password`，accounts 表新 `password` 列），都没有就当账号无 2FA（`empty old password`，`current_password=None`）。成功行照抄 `Account %1 modify successfully via %2`（%2 = 答对的那个源），同步判决照抄三句：库记录写回 = `password updated and metadata synced.`（:1737302）、session 旁有 sidecar `.json` 一并写回 = `and JSON synced.`（:1737303）、库写失败 = `(metadata sync skipped).`（:1737304）——下次运行同一账号就能用自己的记录答 `via metadata old password`。失败行照抄 `Account %1 failed to change password.` + `Account %1 (%2) error: %3`；任务守卫照抄 `Password change task started.` / `Password change task is running, please stop it first.`（:1737294-1737295，live 且 10 分钟内有同任务在跑才拦，防崩溃残行锁死）；Ctrl+C = 页面的 Stop，打 `Stop requested...` 按整批计划收 `Success: %1/%2`。密码值永不进日志/回执/终端 |
+ | passkey 导出（v1.3.3+） | `accounts passkey --accounts acc1 --out-dir data/passkeys --live --allow-write` | 同一页的第二个任务（:1737294 `Passkey export task started.`）：每账号一个 `.passkey` JSON 元数据文件（`passkey<label>_<时间戳>.passkey`，:1737371 `passkey%1_%2` 命名式），横幅照抄 `System WebAuthn is unavailable in this build; exporting metadata-only passkey files.`（:1737382）——本构建只做 metadata 导出、私钥回放未实现（:1737375），登录侧拒绝线留给 .passkey 三件套。无手机号整号跳 `Account %1 has no phone number, skipped.`（:1737379）；空池打页面守卫 `Please select at least one account.`（:1737293）；收尾 `Passkey export finished. Success: %1/%2`（:1737385） |
 
 ## 三步上手（照这个顺序，否则第一条命令就会撞墙）
 
@@ -350,6 +352,14 @@ ogtool group_manage --from-store --target acc2 --password "$TWOPASS"
 ogtool quota --namespace puppet_chat
 ogtool quota --day 2026-10-29 --account acc1
 ogtool quota --reset --namespace puppet_chat --account acc1 --yes
+
+# 底座 accounts password（v1.3.3）：批量改 2FA 云密码，三源旧密码自动降级
+ogtool accounts password --accounts acc1 --new-password-file /tmp/np.txt
+ogtool accounts password --accounts acc1 --new-password-file /tmp/np.txt \
+  --current-password-file /tmp/op.txt --live --allow-write
+
+# 底座 accounts passkey（v1.3.3）：metadata passkey 导出（同页第二任务）
+ogtool accounts passkey --accounts acc1 --out-dir data/passkeys --live --allow-write
 
 # #23 自动脚本：脚本放 scripts/*.yaml，先列再跑
 ogtool auto_script --list

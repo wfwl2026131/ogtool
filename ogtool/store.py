@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     kind        TEXT NOT NULL DEFAULT '',
     added_at    TEXT NOT NULL,
     last_seen   TEXT NOT NULL DEFAULT '',
-    notes       TEXT NOT NULL DEFAULT ''
+    notes       TEXT NOT NULL DEFAULT '',
+    password    TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -360,6 +361,10 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE accounts ADD COLUMN kind TEXT NOT NULL DEFAULT ''"
             )
+        if "password" not in known:
+            self._conn.execute(
+                "ALTER TABLE accounts ADD COLUMN password TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         self._conn.close()
@@ -417,6 +422,29 @@ class Store:
                 "UPDATE accounts SET kind = ? WHERE label = ?", (kind, label)
             )
             self._conn.commit()
+
+    def set_account_password(self, label: str, password: str) -> None:
+        """Record the account's cloud password - the metadata side.
+
+        The batch password page's own model (:1737287 in the dump): a change
+        reads the old password from the account's metadata first, and after a
+        successful change the new password goes back into that same metadata,
+        so the next run reads it as its own old password. The value never
+        reaches a row, a log line or the terminal.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE accounts SET password = ? WHERE label = ?",
+                (password, label),
+            )
+            self._conn.commit()
+
+    def account_password(self, label: str) -> str:
+        """The recorded cloud password, or empty when none was recorded."""
+        row = self._conn.execute(
+            "SELECT password FROM accounts WHERE label = ?", (label,)
+        ).fetchone()
+        return str(row["password"] or "") if row is not None else ""
 
     def count_accounts(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) AS n FROM accounts").fetchone()
@@ -556,6 +584,30 @@ class Store:
             (status, utcnow(), sent, failed, task_id),
         )
         self._conn.commit()
+
+    def task_running(self, name: str, feature: str, within_sec: int = 0) -> bool:
+        """A task of this shape is still marked running, started recently.
+
+        The password page refuses a second Start while its task runs
+        ("Password change task is running, please stop it first.",
+        :1737295); the recent-only window is what keeps a crashed run from
+        bricking the command forever - after the window the leftover row is
+        a stale receipt, not a live task.
+        """
+        sql = (
+            "SELECT 1 FROM tasks WHERE status = 'running' AND name = ? AND feature = ?"
+        )
+        params: list[str] = [name, feature]
+        if within_sec > 0:
+            cutoff = (
+                (datetime.now(UTC) - timedelta(seconds=within_sec))
+                .replace(microsecond=0)
+                .isoformat()
+            )
+            sql += " AND created_at >= ?"
+            params.append(cutoff)
+        row = self._conn.execute(sql, params).fetchone()
+        return row is not None
 
     # targets ----------------------------------------------------------
 

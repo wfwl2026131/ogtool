@@ -558,6 +558,22 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         action="store_true",
         help="really change the password (default: dry-run)",
     )
+    passkey = account_subs.add_parser(
+        "passkey",
+        help="export metadata passkey files for the selected accounts",
+    )
+    passkey.add_argument("--accounts", nargs="*", default=None)
+    passkey.add_argument(
+        "--out-dir",
+        default="",
+        help="folder the .passkey files are written to",
+    )
+    passkey.add_argument("--dry-run", action="store_true", help="the default")
+    passkey.add_argument(
+        "--live",
+        action="store_true",
+        help="really write the passkey files (default: dry-run)",
+    )
     spambot.add_argument("--dry-run", action="store_true", help="the default")
     spambot.add_argument(
         "--live", action="store_true", help="really talk to @spambot (default: dry-run)"
@@ -583,6 +599,15 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         "--dry-run", action="store_true", help="print the plan, connect to nothing"
     )
     login.add_argument("--live", action="store_true", help="the default here")
+    # The write-account actions are gated on --allow-write, so the flag has to
+    # exist on the subparsers that the gate names - it never did for the
+    # accounts family, and the refusal asked for a flag argparse refused.
+    for writer in ("password", "passkey", "spambot", "logout"):
+        account_subs.choices[writer].add_argument(
+            "--allow-write",
+            action="store_true",
+            help="needed for a page that writes into Telegram",
+        )
 
 
 def _pattern_parser(subs: argparse._SubParsersAction) -> None:
@@ -1007,7 +1032,9 @@ def _dispatch(args: argparse.Namespace, settings: object) -> int:
 
 
 #: ``accounts`` actions that change something on Telegram rather than reading it.
-WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset({"logout", "password", "spambot"})
+WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset(
+    {"logout", "password", "spambot", "passkey"}
+)
 
 #: Commands outside the feature registry that still write: ``bot_links`` opens
 #: bot links with the account, which starts whatever that bot does.
@@ -1029,8 +1056,11 @@ def _write_refusal(args: argparse.Namespace) -> str:
     if command == "accounts":
         action = getattr(args, "action", "")
         if action in WRITE_ACCOUNT_ACTIONS:
+            # The passkey export writes files, not Telegram; the sentence
+            # names what the action actually touches.
+            what = "the passkey folder" if action == "passkey" else "Telegram"
             return (
-                f"ERROR: accounts {action} writes into Telegram; add "
+                f"ERROR: accounts {action} writes into {what}; add "
                 f"--allow-write to run it live"
             )
         return ""
@@ -1322,6 +1352,14 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             _account_rows_task(settings, store, "logout", rows, live=bool(args.live))
             return 0 if done == len(rows) else 1
         if args.action == "password":
+            # The page's own Start guard (:1737295): a second live run while
+            # the task is still running is refused, not queued. The window is
+            # recent-only so a crashed run's stale receipt never bricks the
+            # command.
+            if args.live and store.task_running("password", "accounts", within_sec=600):
+                print("Password change task is running, please stop it first.")
+                return 2
+            print("Password change task started.")
             try:
                 new_password = _read_secret(args.new_password_file)
                 current_password = _read_secret(args.current_password_file)
@@ -1337,8 +1375,36 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             for label, ok, detail in rows:
                 print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
             done = sum(1 for _, ok, _ in rows if ok)
-            print(f"Password change task finished. Success: {done}/{len(rows)}")
+            planned = len(pool.resolve(args.accounts)) if rows else 0
+            print(
+                f"Password change task finished. Success: {done}/{planned or len(rows)}"
+            )
             _account_rows_task(settings, store, "password", rows, live=bool(args.live))
+            return 0 if done == (planned or len(rows)) else 1
+        if args.action == "passkey":
+            # The password page's second task: one metadata passkey file per
+            # account (:1737294). The folder is checked before anything opens,
+            # and an empty pool is the page's own refusal (:1737293).
+            out_dir = args.out_dir or str(Path(settings.data_dir) / "passkeys")
+            if args.live and store.task_running("passkey", "accounts", within_sec=600):
+                print("Passkey export task is running, please stop it first.")
+                return 2
+            accounts = pool.resolve(args.accounts)
+            if not accounts:
+                print("Please select at least one account.")
+                return 2
+            if args.live:
+                print("Passkey export task started.")
+                print(
+                    "System WebAuthn is unavailable in this build; "
+                    "exporting metadata-only passkey files."
+                )
+            rows = pool.passkeys(args.accounts, out_dir, live=bool(args.live))
+            for label, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print(f"Passkey export finished. Success: {done}/{len(rows)}")
+            _account_rows_task(settings, store, "passkey", rows, live=bool(args.live))
             return 0 if done == len(rows) else 1
         if args.action == "dialogs":
             # Listing is the only read here, and the list itself is the result:

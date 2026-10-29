@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import contextlib
+import json
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from .config import ConfigError, Settings
@@ -78,15 +80,19 @@ class AccountPool:
         by_label = {account.label: account for account in accounts}
         chosen: list[Account] = []
         for name in names:
-            account = by_label.get(name) or by_label.get(label_for(name)) \
-                if name.replace("+", "").isdigit() else by_label.get(name)
+            account = (
+                by_label.get(name) or by_label.get(label_for(name))
+                if name.replace("+", "").isdigit()
+                else by_label.get(name)
+            )
             if account is None:
                 raise AccountError(f"{SESSION_NOT_FOUND}: {name}")
             chosen.append(account)
         return chosen
 
-    def test(self, names: list[str] | None, live: bool,
-             client_factory=None) -> list[tuple[str, bool, str]]:
+    def test(
+        self, names: list[str] | None, live: bool, client_factory=None
+    ) -> list[tuple[str, bool, str]]:
         """Connectivity check. In dry-run it only proves the file is there.
 
         Live means a real ``get_me()``: the row shows the user id, the username,
@@ -112,8 +118,9 @@ class AccountPool:
                     continue
             client = None
             try:
-                client = _client(client_factory, str(path), credentials,
-                                self.settings.proxy)
+                client = _client(
+                    client_factory, str(path), credentials, self.settings.proxy
+                )
                 client.connect()
                 me = client.get_me()
                 if me is None:
@@ -134,8 +141,9 @@ class AccountPool:
                         client.disconnect()
         return rows
 
-    def dialogs(self, names: list[str] | None, live: bool, limit: int = 20,
-                client_factory=None) -> list[tuple[str, str, str, str]]:
+    def dialogs(
+        self, names: list[str] | None, live: bool, limit: int = 20, client_factory=None
+    ) -> list[tuple[str, str, str, str]]:
         """The chats this account can see: ``(label, kind, ref, title)``.
 
         Read-only, and the only way to find a real group for the live checks:
@@ -147,12 +155,12 @@ class AccountPool:
         for account in self.resolve(names):
             path = Path(account.session)
             if not path.exists():
-                rows.append((account.label, "?", "",
-                             f"{SESSION_NOT_FOUND}: {path}"))
+                rows.append((account.label, "?", "", f"{SESSION_NOT_FOUND}: {path}"))
                 continue
             if not live:
-                rows.append((account.label, "?", "",
-                             "dry-run: would list the newest dialogs"))
+                rows.append(
+                    (account.label, "?", "", "dry-run: would list the newest dialogs")
+                )
                 continue
             if credentials is None:
                 try:
@@ -162,8 +170,9 @@ class AccountPool:
                     continue
             client = None
             try:
-                client = _client(client_factory, str(path), credentials,
-                                 self.settings.proxy)
+                client = _client(
+                    client_factory, str(path), credentials, self.settings.proxy
+                )
                 client.connect()
                 for dialog in client.iter_dialogs(limit=limit):
                     entity = dialog.entity
@@ -184,8 +193,14 @@ class AccountPool:
                     unread = int(getattr(dialog, "unread_count", 0) or 0)
                     sent = getattr(dialog, "date", None)
                     stamp = sent.strftime("%H:%M") if sent else "-"
-                    rows.append((account.label, kind, ref,
-                                 f"{dialog.name or ''}\t{stamp}\t{unread}"))
+                    rows.append(
+                        (
+                            account.label,
+                            kind,
+                            ref,
+                            f"{dialog.name or ''}\t{stamp}\t{unread}",
+                        )
+                    )
             except Exception as error:  # noqa: BLE001 - reported as a row
                 rows.append((account.label, "?", "", type(error).__name__))
             finally:
@@ -194,10 +209,14 @@ class AccountPool:
                         client.disconnect()
         return rows
 
-    def spambot(self, names: list[str] | None, live: bool,
-                client_factory=None, wait: float = 8.0,
-                apply: bool = False
-                ) -> list[tuple[str, str, bool, str]]:
+    def spambot(
+        self,
+        names: list[str] | None,
+        live: bool,
+        client_factory=None,
+        wait: float = 8.0,
+        apply: bool = False,
+    ) -> list[tuple[str, str, bool, str]]:
         """Ask @spambot about each account, the reference's own frozen check.
 
         ``rows`` are ``(label, kind, ok, detail)``. In dry-run nothing is sent:
@@ -211,12 +230,17 @@ class AccountPool:
         for account in self.resolve(names):
             path = Path(account.session)
             if not path.exists():
-                rows.append((account.label, "", False,
-                             f"{SESSION_NOT_FOUND}: {path}"))
+                rows.append((account.label, "", False, f"{SESSION_NOT_FOUND}: {path}"))
                 continue
             if not live:
-                rows.append((account.label, "", True,
-                             f"dry-run: would send {START} to @{SPAMBOT}"))
+                rows.append(
+                    (
+                        account.label,
+                        "",
+                        True,
+                        f"dry-run: would send {START} to @{SPAMBOT}",
+                    )
+                )
                 continue
             if credentials is None:
                 try:
@@ -226,16 +250,23 @@ class AccountPool:
                     continue
             client = None
             try:
-                client = _client(client_factory, str(path), credentials,
-                                 self.settings.proxy)
+                client = _client(
+                    client_factory, str(path), credentials, self.settings.proxy
+                )
                 client.connect()
                 client.send_message(SPAMBOT, START)
                 reply = _latest_bot_reply(client, SPAMBOT, wait)
                 kind, marker = classify(reply)
-                rows.append((account.label, kind, True,
-                             f"{headline(kind)}"
-                             + (f" [kw={marker}]" if marker else "")
-                             + f" reply={shorten(reply) or '-'}"))
+                rows.append(
+                    (
+                        account.label,
+                        kind,
+                        True,
+                        f"{headline(kind)}"
+                        + (f" [kw={marker}]" if marker else "")
+                        + f" reply={shorten(reply) or '-'}",
+                    )
+                )
                 if apply and kind:
                     self.store.set_account_kind(account.label, kind)
             except Exception as error:  # noqa: BLE001 - reported as a row
@@ -246,9 +277,9 @@ class AccountPool:
                         client.disconnect()
         return rows
 
-
-    def logout(self, names: list[str] | None, live: bool = False,
-               trash: str = "") -> list[tuple[str, bool, str]]:
+    def logout(
+        self, names: list[str] | None, live: bool = False, trash: str = ""
+    ) -> list[tuple[str, bool, str]]:
         """The console tool: "Batch logout" (1858834-1858838).
 
         The reference's four lines are "Batch logout already running", "Batch
@@ -260,85 +291,254 @@ class AccountPool:
         mistaken batch logout is strictly safer than one that cannot.
         """
         rows: list[tuple[str, bool, str]] = []
-        target_dir = Path(trash).expanduser() if trash else (
-            Path(self.settings.data_dir) / "sessions" / "trash")
+        target_dir = (
+            Path(trash).expanduser()
+            if trash
+            else (Path(self.settings.data_dir) / "sessions" / "trash")
+        )
         for account in self.resolve(names):
             path = Path(account.session)
             if not path.exists():
-                rows.append((account.label, False,
-                             f"{SESSION_NOT_FOUND}: {path}"))
+                rows.append((account.label, False, f"{SESSION_NOT_FOUND}: {path}"))
                 continue
             if not live:
-                rows.append((account.label, True,
-                             f"dry-run: would log out (move {path.name})"))
+                rows.append(
+                    (account.label, True, f"dry-run: would log out (move {path.name})")
+                )
                 continue
             try:
                 target_dir.mkdir(parents=True, exist_ok=True)
                 moved = target_dir / path.name
                 if moved.exists():
-                    moved = target_dir / f"{path.stem}.{int(path.stat().st_mtime)}" \
+                    moved = (
+                        target_dir / f"{path.stem}.{int(path.stat().st_mtime)}"
                         f"{path.suffix}"
+                    )
                 path.replace(moved)
             except OSError as error:
                 rows.append((account.label, False, f"{type(error).__name__}: {error}"))
                 continue
-            rows.append((account.label, True,
-                         f"Batch logout completed, session moved to {moved}"))
+            rows.append(
+                (
+                    account.label,
+                    True,
+                    f"Batch logout completed, session moved to {moved}",
+                )
+            )
         return rows
 
-    def passwords(self, names: list[str] | None, new_password: str, live: bool,
-                  client_factory=None,
-                  current_password: str = "") -> list[tuple[str, bool, str]]:
+    def passwords(
+        self,
+        names: list[str] | None,
+        new_password: str,
+        live: bool,
+        client_factory=None,
+        current_password: str = "",
+    ) -> list[tuple[str, bool, str]]:
         """Batch modify cloud passwords for the selected accounts.
 
         The console tool is the reference's own ("Batch modify cloud passwords
-        for selected accounts", 1737291) and so are its outcomes: "Account %1
-        modify successfully via %2", "Account %1 password updated and metadata
-        synced", "Password change task finished. Success: %1/%2".
+        for selected accounts", :1737291) and so are its outcomes: "Account %1
+        modify successfully via %2" names the source that answered
+        (:1737299-1737301), the sync verdicts follow (:1737302-1737304), the
+        failures speak the page's own sentences (:1737296, :1737300), and the
+        closing line is "Password change task finished. Success: %1/%2"
+        (:1737305).
 
-        The password never reaches the log or the terminal: rows carry the
-        account, a verdict and the reference's own sentence, nothing else.
+        The old password is the page's three-source model: the box's default
+        first ("input old password", the freshest statement of intent), the
+        account's recorded metadata second ("metadata old password"), and when
+        both are absent the account is assumed to have none ("empty old
+        password"). After a live change the new password goes back into the
+        same metadata (:1737302), so the next run reads it as its own old
+        password, and a sidecar ``.json`` next to the session is synced too
+        (:1737303).
+
+        The passwords never reach the log or the terminal: rows carry the
+        account, a verdict and the reference's own sentences, nothing else.
         """
         rows: list[tuple[str, bool, str]] = []
         if not new_password:
             labels = [account.label for account in self.resolve(names)] or ["-"]
-            return [(label, False, "no new password given")
-                    for label in labels]
+            return [(label, False, "no new password given") for label in labels]
         credentials = None
+        try:
+            for account in self.resolve(names):
+                path = Path(account.session)
+                if not path.exists():
+                    rows.append((account.label, False, f"{SESSION_NOT_FOUND}: {path}"))
+                    continue
+                recorded = self.store.account_password(account.label)
+                if current_password:
+                    old_password = current_password
+                    source = "input old password"
+                elif recorded:
+                    old_password = recorded
+                    source = "metadata old password"
+                else:
+                    old_password = ""
+                    source = "empty old password"
+                if not live:
+                    detail = f"dry-run: would change the cloud password (via {source})"
+                    rows.append((account.label, True, detail))
+                    continue
+                if credentials is None:
+                    try:
+                        credentials = _credentials(self.settings)
+                    except ConfigError as error:
+                        rows.append((account.label, False, str(error)))
+                        continue
+                client = None
+                try:
+                    client = _client(
+                        client_factory, str(path), credentials, self.settings.proxy
+                    )
+                    client.connect()
+                    client.edit_2fa(
+                        current_password=old_password or None, new_password=new_password
+                    )
+                    rows.append(
+                        (
+                            account.label,
+                            True,
+                            f"Account {account.label} modify successfully via {source}",
+                        )
+                    )
+                    print(
+                        f"Account {account.label} password updated "
+                        f"{self._sync_password(account, new_password, path)}"
+                    )
+                except Exception as error:  # noqa: BLE001 - reported as a row
+                    rows.append(
+                        (
+                            account.label,
+                            False,
+                            f"Account {account.label} failed to change "
+                            f"password. Account {account.label} "
+                            f"({account.phone}) error: "
+                            f"{type(error).__name__}: {error}",
+                        )
+                    )
+                finally:
+                    if client is not None:
+                        with contextlib.suppress(Exception):
+                            client.disconnect()
+        except KeyboardInterrupt:
+            # The page's own Stop: the run gives back what it finished and
+            # says so, and the closing line counts against the whole plan.
+            print("Stop requested...")
+        return rows
+
+    def _sync_password(self, account: Account, new_password: str, session: Path) -> str:
+        """The reference's sync verdict for one successful change.
+
+        The store record is the metadata side ("and metadata synced.",
+        :1737302); a sidecar ``.json`` next to the session is the JSON side
+        ("and JSON synced.", :1737303). When the store write fails outright
+        nothing is synced and the verdict says so (:1737304). The password
+        value never appears in any verdict.
+        """
+        try:
+            self.store.set_account_password(account.label, new_password)
+        except Exception:  # noqa: BLE001 - the verdict is the report
+            return "(metadata sync skipped)."
+        sidecar = session.with_suffix(".json")
+        if sidecar.exists():
+            try:
+                raw = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                raw = None
+            if isinstance(raw, dict):
+                raw["password"] = new_password
+                try:
+                    sidecar.write_text(
+                        json.dumps(raw, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+                except OSError:
+                    pass
+                else:
+                    return "and JSON synced."
+        return "and metadata synced."
+
+    def passkeys(
+        self, names: list[str] | None, out_dir: str | Path, live: bool
+    ) -> list[tuple[str, bool, str]]:
+        """Export metadata-only passkey files for the selected accounts.
+
+        The password page's second task (:1737294): one ``.passkey`` JSON per
+        account in the export folder, carrying what the reference's own file
+        carries - the phone number, which the login side later reads back
+        ("Passkey file missing PhoneNumber: %1", :1737361). The build's own
+        boundary is kept verbatim: metadata only, because the private key is
+        not available in this build (:1737384).
+        """
+        rows: list[tuple[str, bool, str]] = []
+        folder = Path(out_dir).expanduser()
+        if live:
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                return [
+                    (
+                        account.label,
+                        False,
+                        f"Failed to create passkey directory: {error}",
+                    )
+                    for account in self.resolve(names)
+                ]
         for account in self.resolve(names):
-            path = Path(account.session)
-            if not path.exists():
-                rows.append((account.label, False,
-                             f"{SESSION_NOT_FOUND}: {path}"))
+            if not account.phone:
+                rows.append(
+                    (
+                        account.label,
+                        False,
+                        f"Account {account.label} has no phone number, skipped.",
+                    )
+                )
                 continue
             if not live:
-                rows.append((account.label, True,
-                             "dry-run: would change the cloud password"))
+                rows.append(
+                    (
+                        account.label,
+                        True,
+                        "dry-run: would export a metadata passkey file",
+                    )
+                )
                 continue
-            if credentials is None:
-                try:
-                    credentials = _credentials(self.settings)
-                except ConfigError as error:
-                    rows.append((account.label, False, str(error)))
-                    continue
-            client = None
             try:
-                client = _client(client_factory, str(path), credentials,
-                                 self.settings.proxy)
-                client.connect()
-                client.edit_2fa(current_password=current_password or None,
-                                new_password=new_password)
-                rows.append((account.label, True,
-                             f"Account {account.label} modify successfully "
-                             f"via 2fa"))
-            except Exception as error:  # noqa: BLE001 - reported as a row
-                rows.append((account.label, False,
-                             f"{type(error).__name__}: {error}"))
-            finally:
-                if client is not None:
-                    with contextlib.suppress(Exception):
-                        client.disconnect()
+                path = _write_passkey(folder, account.label, account.phone)
+                rows.append(
+                    (
+                        account.label,
+                        True,
+                        f"Exported metadata passkey file for "
+                        f"account {account.label} to {path}",
+                    )
+                )
+            except OSError as error:
+                rows.append((account.label, False, f"{type(error).__name__}: {error}"))
         return rows
+
+
+def _write_passkey(folder: Path, label: str, phone: str) -> Path:
+    """One ``.passkey`` file, the name pattern the reference generates.
+
+    ``passkey%1_%2`` (:1737371) with the account and a timestamp; the JSON
+    holds the metadata the login side validates, and the phone number is
+    mandatory there, which is why an account without one is skipped whole.
+    """
+    stamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    path = folder / f"passkey{label}_{stamp}.passkey"
+    payload = {
+        "version": 1,
+        "kind": "metadata",
+        "phone": phone,
+        "label": label,
+    }
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    path.write_text(text + "\n", encoding="utf-8")
+    return path
 
 
 def _latest_bot_reply(client, username: str, wait: float) -> str:
@@ -384,10 +584,12 @@ def _describe(me) -> str:
 
     username = getattr(me, "username", "") or ""
     restricted = "yes" if getattr(me, "restricted", False) else "no"
-    return (f"user_id={getattr(me, 'id', '')} "
-            f"username={('@' + username) if username else '-'} "
-            f"phone={mask_phone(getattr(me, 'phone', '') or '')} "
-            f"restricted={restricted}")
+    return (
+        f"user_id={getattr(me, 'id', '')} "
+        f"username={('@' + username) if username else '-'} "
+        f"phone={mask_phone(getattr(me, 'phone', '') or '')} "
+        f"restricted={restricted}"
+    )
 
 
 def _proxy_row(settings: Settings) -> str:

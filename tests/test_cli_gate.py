@@ -30,8 +30,11 @@ def config(tmp_path):
 
 
 def test_a_write_page_is_refused_without_the_flag(config, capsys):
-    code, out = run(["mass_send", "--live", "--targets", "@BotFather",
-                     "--text", "hi"], config, capsys)
+    code, out = run(
+        ["mass_send", "--live", "--targets", "@BotFather", "--text", "hi"],
+        config,
+        capsys,
+    )
     assert code == 2
     assert "mass_send writes into Telegram" in out
     assert "--allow-write" in out
@@ -45,16 +48,30 @@ def test_the_refusal_happens_before_a_task_is_opened(config, capsys):
 
 
 def test_a_dry_run_is_never_refused(config, capsys):
-    code, out = run(["mass_send", "--dry-run", "--targets", "@BotFather",
-                     "--text", "hi"], config, capsys)
+    code, out = run(
+        ["mass_send", "--dry-run", "--targets", "@BotFather", "--text", "hi"],
+        config,
+        capsys,
+    )
     assert code == 0, out
     assert "PLAN:" in out
 
 
 def test_the_flag_lets_the_plan_through(config, capsys):
     """With the flag the page runs; a dry run keeps it from sending anything."""
-    code, out = run(["mass_send", "--dry-run", "--allow-write",
-                     "--targets", "@BotFather", "--text", "hi"], config, capsys)
+    code, out = run(
+        [
+            "mass_send",
+            "--dry-run",
+            "--allow-write",
+            "--targets",
+            "@BotFather",
+            "--text",
+            "hi",
+        ],
+        config,
+        capsys,
+    )
     assert code == 0, out
 
 
@@ -69,25 +86,35 @@ def test_every_write_page_is_gated(feature, config, capsys):
 def test_the_set_only_names_real_pages():
     load_defaults()
     assert set(names()) >= WRITE_FEATURES, (
-        f"not features: {sorted(WRITE_FEATURES - set(names()))}")
+        f"not features: {sorted(WRITE_FEATURES - set(names()))}"
+    )
     # A read-only page must not be in it, or the gate would train people to add
     # the flag to everything and stop reading the message.
-    assert not {"filter_phone", "filter_group", "export_accounts",
-                "keep_online", "proxy", "settings"} & WRITE_FEATURES
+    assert (
+        not {
+            "filter_phone",
+            "filter_group",
+            "export_accounts",
+            "keep_online",
+            "proxy",
+            "settings",
+        }
+        & WRITE_FEATURES
+    )
 
 
-@pytest.mark.parametrize("action", ["logout", "password", "spambot"])
+@pytest.mark.parametrize("action", ["logout", "password", "spambot", "passkey"])
 def test_the_write_account_actions_are_gated(action, config, capsys):
-    code, out = run(["accounts", action, "--live", "--accounts", "t1"],
-                    config, capsys)
+    code, out = run(["accounts", action, "--live", "--accounts", "t1"], config, capsys)
     assert code == 2
-    assert f"accounts {action} writes into Telegram" in out
+    assert f"accounts {action} writes into" in out
 
 
 def test_reading_a_dialog_list_is_not_gated():
     """--live on a read page reaches the page, not the refusal."""
     args = cli.build_parser().parse_args(
-        ["accounts", "dialogs", "--live", "--accounts", "t1"])
+        ["accounts", "dialogs", "--live", "--accounts", "t1"]
+    )
     assert cli._write_refusal(args) == ""
 
 
@@ -100,9 +127,13 @@ def _cli(argv, config):
     """Run the real entrypoint in a child process: argparse order is the point."""
     return subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
         [sys.executable, "-m", "ogtool", "--config", str(config), *argv],
-        capture_output=True, text=True, timeout=120, check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
         cwd=str(config.parent),
-        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)})
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent)},
+    )
 
 
 def test_every_write_page_refuses_at_the_process_level(config):
