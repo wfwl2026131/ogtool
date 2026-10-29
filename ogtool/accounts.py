@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -533,12 +534,63 @@ def _write_passkey(folder: Path, label: str, phone: str) -> Path:
     payload = {
         "version": 1,
         "kind": "metadata",
-        "phone": phone,
+        # The field name the login side validates ("Passkey file missing
+        # PhoneNumber: %1", :1737361) - the same name the reference's own
+        # file carries, so an export feeds the login task unchanged.
+        "PhoneNumber": phone,
         "label": label,
     }
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     path.write_text(text + "\n", encoding="utf-8")
     return path
+
+
+def passkey_login(
+    files: Sequence[Path | str], live: bool
+) -> list[tuple[str, bool, str]]:
+    """The batch_login page's passkey task body (:1737357-1737378).
+
+    One row per file, labelled by the stem: the reference's own block line
+    names ``%1.passkey`` (:1737377). The reader validates what the
+    reference's own reader validates - open, JSON, the ``PhoneNumber`` field
+    (:1737357-1737361) - and a valid record still blocks, because secure
+    replay is not implemented in this build (:1737375, :1737377). The page's
+    Start gate (the classifier and its mixed refusal, :1742499) runs before
+    this function and is the CLI's, not here.
+    """
+    rows: list[tuple[str, bool, str]] = []
+    for path in (Path(item) for item in files):
+        stem = path.stem
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except OSError:
+            rows.append((stem, False, f"Failed to open passkey file: {path}"))
+            continue
+        except ValueError:
+            rows.append((stem, False, f"Invalid passkey file format: {path}"))
+            continue
+        if not isinstance(payload, dict) or not payload.get("PhoneNumber"):
+            rows.append((stem, False, f"Passkey file missing PhoneNumber: {path}"))
+            continue
+        if not live:
+            rows.append(
+                (
+                    stem,
+                    True,
+                    "dry-run: would attempt passkey login; "
+                    "replay is blocked in this build",
+                )
+            )
+            continue
+        rows.append(
+            (
+                stem,
+                False,
+                f"Passkey login blocked for {stem}.passkey: "
+                "secure replay is not implemented in this build.",
+            )
+        )
+    return rows
 
 
 def _latest_bot_reply(client, username: str, wait: float) -> str:

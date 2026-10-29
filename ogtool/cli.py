@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, receipts, selftest
-from .accounts import AccountError
+from .accounts import AccountError, passkey_login
 from .config import ConfigError, Settings, load_task, merge
 from .features import get, load_defaults, module, names
 from .features._common import close_task, open_task, record
@@ -574,6 +574,22 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         action="store_true",
         help="really write the passkey files (default: dry-run)",
     )
+    passkey_login = account_subs.add_parser(
+        "passkey-login",
+        help="the batch_login page's passkey branch; replay blocks in this build",
+    )
+    passkey_login.add_argument(
+        "--files", nargs="*", default=[], help=".passkey files to read"
+    )
+    passkey_login.add_argument(
+        "--folder", default="", help="folder scanned for .passkey files"
+    )
+    passkey_login.add_argument("--dry-run", action="store_true", help="the default")
+    passkey_login.add_argument(
+        "--live",
+        action="store_true",
+        help="really attempt the logins (default: dry-run)",
+    )
     spambot.add_argument("--dry-run", action="store_true", help="the default")
     spambot.add_argument(
         "--live", action="store_true", help="really talk to @spambot (default: dry-run)"
@@ -602,7 +618,7 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     # The write-account actions are gated on --allow-write, so the flag has to
     # exist on the subparsers that the gate names - it never did for the
     # accounts family, and the refusal asked for a flag argparse refused.
-    for writer in ("password", "passkey", "spambot", "logout"):
+    for writer in ("password", "passkey", "passkey-login", "spambot", "logout"):
         account_subs.choices[writer].add_argument(
             "--allow-write",
             action="store_true",
@@ -1033,7 +1049,7 @@ def _dispatch(args: argparse.Namespace, settings: object) -> int:
 
 #: ``accounts`` actions that change something on Telegram rather than reading it.
 WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset(
-    {"logout", "password", "spambot", "passkey"}
+    {"logout", "password", "spambot", "passkey", "passkey-login"}
 )
 
 #: Commands outside the feature registry that still write: ``bot_links`` opens
@@ -1405,6 +1421,60 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             done = sum(1 for _, ok, _ in rows if ok)
             print(f"Passkey export finished. Success: {done}/{len(rows)}")
             _account_rows_task(settings, store, "passkey", rows, live=bool(args.live))
+            return 0 if done == len(rows) else 1
+        if args.action == "passkey-login":
+            # The batch_login page's passkey branch. The page's Start gate
+            # classifies the selection first (passkey / json / session-json /
+            # mixed / none, :1737360-1737363) and refuses before any task
+            # starts: nothing selected (:1742494), a missing file (:1742500),
+            # and a mixed selection (:1742499). A selection with no .passkey
+            # file in it still starts the task, which then finds no files
+            # (:1737372-1737373).
+            inputs = [Path(item).expanduser() for item in (args.files or [])]
+            for path in inputs:
+                if not path.is_file():
+                    print(f"Account file does not exist: {path}")
+                    return 2
+            scanned: list[Path] = []
+            if args.folder:
+                root = Path(args.folder).expanduser()
+                if not root.is_dir():
+                    print(f"Account file does not exist: {root}")
+                    return 2
+                scanned = sorted(
+                    item
+                    for item in root.iterdir()
+                    if item.is_file()
+                    and item.suffix in (".passkey", ".session", ".json")
+                )
+            selection = inputs + scanned
+            if not selection:
+                print("Please select account files or folder")
+                return 2
+            kinds = {item.suffix for item in selection}
+            if ".passkey" in kinds and len(kinds) > 1:
+                print("Mixed .passkey and session/json inputs are not supported.")
+                return 2
+            print("Starting passkey login task")
+            passkey_files = [item for item in selection if item.suffix == ".passkey"]
+            if not passkey_files:
+                print("No .passkey files found.")
+                print("Passkey login finished with no files.")
+                return 0
+            print(f"Detected {len(passkey_files)} .passkey file(s).")
+            print("Current build does not support exported private-key passkey replay.")
+            print(
+                "System WebAuthn is unavailable in this build, "
+                "so passkey login is blocked."
+            )
+            rows = passkey_login(passkey_files, live=bool(args.live))
+            for stem, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {stem} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print(f"Passkey login finished. Success: {done}/{len(rows)}")
+            _account_rows_task(
+                settings, store, "passkey-login", rows, live=bool(args.live)
+            )
             return 0 if done == len(rows) else 1
         if args.action == "dialogs":
             # Listing is the only read here, and the list itself is the result:

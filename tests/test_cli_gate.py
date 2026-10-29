@@ -5,6 +5,7 @@ was enough to message strangers. These tests are about the sentence a person see
 and the exit code that follows it.
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -103,11 +104,71 @@ def test_the_set_only_names_real_pages():
     )
 
 
-@pytest.mark.parametrize("action", ["logout", "password", "spambot", "passkey"])
+@pytest.mark.parametrize(
+    "action", ["logout", "password", "spambot", "passkey", "passkey-login"]
+)
 def test_the_write_account_actions_are_gated(action, config, capsys):
-    code, out = run(["accounts", action, "--live", "--accounts", "t1"], config, capsys)
+    # passkey-login selects files, not pool accounts - no --accounts on it.
+    argv = ["accounts", action, "--live"]
+    if action != "passkey-login":
+        argv += ["--accounts", "t1"]
+    code, out = run(argv, config, capsys)
     assert code == 2
     assert f"accounts {action} writes into" in out
+
+
+def test_passkey_login_refuses_a_mixed_selection(config, tmp_path, capsys):
+    for name, text in (("a.session", "x"), ("b.json", "{}"), ("c.passkey", "{}")):
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    code, out = run(
+        ["accounts", "passkey-login", "--folder", str(tmp_path)], config, capsys
+    )
+    assert code == 2
+    assert "Mixed .passkey and session/json inputs are not supported." in out
+
+
+def test_passkey_login_refuses_an_empty_selection(config, capsys):
+    code, out = run(["accounts", "passkey-login"], config, capsys)
+    assert code == 2
+    assert "Please select account files or folder" in out
+
+
+def test_passkey_login_refuses_a_missing_file(config, tmp_path, capsys):
+    ghost = tmp_path / "ghost.passkey"
+    code, out = run(
+        ["accounts", "passkey-login", "--files", str(ghost)], config, capsys
+    )
+    assert code == 2
+    assert f"Account file does not exist: {ghost}" in out
+
+
+def test_passkey_login_reports_a_session_json_selection(config, tmp_path, capsys):
+    (tmp_path / "a.session").write_text("x", encoding="utf-8")
+    (tmp_path / "b.json").write_text("{}", encoding="utf-8")
+    code, out = run(
+        ["accounts", "passkey-login", "--folder", str(tmp_path)], config, capsys
+    )
+    assert code == 0
+    assert "Starting passkey login task" in out
+    assert "No .passkey files found." in out
+    assert "Passkey login finished with no files." in out
+
+
+def test_passkey_login_reads_files_and_closes_with_the_page_count(
+    config, tmp_path, capsys
+):
+    (tmp_path / "good.passkey").write_text(
+        json.dumps({"PhoneNumber": "+8613800000001"}), encoding="utf-8"
+    )
+    (tmp_path / "bare.passkey").write_text("{}", encoding="utf-8")
+    code, out = run(
+        ["accounts", "passkey-login", "--folder", str(tmp_path)], config, capsys
+    )
+    assert code == 1
+    assert "Detected 2 .passkey file(s)." in out
+    # dry-run: the valid record plans a blocked replay; only the broken
+    # one fails.
+    assert "Passkey login finished. Success: 1/2" in out
 
 
 def test_reading_a_dialog_list_is_not_gated():

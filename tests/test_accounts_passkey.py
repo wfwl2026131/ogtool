@@ -41,7 +41,9 @@ def test_a_live_export_writes_one_metadata_file(pool, tmp_path):
     files = list(out.glob("passkeyacc1_*.passkey"))
     assert len(files) == 1
     payload = json.loads(files[0].read_text(encoding="utf-8"))
-    assert payload["phone"] == "+8613800000001"
+    # The field name the login side validates ("Passkey file missing
+    # PhoneNumber: %1", :1737361) - the reference's own key.
+    assert payload["PhoneNumber"] == "+8613800000001"
     assert payload["label"] == "acc1"
     assert payload["kind"] == "metadata"
 
