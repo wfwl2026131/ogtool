@@ -105,7 +105,8 @@ def test_the_set_only_names_real_pages():
 
 
 @pytest.mark.parametrize(
-    "action", ["logout", "password", "spambot", "passkey", "passkey-login"]
+    "action",
+    ["logout", "password", "spambot", "passkey", "passkey-login", "exit-frozen"],
 )
 def test_the_write_account_actions_are_gated(action, config, capsys):
     # passkey-login selects files, not pool accounts - no --accounts on it.

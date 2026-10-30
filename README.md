@@ -237,6 +237,12 @@ ogtool batch_login --import-tdata ./tdata   # Telegram Desktop 账号,见下
 ogtool batch_login --export-ids ./ids.txt
 ogtool batch_login --logout frozen          # frozen | all | both
 
+# accounts exit-frozen（v1.3.8，批量上号页的 Exit Frozen Accounts）：@spambot 探测
+# 全池，冻结账号触发退出（session 移 trash 不删除）；句子全照抄 :1742564-1742572
+ogtool accounts exit-frozen                 # dry-run：PLAN 行
+ogtool accounts exit-frozen --live --allow-write
+ogtool accounts spambot --accounts acc1 --live --allow-write   # 只探测不退
+
 # #9 的 tdata 路线:二进制格式不手写,可选依赖转换
 #   pip install "ogtool[tdata]"        (即 opentele2)
 # 转出的会话逐账号落行,收据与 .session 路线完全一致。

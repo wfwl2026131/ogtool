@@ -278,6 +278,121 @@ class AccountPool:
                         client.disconnect()
         return rows
 
+    def exit_frozen(
+        self,
+        names: list[str] | None,
+        live: bool = False,
+        wait: float = 8.0,
+        client_factory=None,
+        trash: str = "",
+    ) -> list[tuple[str, bool, str]]:
+        """The batch-login page's "Exit Frozen Accounts" routine.
+
+        The page's own sentences (:1742495, :1742564-1742572): the start
+        guard ("Unable to start exit frozen accounts: task running or no
+        accounts selected"), the collection line ("Collecting frozen
+        accounts"), the detection line per frozen account ("Detected frozen
+        account #%1 (index %2)"), the empty-pool line ("No frozen accounts
+        detected"), the start line ("Starting exit frozen accounts routine
+        (%1 accounts)"), the abort/completion pair ("Exit frozen accounts
+        aborted" / "Exit frozen accounts completed") and the per-account
+        work line ("Processing frozen account #%1 (index %2, phone %3)"
+        with "unknown phone" for an account that has no number).
+
+        A frozen account is one the @spambot probe classifies as ``frozen``
+        (:1742572's phone shows the page feeds each candidate through the
+        same verdict). A live routine then logs every frozen account out -
+        the same destructive step the console tool performs, so the session
+        files move to the trash folder and are not unlinked.
+        """
+        from typing import Any
+
+        from .spambot import SPAMBOT, headline
+
+        rows: list[tuple[str, bool, str]] = []
+        try:
+            accounts = self.resolve(names)
+        except AccountError:
+            # An unknown label leaves the routine nothing to probe; the
+            # page folds that into its own start guard (:1742564).
+            accounts = []
+        if not accounts:
+            print(
+                "Unable to start exit frozen accounts: task running or no "
+                "accounts selected"
+            )
+            return rows
+        print("Collecting frozen accounts")
+        frozen: list[tuple[int, Any, str]] = []
+        for index, account in enumerate(accounts):
+            if not live:
+                rows.append(
+                    (
+                        account.label,
+                        True,
+                        f"dry-run: would ask @{SPAMBOT} then log frozen ones out",
+                    )
+                )
+                continue
+            probe = self.spambot(
+                [account.label], live=True, wait=wait,
+                client_factory=client_factory,
+            )
+            label, kind, ok, detail = probe[0] if probe else (account.label, "", False, "")
+            if not ok:
+                rows.append((label, False, detail))
+                continue
+            if kind != "frozen":
+                rows.append((label, True, f"not frozen ({headline(kind) or 'unclassified'})"))
+                continue
+            phone = account.phone or "unknown phone"
+            print(f"Detected frozen account #{index + 1} (index {index})")
+            frozen.append((index, account, phone))
+        if not frozen:
+            if live:
+                print("No frozen accounts detected")
+            return rows
+        print(f"Starting exit frozen accounts routine ({len(frozen)} accounts)")
+        for index, account, phone in frozen:
+            print(
+                f"Processing frozen account #{index + 1} "
+                f"(index {index}, phone {phone})"
+            )
+            if not live:
+                continue
+            path = Path(account.session)
+            if not path.exists():
+                rows.append((account.label, False, f"{SESSION_NOT_FOUND}: {path}"))
+                continue
+            try:
+                target_dir = (
+                    Path(trash).expanduser()
+                    if trash
+                    else (Path(self.settings.data_dir) / "sessions" / "trash")
+                )
+                target_dir.mkdir(parents=True, exist_ok=True)
+                moved = target_dir / path.name
+                if moved.exists():
+                    moved = (
+                        target_dir / f"{path.stem}.{int(path.stat().st_mtime)}"
+                        f"{path.suffix}"
+                    )
+                path.replace(moved)
+                rows.append(
+                    (
+                        account.label,
+                        True,
+                        f"logged out, session moved to {moved}",
+                    )
+                )
+            except OSError as error:
+                rows.append(
+                    (account.label, False, f"{type(error).__name__}: {error}")
+                )
+        if live:
+            print("Exit frozen accounts completed")
+        return rows
+
     def logout(
         self, names: list[str] | None, live: bool = False, trash: str = ""
     ) -> list[tuple[str, bool, str]]:

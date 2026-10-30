@@ -549,6 +549,28 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         action="store_true",
         help="really move the session files (default: dry-run)",
     )
+    exit_frozen = account_subs.add_parser(
+        "exit-frozen",
+        help=(
+            "Exit Frozen Accounts: probe @spambot, then log the frozen ones "
+            "out (the batch-login page's routine)"
+        ),
+    )
+    exit_frozen.add_argument("--accounts", nargs="*", default=None)
+    exit_frozen.add_argument(
+        "--wait", type=float, default=8.0, help="seconds to wait for the bot's answer"
+    )
+    exit_frozen.add_argument(
+        "--trash",
+        default=None,
+        help="where the frozen sessions go (default: sessions/trash)",
+    )
+    exit_frozen.add_argument("--dry-run", action="store_true", help="the default")
+    exit_frozen.add_argument(
+        "--live",
+        action="store_true",
+        help="really probe and log out (default: dry-run)",
+    )
     password = account_subs.add_parser(
         "password", help="batch modify cloud passwords for the selected accounts"
     )
@@ -629,7 +651,8 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     # The write-account actions are gated on --allow-write, so the flag has to
     # exist on the subparsers that the gate names - it never did for the
     # accounts family, and the refusal asked for a flag argparse refused.
-    for writer in ("password", "passkey", "passkey-login", "spambot", "logout"):
+    for writer in ("password", "passkey", "passkey-login", "spambot", "logout",
+                 "exit-frozen"):
         account_subs.choices[writer].add_argument(
             "--allow-write",
             action="store_true",
@@ -1060,7 +1083,7 @@ def _dispatch(args: argparse.Namespace, settings: object) -> int:
 
 #: ``accounts`` actions that change something on Telegram rather than reading it.
 WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset(
-    {"logout", "password", "spambot", "passkey", "passkey-login"}
+    {"logout", "password", "spambot", "passkey", "passkey-login", "exit-frozen"}
 )
 
 #: Commands outside the feature registry that still write: ``bot_links`` opens
@@ -1560,6 +1583,33 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
                 live=bool(args.live),
             )
             return 0 if all(ok for _, _, ok, _ in rows) else 1
+        if args.action == "exit-frozen":
+            # The batch-login page's routine (:1742495): probe every account
+            # through @spambot, then log the frozen ones out. The start
+            # guard is the page's own sentence and this is a writer, so a
+            # live run needs --allow-write like every other write feature.
+            if args.live and not getattr(args, "allow_write", False):
+                print(
+                    "ERROR: exit-frozen writes into Telegram; add "
+                    "--allow-write to run it, or drop --live for a plan only"
+                )
+                return 2
+            rows = pool.exit_frozen(
+                args.accounts,
+                live=bool(args.live),
+                wait=args.wait,
+                trash=args.trash or "",
+            )
+            for label, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print(
+                f"Exit frozen accounts finished. Success: {done}/{len(rows)}"
+            )
+            _account_rows_task(
+                settings, store, "exit-frozen", rows, live=bool(args.live)
+            )
+            return 0 if done == len(rows) else 1
         if args.action == "list":
             rows = pool.list()
             if args.json:
