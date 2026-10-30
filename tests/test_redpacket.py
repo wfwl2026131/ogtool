@@ -5,8 +5,11 @@ The reference's own pieces: the link grammar and its two refusals
 :1741345-1741347), the verdict lines (:1741263-1741329), the banners
 (:1741098-1741099, :1741176-1741177), the unfinished line (:1741184),
 the stats document (``red_packet_stats.json`` with ``bot_counts`` and the
-Dali wallet keys), and the panel's withdrawal addresses (:1737558-1737559).
-The bot is never contacted by a test: the sender seam is faked.
+Dali wallet keys), the panel's withdrawal addresses (:1737558-1737559),
+and the captcha automator (:1741191-1741265: the link grammar, the
+``/api/_know`` remote verdict, the roobot hidden-input grammars and the
+Timnsnems fields). The bot is never contacted by a test: the sender seam
+is faked and the network functions are monkeypatched.
 """
 
 from __future__ import annotations
@@ -16,11 +19,15 @@ from types import SimpleNamespace
 
 import pytest
 
+import ogtool.features.redpacket as redpacket
 from ogtool.features.redpacket import (
     GrabConfig,
     LinkError,
     classify_reply,
+    find_captcha_link,
     parse_amounts,
+    parse_form_action,
+    parse_hidden_fields,
     parse_link,
     run,
     stats_document,
@@ -260,3 +267,263 @@ def test_a_dry_run_plans_and_touches_nothing(ctx, store, tmp_path, capsys):
     assert "PLAN acc1 -> /start x… bot B" in out
     assert sender.starts == []
     assert not stats.exists()
+
+
+# --- the captcha automator (:1741191-1741265) -------------------------
+
+
+CAPTCHA_URL = "https://t.me/DaliCaptchaBot?start=c_9"
+
+
+def test_a_captcha_link_is_found_in_a_bot_answer():
+    assert find_captcha_link(f"open {CAPTCHA_URL} to continue") == CAPTCHA_URL
+    assert find_captcha_link("no link here") == ""
+    assert find_captcha_link("https://t.me/plain") == ""
+
+
+def test_hidden_inputs_and_form_action_use_the_reference_s_own_grammars():
+    html = (
+        '<form action="/api/submit" method="post">'
+        '<input type="hidden" name="TGID" value="100">'
+        '<input type="hidden" name="Singkey" value="abc">'
+        "</form>"
+    )
+    assert parse_hidden_fields(html) == {"TGID": "100", "Singkey": "abc"}
+    assert parse_form_action(html) == "/api/submit"
+    assert parse_hidden_fields("<p>no inputs</p>") == {}
+    assert parse_form_action("<p>no form</p>") == ""
+
+
+def test_missing_timnsnems_fields_are_detected():
+    html = '<input type="hidden" name="TGID" value="100">'
+    fields = parse_hidden_fields(html)
+    assert redpacket.missing_timnsnems(fields) != []
+    full = {name: f"v{i}" for i, name in enumerate(redpacket.TIMNSNEMS_FIELDS)}
+    assert redpacket.missing_timnsnems(full) == []
+
+
+def test_the_multipart_body_carries_the_page_and_the_three_parts():
+    fields = {name: f"v{i}" for i, name in enumerate(redpacket.TIMNSNEMS_FIELDS)}
+    html = "".join(
+        f'<input type="hidden" name="{name}" value="{value}">'
+        for name, value in fields.items()
+    )
+    body = redpacket.roobot_multipart(html, "B", "5", "c_1", "----b")
+    text = body.decode("utf-8")
+    assert 'name="file"; filename="captcha.txt"' in text
+    assert 'name="bot"' in text and "\r\nB\r\n" in text
+    assert 'name="msgId"' in text and "\r\n5\r\n" in text
+    assert 'name="redId"' in text and "\r\nc_1\r\n" in text
+    assert text.endswith("------b--")
+
+
+def test_an_incomplete_page_builds_no_body_at_all():
+    assert (
+        redpacket.roobot_multipart("<p>captcha page</p>", "B", "5", "c_1", "----b")
+        is None
+    )
+
+
+def test_remote_know_sends_the_page_s_pair_and_reads_the_verdict(monkeypatch):
+    seen = {}
+
+    class Answer:
+        status = 200
+        body = '{"code": "0", "message": "known"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return self.body.encode("utf-8")
+
+    def fake_urlopen(request, timeout):
+        seen["url"] = request.full_url
+        seen["data"] = request.data.decode("utf-8")
+        return Answer()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    status, code, message = redpacket.remote_know(
+        "http://panel:8080", CAPTCHA_URL, "c_9"
+    )
+    assert status == 200
+    assert code == "0"
+    assert message == "known"
+    assert seen["url"] == "http://panel:8080/api/_know"
+    assert '"captchaLink"' in seen["data"] and '"startParam"' in seen["data"]
+
+
+def test_remote_know_reports_a_failed_verdict_code(monkeypatch):
+    class Answer:
+        status = 200
+        body = '{"code": "E9", "message": "bad sig"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return self.body.encode("utf-8")
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda request, timeout: Answer())
+    status, code, message = redpacket.remote_know(
+        "http://panel:8080/", CAPTCHA_URL, "c_9"
+    )
+    assert (status, code, message) == (200, "E9", "bad sig")
+
+
+def test_remote_know_surfaces_a_network_error_as_status_zero(monkeypatch):
+    def boom(request, timeout):
+        raise OSError("no route")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    status, code, message = redpacket.remote_know(
+        "http://panel:8080", CAPTCHA_URL, "c_9"
+    )
+    assert status == 0 and code == "" and "no route" in message
+
+
+def test_a_remote_round_is_recorded_when_the_panel_verifies(
+    ctx, store, tmp_path, capsys, monkeypatch
+):
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    stats = tmp_path / "s.json"
+    config = _config(
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(stats),
+        captcha_mode="remote",
+    )
+    config.panel_base = "http://panel:8080"
+    monkeypatch.setattr(
+        redpacket, "remote_know",
+        lambda base, link, param, timeout: (200, "0", "known"),
+    )
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert f"Captcha Link: {CAPTCHA_URL}" in out
+    assert "is knowing captcha" in out
+    assert "Remote captcha verified successfully." in out
+
+
+def test_a_remote_round_without_panel_base_fails_honestly(
+    ctx, store, tmp_path, capsys
+):
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        captcha_mode="remote",
+    )
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert "Remote captcha request failed: no panel_base" in out
+
+
+def test_a_roobot_round_fetches_and_submits_the_cached_page(
+    ctx, store, tmp_path, capsys, monkeypatch
+):
+    fields = {name: f"v{i}" for i, name in enumerate(
+        redpacket.TIMNSNEMS_FIELDS
+    )}
+    page = (
+        '<form action="http://roobot/submit">'
+        + "".join(
+            f'<input type="hidden" name="{name}" value="{value}">'
+            for name, value in fields.items()
+        )
+        + "</form>"
+    )
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        captcha_mode="roobot",
+    )
+    config.panel_base = "http://panel:8080"
+    seen = {}
+
+    def fake_fetch(url, timeout):
+        seen["url"] = url
+        return page
+
+    def fake_submit(action, body, boundary, timeout):
+        seen["action"] = action
+        seen["body"] = body
+        return 200, "ok"
+
+    monkeypatch.setattr(redpacket, "urllib_request_text", fake_fetch)
+    monkeypatch.setattr(redpacket, "roobot_submit", fake_submit)
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert seen["url"] == CAPTCHA_URL
+    assert seen["action"] == "http://roobot/submit"
+    assert b'filename="captcha.txt"' in seen["body"]
+    assert "Submitted to verify. Status: 200 Result ok" in out
+
+
+def test_a_roobot_page_without_fields_is_refused_before_submitting(
+    ctx, store, tmp_path, capsys, monkeypatch
+):
+    def fake_fetch(url, timeout):
+        return "<p>captcha page</p>"
+
+    def fail_submit(*args, **kwargs):
+        raise AssertionError("submit must not be reached")
+
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        captcha_mode="roobot",
+    )
+    config.panel_base = "http://panel:8080"
+    monkeypatch.setattr(redpacket, "urllib_request_text", fake_fetch)
+    monkeypatch.setattr(redpacket, "roobot_submit", fail_submit)
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert "Missing fields for Timnsnems header." in out
+
+
+def test_a_captcha_fetch_error_is_the_page_s_own_line(
+    ctx, store, tmp_path, capsys, monkeypatch
+):
+    def boom(url, timeout):
+        raise OSError("refused")
+
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        captcha_mode="roobot",
+    )
+    monkeypatch.setattr(redpacket, "urllib_request_text", boom)
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert "Captcha fetch error: refused" in out
+
+
+def test_an_unknown_mode_is_recorded_not_crashed(ctx, store, tmp_path, capsys):
+    sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        captcha_mode="manual",
+    )
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert "Captcha Link:" in out
+    assert "captcha mode manual not handled" in out
+
+
+def test_a_round_without_captcha_mode_never_enters_the_captcha_path(
+    ctx, store, tmp_path, capsys
+):
+    sender = FakeSender({"acc1": f"please solve: {CAPTCHA_URL}"})
+    config = _config(
+        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json")
+    )
+    run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert "Captcha Link:" not in out
+    assert "Unknown message." in out

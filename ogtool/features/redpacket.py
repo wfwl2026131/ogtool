@@ -15,8 +15,23 @@ persists (``red_packet_stats.json``, with ``bot_counts`` / ``legacy_count``
 The withdrawal addresses the reference's panel protocol carries
 (``addr_bsc`` / ``addr_trx``, :1737558-1737559) are read from config.yaml's
 ``redpacket:`` section and land in the stats file - the addresses are
-configuration, not behaviour. The captcha automator (``captchaMode``,
-the roobot multipart flow) is its own page-sized piece and is not here.
+configuration, not behaviour.
+
+The captcha automator is the same grabber class (:1741191-1741265): a bot
+answer that carries a URL is a captcha link, and ``captchaMode`` picks the
+handling - ``remote`` posts ``{"captchaLink", "startParam"}`` to the
+panel's ``/api/_know`` and reads a ``{code, message}`` verdict
+(:1741203-1741209), ``roobot`` fetches the page, parses the reference's
+own hidden-input and form-action regexes (:1741210, :1741233), checks
+the Timnsnems header fields (:1741250-1741258), caches the page as a
+``.txt`` and submits it multipart with ``bot`` / ``msgId`` / ``redId``
+parts (:1741218-1741224). The Timnsnems signature itself is computed on
+the reference's compiled side - no string names the algorithm - so this
+module sends the six fields as headers with an empty signature; against
+the reference's own panel that fails honestly instead of forging. The
+flow ends at the reference's own last captcha sentence (``Submitted to
+verify.``, :1741227); what the bot does afterwards is the next grab
+round.
 """
 
 from __future__ import annotations
@@ -100,9 +115,12 @@ LINK_PATTERN = re.compile(r"https?://t\.me/([^/?]+)\?start=(.+)")
 
 #: Balance grammars (:1741294-1741302). The Dali wallet form wins first -
 #: four labelled currencies on one line - then the bare amount forms.
-DALI_PATTERN = re.compile(r"\s*(USDT|CNY|TRX|JIBA)\s*:\s*([-\d\.]+)")
-CNY_PATTERN = re.compile(r"\s*([\d\.]+)\s*CNY")
-ANY_CURRENCY_PATTERN = re.compile(r"\s*([\d\.]+)\s*([A-Za-z]+)")
+#: Amounts must start with a digit: the reference feeds these regexes only
+#: the bot's verdict lines, ogtool feeds them the whole reply, and a URL
+#: like ``t.me`` would otherwise parse a bare ``.`` as an amount.
+DALI_PATTERN = re.compile(r"\s*(USDT|CNY|TRX|JIBA)\s*:\s*(-?\d[\d\.]*)")
+CNY_PATTERN = re.compile(r"\s*(\d[\d\.]*)\s*CNY")
+ANY_CURRENCY_PATTERN = re.compile(r"\s*(\d[\d\.]*)\s*([A-Za-z]+)")
 
 #: The currencies the Dali wallet tracks, in the reference's own order
 #: (``dali_cny / dali_usdt / dali_trx / dali_jiba``).
@@ -129,10 +147,14 @@ class GrabConfig:
     #: The panel section of config.yaml: the withdrawal addresses the
     #: reference's protocol carries (``addr_bsc`` / ``addr_trx``) live here.
     panel: dict[str, Any] = field(default_factory=dict)
+    #: Base URL the captcha API hangs off (``/api/_know``). The reference
+    #: hardcodes its dev box inside the binary; here it is configuration.
+    panel_base: str = ""
 
     @classmethod
     def from_dict(cls, raw: dict, settings: Settings) -> GrabConfig:
         data = section(raw, SECTION)
+        panel = dict(settings.raw.get("redpacket") or {})
         return cls(
             link=text(data, "link", ""),
             interval=num(data, "interval", 3.0),
@@ -143,7 +165,8 @@ class GrabConfig:
             submit_interval_ms=int(num(data, "submit_interval_ms", 0)),
             stats_file=text(data, "stats_file", ""),
             account_labels=accounts_of(raw, data),
-            panel=dict(settings.raw.get("redpacket") or {}),
+            panel=panel,
+            panel_base=text(panel, "panel_base", ""),
         )
 
 
@@ -226,12 +249,170 @@ def stats_document(
     return document
 
 
-def _bot_reply(sender: Any, account: str, bot: str, wait: float) -> str:
-    """The newest text the bot sent this account, within ``wait`` seconds.
+# --- the captcha automator, inside the grabber class (:1741191-1741265) ---
 
-    A bot that answers late loses: the page moves to the next account on
-    its own interval, and so does this.
+#: A bot answer that carries a start link is a captcha link (:1741176's
+#: sibling grammar :1741201: ``https?://t\.me/[^\s?]+\?start=[^\s]+``).
+CAPTCHA_LINK_PATTERN = re.compile(r"https?://t\.me/[^\s?]+\?start=[^\s]+")
+
+#: The reference's own page-scraping grammars: hidden inputs (:1741210) and
+#: the form's action (:1741233).
+HIDDEN_INPUT_PATTERN = re.compile(
+    r'<input\b(?=[^>]*\btype="hidden")(?=[^>]*\bname="([^"]+)")'
+    r'(?=[^>]*\bvalue="([^"]*)")[^>]*>'
+)
+FORM_ACTION_PATTERN = re.compile(r'<form[^>]*\baction="([^"]+)"')
+
+#: The multipart part names of the roobot submission (:1741218-1741224):
+#: a ``file`` part whose filename is the cached ``.txt``, plus three
+#: plain parts.
+ROOBOT_PARTS = ("file", "bot", "msgId", "redId")
+
+#: The Timnsnems header fields (:1741250-1741257). The signature algorithm
+#: is compiled-side only, so the fields travel and the signature is empty.
+TIMNSNEMS_FIELDS = ("TGID", "Time", "Backid", "Fromid", "Singkey", "IFCODE")
+TIMNSNEMS_MISSING = "RedPacket[#%1]: Missing fields for Timnsnems header."
+
+
+def find_captcha_link(text: str) -> str:
+    """The first captcha link in a bot answer, or ``""``."""
+    match = CAPTCHA_LINK_PATTERN.search(text)
+    return match.group(0) if match else ""
+
+
+def parse_hidden_fields(html: str) -> dict[str, str]:
+    """The page's hidden inputs, the reference's own grammar."""
+    return {
+        name: value
+        for name, value in HIDDEN_INPUT_PATTERN.findall(html)
+    }
+
+
+def parse_form_action(html: str) -> str:
+    """The form's action URL, the reference's own grammar."""
+    match = FORM_ACTION_PATTERN.search(html)
+    return match.group(1) if match else ""
+
+
+def urllib_request_text(url: str, timeout: float) -> str:
+    """One GET, body as text; network errors raise to the caller."""
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "Mozilla/5.0"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as answer:
+        return answer.read().decode("utf-8", "replace")
+
+
+def remote_know(
+    base: str, captcha_link: str, start_param: str, timeout: float = 10.0
+) -> tuple[int, str, str]:
+    """One ``/api/_know`` call: status, code, message.
+
+    The payload is the page's own pair (:1741203 ``captchaLink`` /
+    ``startParam``); the verdict reads ``{code, message}`` (:1741205-1741209).
+    Network errors surface as status 0 with the error text.
     """
+    import json as _json
+    import urllib.error
+    import urllib.request
+
+    url = base.rstrip("/") + "/api/_know"
+    body = _json.dumps(
+        {"captchaLink": captcha_link, "startParam": start_param}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as answer:
+            status = answer.status
+            payload = answer.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        status = error.code
+        payload = error.read().decode("utf-8", "replace")
+    except Exception as error:  # noqa: BLE001 - network noise is data here
+        return 0, "", str(error)
+    try:
+        parsed = _json.loads(payload)
+    except ValueError:
+        return status, "", ""
+    code = parsed.get("code") if isinstance(parsed, dict) else None
+    message = parsed.get("message") if isinstance(parsed, dict) else ""
+    return status, str(code or ""), str(message or "")
+
+
+def missing_timnsnems(fields: dict[str, str]) -> list[str]:
+    """The Timnsnems fields a page lacks - the :1741258 refusal's cause."""
+    return [name for name in TIMNSNEMS_FIELDS if not fields.get(name)]
+
+
+def roobot_multipart(
+    html: str, bot: str, msg_id: str, red_id: str, boundary: str
+) -> bytes | None:
+    """The roobot multipart body, or ``None`` when the page is incomplete.
+
+    The reference submits the page it fetched as a ``file`` part whose
+    filename is a ``.txt`` (:1741218-1741224), with ``bot`` / ``msgId`` /
+    ``redId`` as plain parts. A page missing any Timnsnems field builds
+    nothing: the caller refuses before anything travels (:1741258).
+    """
+    fields = parse_hidden_fields(html)
+    if missing_timnsnems(fields):
+        return None
+    lines = []
+    for part in ROOBOT_PARTS:
+        lines.append(f"--{boundary}")
+        if part == "file":
+            lines.append(
+                'Content-Disposition: form-data; name="file"; '
+                'filename="captcha.txt"'
+            )
+            lines.append("Content-Type: text/plain")
+            lines.append("")
+            lines.append(html)
+        else:
+            values = {"bot": bot, "msgId": msg_id, "redId": red_id}
+            lines.append(f"Content-Disposition: form-data; name=\"{part}\"")
+            lines.append("")
+            lines.append(values[part])
+    lines.append(f"--{boundary}--")
+    return "\r\n".join(lines).encode("utf-8")
+
+
+def roobot_submit(
+    action_url: str,
+    body: bytes,
+    boundary: str,
+    timeout: float = 15.0,
+) -> tuple[int, str]:
+    """One roobot multipart POST: status, body; status 0 is a network error."""
+    import urllib.error
+    import urllib.request
+
+    request = urllib.request.Request(
+        action_url,
+        data=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as answer:
+            return answer.status, answer.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as error:
+        return error.code, error.read().decode("utf-8", "replace")
+    except Exception as error:  # noqa: BLE001 - network noise is data here
+        return 0, str(error)
+
+
+def _bot_message(sender: Any, account: str, bot: str, wait: float) -> tuple[str, Any]:
+    """The newest bot message as ``(text, id)`` - the roobot ``msgId``."""
     client = sender.client_for(account)
     deadline = time.monotonic() + max(0.5, wait)
     while True:
@@ -242,10 +423,90 @@ def _bot_reply(sender: Any, account: str, bot: str, wait: float) -> str:
         for message in messages or []:
             body = getattr(message, "message", "") or ""
             if body:
-                return body
+                return body, getattr(message, "id", 0)
         if time.monotonic() >= deadline:
-            return ""
+            return "", 0
         time.sleep(0.5)
+
+
+def _run_captcha(
+    config: GrabConfig,
+    task_id: Any,
+    captcha_link: str,
+    start_param: str,
+    bot: str = "",
+    msg_id: Any = 0,
+) -> str:
+    """One captcha round, the page's own sentences, mode by ``captchaMode``.
+
+    ``remote`` posts the page's pair to ``/api/_know`` and reads the
+    ``{code, message}`` verdict; ``roobot`` fetches the page, checks the
+    Timnsnems fields, and submits the cached page multipart. Everything
+    printed here is a reference sentence; the detail that comes back is
+    what the round's receipt carries.
+    """
+    if config.captcha_mode == "remote":
+        if not config.panel_base:
+            print(
+                f"RedPacket[#{task_id}]: Remote captcha request failed: "
+                "no panel_base"
+            )
+            return "request failed: no panel_base"
+        print(f"RedPacket: #{task_id} is knowing captcha")
+        status, code, message = remote_know(
+            config.panel_base, captcha_link, start_param,
+            timeout=max(1.0, config.refresh_interval),
+        )
+        if status == 0:
+            print(
+                f"RedPacket[#{task_id}]: Remote captcha request failed: "
+                f"{message}"
+            )
+            return f"request failed: {message}"
+        if not message:
+            print(f"RedPacket[#{task_id}]: Remote captcha invalid response.")
+            return "invalid response"
+        if code and code not in ("0",):
+            print(
+                f"RedPacket[#{task_id}]: Remote captcha failed, code {code} "
+                f"message {message}"
+            )
+            return f"code {code} message {message}"
+        print(f"RedPacket[#{task_id}]: Remote captcha verified successfully.")
+        return f"verified {message}".strip()
+    if config.captcha_mode == "roobot":
+        try:
+            page = urllib_request_text(captcha_link, config.refresh_interval)
+        except Exception as error:  # noqa: BLE001 - the page's error line
+            print(f"RedPacket[#{task_id}]: Captcha fetch error: {error}")
+            return f"fetch error: {error}"
+        if missing_timnsnems(parse_hidden_fields(page)):
+            print(
+                f"RedPacket[#{task_id}]: Missing fields for Timnsnems header."
+            )
+            return "missing timnsnems fields"
+        action = parse_form_action(page) or (
+            config.panel_base.rstrip("/") + "/api/_know"
+        )
+        boundary = "----ogtoolroobot"
+        body = roobot_multipart(page, bot, str(msg_id), start_param, boundary)
+        status, result = roobot_submit(
+            action, body, boundary, timeout=max(1.0, config.refresh_interval)
+        )
+        if status == 0:
+            print(f"RedPacket[#{task_id}]: API _know error: {result}")
+            return f"api _know error: {result}"
+        print(f"RedPacket: roobotcode response status {status}")
+        if status != 200:
+            print(f"RedPacket[#{task_id}]: API _know failed: Code {status}")
+            return f"api _know code {status}"
+        print(
+            f"RedPacket[#{task_id}]: Submitted to verify. "
+            f"Status: {status} Result {result[:80]}"
+        )
+        return f"verified status {status}"
+    print(f"RedPacket[#{task_id}]: captcha mode {config.captcha_mode} not handled")
+    return f"captcha mode {config.captcha_mode} not handled"
 
 
 def run(config: GrabConfig, ctx: RunContext) -> int:
@@ -313,14 +574,16 @@ def run(config: GrabConfig, ctx: RunContext) -> int:
             pause(ctx, config.interval)
             continue
         print(f"RedPacket: Account {label} started bot {bot}")
-        answer = _bot_reply(sender, label, bot, config.refresh_interval)
+        answer, msg_id = _bot_message(sender, label, bot, config.refresh_interval)
         retry = 1
         while not answer and retry < max(1, config.rounds):
             print(
                 f"RedPacket[#{task.id}]: Start response timeout, retrying "
                 f"({retry}/{config.rounds})..."
             )
-            answer = _bot_reply(sender, label, bot, config.refresh_interval)
+            answer, msg_id = _bot_message(
+                sender, label, bot, config.refresh_interval
+            )
             retry += 1
         if not answer:
             print(
@@ -336,6 +599,18 @@ def run(config: GrabConfig, ctx: RunContext) -> int:
                 False,
                 "START_TIMEOUT",
                 f"no answer in {config.rounds} round(s)",
+            )
+            pause(ctx, config.interval)
+            continue
+        captcha_link = find_captcha_link(answer)
+        if captcha_link and config.captcha_mode:
+            print(f"RedPacket[#{task.id}]: Captcha Link: {captcha_link}")
+            detail = _run_captcha(
+                config, task.id, captcha_link, param, bot, msg_id
+            )
+            record(
+                ctx, task, label, bot, False, "CAPTCHA_" +
+                config.captcha_mode.upper(), detail
             )
             pause(ctx, config.interval)
             continue
@@ -387,11 +662,17 @@ __all__ = [
     "GrabConfig",
     "LinkError",
     "SECTION",
+    "TIMNSNEMS_FIELDS",
     "TITLE",
     "classify_reply",
+    "find_captcha_link",
     "main",
     "parse_amounts",
+    "parse_form_action",
+    "parse_hidden_fields",
     "parse_link",
+    "remote_know",
+    "roobot_submit",
     "run",
     "stats_document",
 ]
