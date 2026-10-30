@@ -143,6 +143,12 @@ class SendResult:
     #: a forward header at all, ``forwarded_channel`` when that header points at
     #: a channel (the reference's "channel-forwarded root").
     post_flags: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    #: Who a forwarded post was originally written by, keyed by message id.
+    #: The flags above only say *that* a post was forwarded; a monitor lane
+    #: needs *who*, because the person who wrote the original is the candidate
+    #: and the account that forwarded it into the chat is not.  A channel
+    #: origin has no person behind it and is reported as an empty origin.
+    post_origins: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -797,6 +803,32 @@ def _forward_flags(message: Any) -> tuple[str, ...]:
     if type(author).__name__ == "PeerChannel":
         return ("forwarded", "forwarded_channel")
     return ("forwarded",)
+
+
+def _forward_origin(message: Any) -> str:
+    """Who wrote the original of a forwarded post, as a sender ref.
+
+    A forward header carries two different things: a *channel* it was taken
+    from, and a *person* who wrote it.  Only the second one is a person we can
+    talk to, so a channel origin is reported as an empty string - the caller
+    then knows the origin is a channel and does not have a sender to name.
+    """
+    header = getattr(message, "fwd_from", None)
+    if header is None:
+        return ""
+    if getattr(header, "channel_post", None) is not None:
+        return ""
+    author = getattr(header, "from_id", None)
+    if type(author).__name__ == "PeerChannel":
+        return ""
+    sender = getattr(header, "sender", None)
+    username = getattr(sender, "username", "") or ""
+    if username:
+        return f"@{username}"
+    user_id = getattr(author, "user_id", None)
+    if user_id:
+        return str(user_id)
+    return ""
 
 
 def _sender_ref(message: Any) -> str:
@@ -1595,7 +1627,7 @@ class TelethonSender:
                 datetime.now(UTC) - timedelta(minutes=minutes) if minutes > 0 else None
             )
             scanned = 0
-            captured: list[tuple[int, str, str, str, tuple[str, ...]]] = []
+            captured: list[tuple[int, str, str, str, tuple[str, ...], str]] = []
             for message in client.iter_messages(peer, limit=limit or None):
                 stamp = getattr(message, "date", None)
                 if cutoff is not None and stamp is not None:
@@ -1612,7 +1644,14 @@ class TelethonSender:
                 flags = _forward_flags(message)
                 if body or saved:
                     captured.append(
-                        (int(message.id), _sender_ref(message), body, saved, flags)
+                        (
+                            int(message.id),
+                            _sender_ref(message),
+                            body,
+                            saved,
+                            flags,
+                            _forward_origin(message),
+                        )
                     )
             captured.reverse()  # Telethon yields newest first
             return SendResult(
@@ -1622,13 +1661,18 @@ class TelethonSender:
                     f"{target.ref}|{sender}|{body}"
                     + (f"|{saved}" if saved else "")
                     + (f"|flags={','.join(flags)}" if flags else "")
-                    for _mid, sender, body, saved, flags in captured
+                    for _mid, sender, body, saved, flags, _origin in captured
                 ],
-                posts=[(mid, body) for mid, _sender, body, _saved, _f in captured],
+                posts=[(mid, body) for mid, _sender, body, _saved, _f, _o in captured],
                 post_flags={
                     mid: flags
-                    for mid, _sender, _body, _saved, flags in captured
+                    for mid, _sender, _body, _saved, flags, _o in captured
                     if flags
+                },
+                post_origins={
+                    mid: origin
+                    for mid, _sender, _body, _saved, _f, origin in captured
+                    if origin
                 },
             )
 
