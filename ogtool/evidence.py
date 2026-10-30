@@ -60,6 +60,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "proxy": "live",
     "puppet_chat": "write",
     "puppet_chat_v2": "write",
+    "redpacket": "write",
     "settings": "local",
     "translate": "live",
     "video_manage": "needs-data",

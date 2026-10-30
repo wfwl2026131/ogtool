@@ -40,6 +40,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "puppet_chat_v2",
         "video_manage",
         "watch_chat",
+        "redpacket",
     }
 )
 
@@ -87,6 +88,9 @@ _MODULE_NAMES = [
     "group_manage",
     # P3
     "settings",
+    # The Red Packet Grabber is its own window, neither a console nav entry
+    # nor a toolbar page (:2184543), so it takes a sheet of its own.
+    "redpacket",
 ]
 
 

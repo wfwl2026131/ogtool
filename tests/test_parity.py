@@ -58,6 +58,11 @@ TOOLBAR: tuple[tuple[str, str], ...] = (
     ("T2", "group_manage"),
 )
 
+#: The Red Packet Grabber opens from its own window, so its tag is its own.
+SHEET: tuple[tuple[str, str], ...] = (
+    ("T3", "redpacket"),
+)
+
 
 def client_labels() -> list[str]:
     """The console labels as the fork declares them, when the fork is there."""
@@ -84,12 +89,19 @@ def test_no_module_exists_that_the_console_does_not_show():
     load_defaults()
     console = [module for _index, _label, module in PARITY]
     toolbar = [module for _tag, module in TOOLBAR]
-    assert names() == sorted(console + toolbar)
+    sheet = [module for _tag, module in SHEET]
+    assert names() == sorted(console + toolbar + sheet)
 
 
 def test_every_toolbar_entry_is_registered_under_its_tag():
     load_defaults()
-    for tag, module_name in TOOLBAR:
+    for _tag, module_name in TOOLBAR:
+        assert callable(get(module_name)), module_name
+
+
+def test_every_sheet_entry_is_registered_under_its_tag():
+    load_defaults()
+    for tag, module_name in SHEET:
         assert callable(get(module_name)), module_name
         help_text = cli.HELP.get(module_name, "")
         assert help_text.startswith(f"#{tag} "), (module_name, help_text)

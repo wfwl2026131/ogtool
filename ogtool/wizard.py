@@ -41,6 +41,16 @@ MENU_CUSTOM_KEYS = {key for key, _label in MENU_CUSTOM}
 
 GENERIC: dict[str, dict] = {
     # ---- ⚠ 写入组 ----
+    "redpacket": {
+        "label": "🧧 红包抢包(start 链接逐账号抢)",
+        "steps": [
+            ("--link", "红包链接(https://t.me/bot?start=param)", "", "str"),
+            ("--interval", "账号间隔秒", "3", "int"),
+            ("--refresh-interval", "等 bot 回复秒", "8", "int"),
+            ("--rounds", "无回复重试轮数", "3", "int"),
+            ("--per-bot-limit", "单账号对单 bot 抢几个(0=不限)", "0", "int"),
+        ],
+    },
     "ai_chat": {
         "label": "🧠 AI原创炒群(生成话术发进目标群)",
         "steps": [

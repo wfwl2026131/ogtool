@@ -225,3 +225,9 @@ def test_no_write_page_is_refused_when_it_only_plans(config):
         if "writes into Telegram; add --allow-write" in text:
             wrong.append(f"{name}: refused a dry run")
     assert wrong == [], "\n".join(wrong)
+
+
+def test_redpacket_is_gated_too(config, capsys):
+    code, out = run(["redpacket", "--live"], config, capsys)
+    assert code == 2
+    assert "redpacket writes into" in out

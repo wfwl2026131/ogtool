@@ -58,6 +58,10 @@ FIXTURES: dict[str, list[str]] = {
     "mix_market": ["--targets", "@sweep"],
     "puppet_chat": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],
     "puppet_chat_v2": ["--targets", "@sweep", "--pattern", "{tmp}/lines.txt"],
+    # The grab link is mandatory by design (:1741170 "Error: Link is empty."),
+    # so the fixture carries one; without it the page exits 2 twice and the
+    # sweep would only prove the refusal line, not the plan.
+    "redpacket": ["--link", "https://t.me/DaliRedBot?start=c_sweep"],
     "video_manage": ["--link", "https://t.me/sweep"],
     "watch_chat": ["--targets", "@sweep", "--relay", "@relaychat",
                    "--simulate", "@sweep|Sender|hello world"],

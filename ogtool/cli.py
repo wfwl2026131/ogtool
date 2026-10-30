@@ -86,6 +86,7 @@ HELP = {
     "settings": "#24 设置: the global knobs, shown and validated",
     "translate": "#T1 翻译工作台: manual + batch translation with a quota",
     "group_manage": "#T2 群管家: batch transfer ownership and leave",
+    "redpacket": "#T3 红包抢包: start-link grabs with balance parsing",
 }
 
 #: The reference's second surface: pages of the right toolbar (:1740461),
@@ -95,6 +96,10 @@ HELP = {
 #: own page - the console only opens it ("Open Group Manager") - so it sits
 #: here as T2 rather than in ORDER.
 TOOLBAR_ORDER = ["translate", "group_manage"]
+
+#: The Red Packet Grabber (:1741098) opens from its own window - not a
+#: console nav entry, not a toolbar page - so it gets a sheet of its own.
+SHEET_ORDER = ["redpacket"]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -138,6 +143,12 @@ def build_parser() -> argparse.ArgumentParser:
             feature.add_argument(flag.name, **flag.to_kwargs())
 
     for name in TOOLBAR_ORDER:
+        feature = subs.add_parser(name, help=HELP.get(name, name))
+        _common(feature)
+        for flag in getattr(module(name), "FLAGS", ()):
+            feature.add_argument(flag.name, **flag.to_kwargs())
+
+    for name in SHEET_ORDER:
         feature = subs.add_parser(name, help=HELP.get(name, name))
         _common(feature)
         for flag in getattr(module(name), "FLAGS", ()):
