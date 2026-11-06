@@ -35,35 +35,54 @@ class SourceMessage:
     #: ``bot``, ``pinned``, ``admin``. Empty means "not known", which the
     #: filters treat as "do not drop on this ground".
     flags: tuple[str, ...] = ()
+    #: The display name of the person who wrote the post.  A handle only
+    #: says where to reply; the reference skips a source whose author is
+    #: hidden ("Exclude hidden-source targets", "Monitor mode: skip hidden
+    #: user G/M:%1 Name:%2"), and hidden is a name, not a handle.
+    author_name: str = ""
 
     def display(self) -> str:
         return f"{self.sender}: {self.text or self.media or '(empty)'}"
 
 
 def parse_entry(entry: str) -> SourceMessage:
-    """``peer|sender|text`` or ``peer|sender|text|media`` -> one message."""
+    """``peer|sender|text`` or ``peer|sender|text|media`` -> one message.
+
+    Trailing ``key=value`` segments carry what the capture knew beyond the
+    text: ``flags=bot,pinned`` and ``name=Alice`` (the author's display
+    name).  Older lines with a single ``flags=`` segment still parse the
+    same way.
+    """
     text = entry.strip()
     if not text:
         raise ConfigError("empty source message")
     parts = text.split("|")
     if len(parts) < 3:
-        raise ConfigError(
-            f"source message needs peer|sender|text, got {entry!r}"
-        )
+        raise ConfigError(f"source message needs peer|sender|text, got {entry!r}")
     peer, sender, body = (part.strip() for part in parts[:3])
     media = parts[3].strip() if len(parts) > 3 else ""
     flags: tuple[str, ...] = ()
-    if len(parts) > 4:
-        # The fifth segment is the flag list: ``flags=bot,pinned``.
-        tail = parts[4].strip()
+    author_name = ""
+    for tail in parts[4:]:
+        tail = tail.strip()
         if tail.startswith("flags="):
-            flags = tuple(part.strip().lower()
-                          for part in tail[len("flags="):].split(",")
-                          if part.strip())
+            flags = tuple(
+                part.strip().lower()
+                for part in tail[len("flags=") :].split(",")
+                if part.strip()
+            )
+        elif tail.startswith("name="):
+            author_name = tail[len("name=") :].strip()
     if not peer:
         raise ConfigError(f"source message without a peer: {entry!r}")
-    return SourceMessage(peer=peer, sender=sender, text=body, media=media,
-                         flags=flags)
+    return SourceMessage(
+        peer=peer,
+        sender=sender,
+        text=body,
+        media=media,
+        flags=flags,
+        author_name=author_name,
+    )
 
 
 def parse_many(entries: list[str] | tuple[str, ...]) -> list[SourceMessage]:
@@ -98,9 +117,12 @@ def from_config(data: dict, key: str = "messages") -> list[SourceMessage]:
 def synthetic(peer: str, count: int, *, prefix: str = "post") -> list[SourceMessage]:
     """Stand-in posts, so the comment page has something to poll offline."""
     count = max(0, int(count))
-    return [SourceMessage(peer=peer, sender="channel", text=f"{prefix} {index}",
-                          message_id=index)
-            for index in range(1, count + 1)]
+    return [
+        SourceMessage(
+            peer=peer, sender="channel", text=f"{prefix} {index}", message_id=index
+        )
+        for index in range(1, count + 1)
+    ]
 
 
 def keep(message: SourceMessage, keywords: list[str]) -> bool:
@@ -114,8 +136,7 @@ def by_peer(messages: list[SourceMessage], peers: list[str]) -> list[SourceMessa
     if not peers:
         return list(messages)
     wanted = {peer.casefold() for peer in peers}
-    return [message for message in messages
-            if message.peer.casefold() in wanted]
+    return [message for message in messages if message.peer.casefold() in wanted]
 
 
 def replace_keywords(text: str, rules: list[tuple[str, str]]) -> str:
@@ -136,9 +157,7 @@ def parse_replacements(entries: list[str]) -> list[tuple[str, str]]:
         if not line:
             continue
         if "=" not in line:
-            raise ConfigError(
-                f"replacement needs left=right, got {line!r}"
-            )
+            raise ConfigError(f"replacement needs left=right, got {line!r}")
         left, right = line.split("=", 1)
         if not left.strip():
             raise ConfigError(f"replacement without a left side: {line!r}")
