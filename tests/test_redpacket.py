@@ -401,7 +401,8 @@ def test_a_remote_round_is_recorded_when_the_panel_verifies(
     )
     config.panel_base = "http://panel:8080"
     monkeypatch.setattr(
-        redpacket, "remote_know",
+        redpacket,
+        "remote_know",
         lambda base, link, param, timeout: (200, "0", "known"),
     )
     run(config, _live_ctx(ctx, sender))
@@ -411,12 +412,12 @@ def test_a_remote_round_is_recorded_when_the_panel_verifies(
     assert "Remote captcha verified successfully." in out
 
 
-def test_a_remote_round_without_panel_base_fails_honestly(
-    ctx, store, tmp_path, capsys
-):
+def test_a_remote_round_without_panel_base_fails_honestly(ctx, store, tmp_path, capsys):
     sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
     config = _config(
-        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
         captcha_mode="remote",
     )
     run(config, _live_ctx(ctx, sender))
@@ -427,9 +428,7 @@ def test_a_remote_round_without_panel_base_fails_honestly(
 def test_a_roobot_round_fetches_and_submits_the_cached_page(
     ctx, store, tmp_path, capsys, monkeypatch
 ):
-    fields = {name: f"v{i}" for i, name in enumerate(
-        redpacket.TIMNSNEMS_FIELDS
-    )}
+    fields = {name: f"v{i}" for i, name in enumerate(redpacket.TIMNSNEMS_FIELDS)}
     page = (
         '<form action="http://roobot/submit">'
         + "".join(
@@ -440,7 +439,9 @@ def test_a_roobot_round_fetches_and_submits_the_cached_page(
     )
     sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
     config = _config(
-        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
         captcha_mode="roobot",
     )
     config.panel_base = "http://panel:8080"
@@ -476,7 +477,9 @@ def test_a_roobot_page_without_fields_is_refused_before_submitting(
 
     sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
     config = _config(
-        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
         captcha_mode="roobot",
     )
     config.panel_base = "http://panel:8080"
@@ -495,7 +498,9 @@ def test_a_captcha_fetch_error_is_the_page_s_own_line(
 
     sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
     config = _config(
-        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
         captcha_mode="roobot",
     )
     monkeypatch.setattr(redpacket, "urllib_request_text", boom)
@@ -507,7 +512,9 @@ def test_a_captcha_fetch_error_is_the_page_s_own_line(
 def test_an_unknown_mode_is_recorded_not_crashed(ctx, store, tmp_path, capsys):
     sender = FakeSender({"acc1": f"solve {CAPTCHA_URL} now"})
     config = _config(
-        "https://t.me/B?start=c_9", ["acc1"], stats_file=str(tmp_path / "s.json"),
+        "https://t.me/B?start=c_9",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
         captcha_mode="manual",
     )
     run(config, _live_ctx(ctx, sender))
@@ -527,3 +534,105 @@ def test_a_round_without_captcha_mode_never_enters_the_captcha_path(
     out = capsys.readouterr().out
     assert "Captcha Link:" not in out
     assert "Unknown message." in out
+
+
+# --- the panel's data/version block (:1737557-1737575) -----------------
+
+
+def test_parse_version_info_reads_the_nested_block():
+    from ogtool.features.redpacket import parse_version_info
+
+    payload = json.dumps(
+        {
+            "code": 0,
+            "data": {
+                "version": {
+                    "addr_bsc": "0xabc",
+                    "addr_trx": "TXYz",
+                    "client_tip": "tip",
+                    "forbidden": True,
+                    "force_update": False,
+                    "max_team": 5,
+                    "seat_size": 3,
+                    "ver_chg_log": "changes",
+                    "core_version": "1.2.3",
+                }
+            },
+        }
+    )
+    info = parse_version_info(payload)
+    assert info.ok
+    assert info.version == "1.2.3"
+    assert info.forbidden is True
+    assert info.force_update is False
+    assert info.fields["addr_bsc"] == "0xabc"
+    assert info.fields["client_tip"] == "tip"
+    assert "max_team" in info.fields
+
+
+def test_a_bad_answer_is_not_a_connection():
+    from ogtool.features.redpacket import parse_version_info
+
+    info = parse_version_info("not json", status=502)
+    assert not info.ok
+    assert info.status == 502
+    assert info.fields == {}
+
+
+def test_the_stats_document_carries_the_whole_version_block():
+    panel = {
+        "addr_bsc": "0xabc",
+        "client_tip": "tip",
+        "max_team": 5,
+        "referral_discount": 10,
+        "ver_chg_log": "changes",
+        "core_version": "1.2.3",
+    }
+    document = stats_document(GrabConfig(), panel, {}, {})
+    assert document["client_tip"] == "tip"
+    assert document["max_team"] == 5
+    assert document["referral_discount"] == 10
+    assert document["ver_chg_log"] == "changes"
+    assert document["core_version"] == "1.2.3"
+
+
+def test_sync_service_info_prints_the_reference_lines(monkeypatch, capsys):
+    from ogtool.features import redpacket
+
+    info = redpacket.VersionInfo(
+        ok=True,
+        status=200,
+        version="1.2.3",
+        raw={"force_update": True, "client_tip": "tip"},
+    )
+    monkeypatch.setattr(redpacket, "get_version_info", lambda *a, **k: info)
+    config = GrabConfig(panel_base="http://panel", sync_service_info=True)
+    assert redpacket.sync_service_info(config) is info
+    out = capsys.readouterr().out
+    assert "Server connected successfully, version: 1.2.3" in out
+    assert "trigger download process" in out
+
+
+def test_a_forbidden_answer_stops_the_round(ctx, store, tmp_path, monkeypatch, capsys):
+    from ogtool.features import redpacket
+
+    info = redpacket.VersionInfo(
+        ok=True,
+        status=200,
+        version="1.2.3",
+        raw={"forbidden": True},
+    )
+    monkeypatch.setattr(redpacket, "get_version_info", lambda *a, **k: info)
+    config = _config(
+        "https://t.me/B?start=x",
+        ["acc1"],
+        stats_file=str(tmp_path / "s.json"),
+        panel_base="http://panel",
+        sync_service_info=True,
+    )
+    sender = FakeSender({})
+    code = run(config, _live_ctx(ctx, sender))
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "Authorization expired" in out
+    assert sender.starts == []

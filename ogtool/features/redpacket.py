@@ -12,10 +12,13 @@ the unfinished-account line (:1741184), and the stats file the page
 persists (``red_packet_stats.json``, with ``bot_counts`` / ``legacy_count``
 / ``count`` and the Dali wallet keys).
 
-The withdrawal addresses the reference's panel protocol carries
-(``addr_bsc`` / ``addr_trx``, :1737558-1737559) are read from config.yaml's
-``redpacket:`` section and land in the stats file - the addresses are
-configuration, not behaviour.
+The panel's ``data/version`` block (:1737557-1737575) is read from
+config.yaml's ``redpacket:`` section and lands in the stats file: the two
+withdrawal addresses (``addr_bsc`` / ``addr_trx``), ``client_tip``, the
+authorization verdicts (``forbidden`` / ``force_update`` / ``ask_update``),
+the team/referral keys and the update changelog.  ``--sync-service-info``
+calls ``/get_version_info`` (:1737546) before the grab round and prints the
+reference's own connection verdicts.
 
 The captcha automator is the same grabber class (:1741191-1741265): a bot
 answer that carries a URL is a captcha link, and ``captchaMode`` picks the
@@ -107,6 +110,13 @@ FLAGS = (
         str,
         "where the page's red_packet_stats.json is written",
     ),
+    Flag(
+        "--sync-service-info/--no-sync-service-info",
+        "sync_service_info",
+        None,
+        "call the panel's /get_version_info before the grab round",
+        action="bool_pair",
+    ),
 )
 
 #: The link grammar is the reference's own (:1741174): bot username, then
@@ -150,6 +160,9 @@ class GrabConfig:
     #: Base URL the captcha API hangs off (``/api/_know``). The reference
     #: hardcodes its dev box inside the binary; here it is configuration.
     panel_base: str = ""
+    #: ``syncServiceInfo`` (:2217754): before the grab round, ask the panel
+    #: for its ``data/version`` block and print the connection verdicts.
+    sync_service_info: bool = False
 
     @classmethod
     def from_dict(cls, raw: dict, settings: Settings) -> GrabConfig:
@@ -167,6 +180,7 @@ class GrabConfig:
             account_labels=accounts_of(raw, data),
             panel=panel,
             panel_base=text(panel, "panel_base", ""),
+            sync_service_info=bool(data.get("sync_service_info", False)),
         )
 
 
@@ -227,6 +241,32 @@ def classify_reply(text: str, amounts: dict[str, float]) -> tuple[str, str]:
     return "unknown", " ".join(text.split())[:120]
 
 
+#: The panel's ``data/version`` block (:1737557-1737575).  The two chain
+#: addresses were the only ones the stats file carried; the rest of the
+#: same response - the client tip, the authorization verdicts, the team
+#: seats and the update changelog - belong to the same place.
+PANEL_KEYS = (
+    "addr_bsc",
+    "addr_trx",
+    "client_tip",
+    "forbidden",
+    "force_update",
+    "ask_update",
+    "max_team",
+    "referral_discount",
+    "referral_threshold",
+    "seat_size",
+    "ver_chg_log",
+    "ver_hash",
+    "ver_link",
+    "worker_seat_max",
+    "worker_seat_min",
+    "core_version",
+    "corev_up_pct",
+    "extra_para",
+)
+
+
 def stats_document(
     config: GrabConfig,
     panel: dict[str, Any],
@@ -241,10 +281,9 @@ def stats_document(
     }
     for key in DALI_KEYS:
         document[f"dali_{key.lower()}"] = wallet.get(key, 0.0)
-    if panel.get("addr_bsc"):
-        document["addr_bsc"] = str(panel["addr_bsc"])
-    if panel.get("addr_trx"):
-        document["addr_trx"] = str(panel["addr_trx"])
+    for key in PANEL_KEYS:
+        if panel.get(key) not in (None, ""):
+            document[key] = panel[key]
     document["captcha_mode"] = config.captcha_mode
     return document
 
@@ -282,10 +321,7 @@ def find_captcha_link(text: str) -> str:
 
 def parse_hidden_fields(html: str) -> dict[str, str]:
     """The page's hidden inputs, the reference's own grammar."""
-    return {
-        name: value
-        for name, value in HIDDEN_INPUT_PATTERN.findall(html)
-    }
+    return {name: value for name, value in HIDDEN_INPUT_PATTERN.findall(html)}
 
 
 def parse_form_action(html: str) -> str:
@@ -321,9 +357,9 @@ def remote_know(
     import urllib.request
 
     url = base.rstrip("/") + "/api/_know"
-    body = _json.dumps(
-        {"captchaLink": captcha_link, "startParam": start_param}
-    ).encode("utf-8")
+    body = _json.dumps({"captchaLink": captcha_link, "startParam": start_param}).encode(
+        "utf-8"
+    )
     request = urllib.request.Request(
         url,
         data=body,
@@ -346,6 +382,104 @@ def remote_know(
     code = parsed.get("code") if isinstance(parsed, dict) else None
     message = parsed.get("message") if isinstance(parsed, dict) else ""
     return status, str(code or ""), str(message or "")
+
+
+@dataclass
+class VersionInfo:
+    """The panel's ``/get_version_info`` answer, ``data/version`` block.
+
+    :1737546 is the endpoint; :1737557-1737575 name the fields.  A dry run
+    never calls the network, so the caller can pass a parsed dict straight
+    in through :func:`parse_version_info`.
+    """
+
+    ok: bool = False
+    status: int = 0
+    version: str = ""
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def forbidden(self) -> bool:
+        return bool(self.raw.get("forbidden"))
+
+    @property
+    def force_update(self) -> bool:
+        return bool(self.raw.get("force_update"))
+
+    @property
+    def ask_update(self) -> bool:
+        return bool(self.raw.get("ask_update"))
+
+    @property
+    def fields(self) -> dict[str, Any]:
+        return {key: self.raw[key] for key in PANEL_KEYS if key in self.raw}
+
+
+def parse_version_info(payload: str, status: int = 200) -> VersionInfo:
+    """Read the reference's ``data/version`` answer without touching a socket."""
+    import json as _json
+
+    try:
+        parsed = _json.loads(payload)
+    except ValueError:
+        return VersionInfo(ok=False, status=status)
+    if not isinstance(parsed, dict):
+        return VersionInfo(ok=False, status=status)
+    data = parsed.get("data")
+    block = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(block, dict):
+        block = parsed.get("version") if isinstance(parsed.get("version"), dict) else {}
+    version = str(block.get("core_version") or parsed.get("version") or "")
+    return VersionInfo(
+        ok=status == 200,
+        status=status,
+        version=version,
+        raw=dict(block),
+    )
+
+
+def get_version_info(base: str, timeout: float = 10.0) -> VersionInfo:
+    """``syncServiceInfo``: one GET of the panel's version endpoint."""
+    import urllib.error
+    import urllib.request
+
+    url = base.rstrip("/") + "/get_version_info"
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "OfficegramDesktop"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as answer:
+            return parse_version_info(
+                answer.read().decode("utf-8", "replace"), int(answer.status)
+            )
+    except urllib.error.HTTPError as error:
+        return parse_version_info(
+            error.read().decode("utf-8", "replace"), int(error.code)
+        )
+    except Exception as error:  # noqa: BLE001 - the error line names it
+        print(f"Server response error, code: 0 msg: {error}")
+        return VersionInfo(ok=False, status=0)
+
+
+def sync_service_info(config: GrabConfig) -> VersionInfo:
+    """The page's sync round, with the reference's own log lines."""
+    if not config.panel_base:
+        print("Server response error, code: 0 msg: no panel_base")
+        return VersionInfo(ok=False, status=0)
+    info = get_version_info(
+        config.panel_base, timeout=max(1.0, config.refresh_interval)
+    )
+    if info.ok:
+        print(f"Server connected successfully, version: {info.version or '-'}")
+        if info.forbidden:
+            print("Authorization expired")
+        if info.force_update:
+            print("trigger download process ")
+    else:
+        print(f"Server response error, code: {info.status}")
+    return info
 
 
 def missing_timnsnems(fields: dict[str, str]) -> list[str]:
@@ -371,15 +505,14 @@ def roobot_multipart(
         lines.append(f"--{boundary}")
         if part == "file":
             lines.append(
-                'Content-Disposition: form-data; name="file"; '
-                'filename="captcha.txt"'
+                'Content-Disposition: form-data; name="file"; filename="captcha.txt"'
             )
             lines.append("Content-Type: text/plain")
             lines.append("")
             lines.append(html)
         else:
             values = {"bot": bot, "msgId": msg_id, "redId": red_id}
-            lines.append(f"Content-Disposition: form-data; name=\"{part}\"")
+            lines.append(f'Content-Disposition: form-data; name="{part}"')
             lines.append("")
             lines.append(values[part])
     lines.append(f"--{boundary}--")
@@ -448,20 +581,18 @@ def _run_captcha(
     if config.captcha_mode == "remote":
         if not config.panel_base:
             print(
-                f"RedPacket[#{task_id}]: Remote captcha request failed: "
-                "no panel_base"
+                f"RedPacket[#{task_id}]: Remote captcha request failed: no panel_base"
             )
             return "request failed: no panel_base"
         print(f"RedPacket: #{task_id} is knowing captcha")
         status, code, message = remote_know(
-            config.panel_base, captcha_link, start_param,
+            config.panel_base,
+            captcha_link,
+            start_param,
             timeout=max(1.0, config.refresh_interval),
         )
         if status == 0:
-            print(
-                f"RedPacket[#{task_id}]: Remote captcha request failed: "
-                f"{message}"
-            )
+            print(f"RedPacket[#{task_id}]: Remote captcha request failed: {message}")
             return f"request failed: {message}"
         if not message:
             print(f"RedPacket[#{task_id}]: Remote captcha invalid response.")
@@ -481,9 +612,7 @@ def _run_captcha(
             print(f"RedPacket[#{task_id}]: Captcha fetch error: {error}")
             return f"fetch error: {error}"
         if missing_timnsnems(parse_hidden_fields(page)):
-            print(
-                f"RedPacket[#{task_id}]: Missing fields for Timnsnems header."
-            )
+            print(f"RedPacket[#{task_id}]: Missing fields for Timnsnems header.")
             return "missing timnsnems fields"
         action = parse_form_action(page) or (
             config.panel_base.rstrip("/") + "/api/_know"
@@ -547,6 +676,12 @@ def run(config: GrabConfig, ctx: RunContext) -> int:
             print(f"PLAN {label} -> /start {param[:24]}… bot {bot}")
         close_task(ctx, task, ok=0, failed=0)
         return 0
+    if config.sync_service_info:
+        info = sync_service_info(config)
+        config.panel.update(info.fields)
+        if info.forbidden:
+            close_task(ctx, task, ok=0, failed=1)
+            return 2
     print(f"Red Packet Grabber started with {len(config.account_labels)} accounts.")
     print(
         f"RedPacket: Started grabbing. Bot: {bot}, Param: {param}, "
@@ -581,9 +716,7 @@ def run(config: GrabConfig, ctx: RunContext) -> int:
                 f"RedPacket[#{task.id}]: Start response timeout, retrying "
                 f"({retry}/{config.rounds})..."
             )
-            answer, msg_id = _bot_message(
-                sender, label, bot, config.refresh_interval
-            )
+            answer, msg_id = _bot_message(sender, label, bot, config.refresh_interval)
             retry += 1
         if not answer:
             print(
@@ -605,12 +738,15 @@ def run(config: GrabConfig, ctx: RunContext) -> int:
         captcha_link = find_captcha_link(answer)
         if captcha_link and config.captcha_mode:
             print(f"RedPacket[#{task.id}]: Captcha Link: {captcha_link}")
-            detail = _run_captcha(
-                config, task.id, captcha_link, param, bot, msg_id
-            )
+            detail = _run_captcha(config, task.id, captcha_link, param, bot, msg_id)
             record(
-                ctx, task, label, bot, False, "CAPTCHA_" +
-                config.captcha_mode.upper(), detail
+                ctx,
+                task,
+                label,
+                bot,
+                False,
+                "CAPTCHA_" + config.captcha_mode.upper(),
+                detail,
             )
             pause(ctx, config.interval)
             continue
