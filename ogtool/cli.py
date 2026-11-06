@@ -598,7 +598,7 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     passkey.add_argument("--accounts", nargs="*", default=None)
     passkey.add_argument(
         "--out-dir",
-        default="",
+        default=None,
         help="folder the .passkey files are written to",
     )
     passkey.add_argument("--dry-run", action="store_true", help="the default")
@@ -651,8 +651,14 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
     # The write-account actions are gated on --allow-write, so the flag has to
     # exist on the subparsers that the gate names - it never did for the
     # accounts family, and the refusal asked for a flag argparse refused.
-    for writer in ("password", "passkey", "passkey-login", "spambot", "logout",
-                 "exit-frozen"):
+    for writer in (
+        "password",
+        "passkey",
+        "passkey-login",
+        "spambot",
+        "logout",
+        "exit-frozen",
+    ):
         account_subs.choices[writer].add_argument(
             "--allow-write",
             action="store_true",
@@ -1435,16 +1441,25 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             # The password page's second task: one metadata passkey file per
             # account (:1737294). The folder is checked before anything opens,
             # and an empty pool is the page's own refusal (:1737293).
-            out_dir = args.out_dir or str(Path(settings.data_dir) / "passkeys")
+            out_dir = (
+                args.out_dir
+                if args.out_dir is not None
+                else str(Path(settings.data_dir) / "passkeys")
+            )
             if args.live and store.task_running("passkey", "accounts", within_sec=600):
                 print("Passkey export task is running, please stop it first.")
                 return 2
             accounts = pool.resolve(args.accounts)
             if not accounts:
                 print("Please select at least one account.")
+                print("No selected accounts for passkey export.")
+                return 2
+            if not out_dir:
+                print("Passkey record output is missing.")
                 return 2
             if args.live:
                 print("Passkey export task started.")
+                print(f"Passkey export directory: {out_dir}")
                 print(
                     "System WebAuthn is unavailable in this build; "
                     "exporting metadata-only passkey files."
@@ -1454,6 +1469,7 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
                 print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
             done = sum(1 for _, ok, _ in rows if ok)
             print(f"Passkey export finished. Success: {done}/{len(rows)}")
+            print("Metadata-only export. Private key is not available in this build.")
             _account_rows_task(settings, store, "passkey", rows, live=bool(args.live))
             return 0 if done == len(rows) else 1
         if args.action == "passkey-login":
@@ -1603,9 +1619,7 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             for label, ok, detail in rows:
                 print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
             done = sum(1 for _, ok, _ in rows if ok)
-            print(
-                f"Exit frozen accounts finished. Success: {done}/{len(rows)}"
-            )
+            print(f"Exit frozen accounts finished. Success: {done}/{len(rows)}")
             _account_rows_task(
                 settings, store, "exit-frozen", rows, live=bool(args.live)
             )

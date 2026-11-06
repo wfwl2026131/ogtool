@@ -153,3 +153,91 @@ def test_a_dry_run_prints_no_banners(capsys, settings, store, monkeypatch):
     assert "Passkey export task started." not in out
     assert "Passkey export finished. Success: 1/1" in out
     assert code == 0
+
+
+def test_the_page_names_the_export_directory_and_the_metadata_boundary(
+    capsys, settings, store, tmp_path, monkeypatch
+):
+    from ogtool import cli
+
+    pool = AccountPool(settings, store)
+    pool.add_phone("+8613800000007", "acc1")
+    monkeypatch.setattr(cli, "_Pool", lambda *a, **k: pool)
+    out = tmp_path / "passkeys"
+    code = cli.run(
+        [
+            "--config",
+            str(settings.path),
+            "accounts",
+            "passkey",
+            "--accounts",
+            "acc1",
+            "--out-dir",
+            str(out),
+            "--live",
+            "--allow-write",
+        ]
+    )
+    output = capsys.readouterr().out
+    assert f"Passkey export directory: {out}" in output
+    assert (
+        "Metadata-only export. Private key is not available in this build."
+    ) in output
+    assert code == 0
+
+
+def test_an_empty_pool_also_names_the_passkey_refusal(capsys, settings, store):
+    from ogtool import cli
+
+    code = cli.run(
+        [
+            "--config",
+            str(settings.path),
+            "accounts",
+            "passkey",
+            "--live",
+            "--allow-write",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "No selected accounts for passkey export." in out
+    assert code == 2
+
+
+def test_an_explicit_empty_output_dir_is_the_record_refusal(
+    capsys, settings, store, monkeypatch
+):
+    from ogtool import cli
+
+    pool = AccountPool(settings, store)
+    pool.add_phone("+8613800000007", "acc1")
+    monkeypatch.setattr(cli, "_Pool", lambda *a, **k: pool)
+    code = cli.run(
+        [
+            "--config",
+            str(settings.path),
+            "accounts",
+            "passkey",
+            "--accounts",
+            "acc1",
+            "--out-dir",
+            "",
+            "--live",
+            "--allow-write",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert "Passkey record output is missing." in out
+    assert code == 2
+    assert "Passkey export task started." not in out
+
+
+def test_a_write_failure_uses_the_reference_line(pool, tmp_path, monkeypatch):
+    import ogtool.accounts as accounts
+
+    def _boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(accounts, "_write_passkey", _boom)
+    rows = pool.passkeys(["acc1"], tmp_path / "passkeys", live=True)
+    assert rows == [("acc1", False, "Failed to write passkey file: disk full")]

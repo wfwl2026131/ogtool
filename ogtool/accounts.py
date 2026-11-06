@@ -335,15 +335,21 @@ class AccountPool:
                 )
                 continue
             probe = self.spambot(
-                [account.label], live=True, wait=wait,
+                [account.label],
+                live=True,
+                wait=wait,
                 client_factory=client_factory,
             )
-            label, kind, ok, detail = probe[0] if probe else (account.label, "", False, "")
+            label, kind, ok, detail = (
+                probe[0] if probe else (account.label, "", False, "")
+            )
             if not ok:
                 rows.append((label, False, detail))
                 continue
             if kind != "frozen":
-                rows.append((label, True, f"not frozen ({headline(kind) or 'unclassified'})"))
+                rows.append(
+                    (label, True, f"not frozen ({headline(kind) or 'unclassified'})")
+                )
                 continue
             phone = account.phone or "unknown phone"
             print(f"Detected frozen account #{index + 1} (index {index})")
@@ -355,8 +361,7 @@ class AccountPool:
         print(f"Starting exit frozen accounts routine ({len(frozen)} accounts)")
         for index, account, phone in frozen:
             print(
-                f"Processing frozen account #{index + 1} "
-                f"(index {index}, phone {phone})"
+                f"Processing frozen account #{index + 1} (index {index}, phone {phone})"
             )
             if not live:
                 continue
@@ -386,9 +391,7 @@ class AccountPool:
                     )
                 )
             except OSError as error:
-                rows.append(
-                    (account.label, False, f"{type(error).__name__}: {error}")
-                )
+                rows.append((account.label, False, f"{type(error).__name__}: {error}"))
         if live:
             print("Exit frozen accounts completed")
         return rows
@@ -633,7 +636,9 @@ class AccountPool:
                     )
                 )
             except OSError as error:
-                rows.append((account.label, False, f"{type(error).__name__}: {error}"))
+                rows.append(
+                    (account.label, False, f"Failed to write passkey file: {error}")
+                )
         return rows
 
 
