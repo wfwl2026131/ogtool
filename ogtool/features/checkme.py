@@ -4,10 +4,13 @@ The reference client polls a small verification service after each join:
 ``POST <checkmeBaseUrl>/api/__checkme__`` (og-strings.txt :1739935) with the
 join facts, and follows the decision the answer carries. This module is that
 client: the request keys the reference's own ``CheckmeDecisionClient`` sends
-(:1739936-1739957), the answer keys it reads (:1739958-1739980), the six-way
-decision it obeys (``STOP`` / ``GIVEUP`` / ``WAIT`` / ``NEED_ACTION`` /
-``NEED_MANUAL`` / ``UNKNOWN``), the three give-up lines (max round, expired
-``state_token``, a failed action), and the log lines verbatim.
+(:1739936-1739957), the full answer vocabulary it reads (:1739958-1739981 -
+``trigger`` / ``next`` / ``peer_kind`` / ``can_send_text`` /
+``global_mute_text`` / ``bot_captcha`` / ``startapp_payload`` among them),
+the six-way decision it obeys (``STOP`` / ``GIVEUP`` / ``WAIT`` /
+``NEED_ACTION`` / ``NEED_MANUAL`` / ``UNKNOWN``), the three give-up lines
+(max round, expired ``state_token``, a failed action), the passive-observe
+and captcha manager lines, and the log lines verbatim.
 
 The service itself is not ours and is never contacted by a dry run: the whole
 chain runs only when ``checkme.enabled`` and a ``base_url`` are configured,
@@ -52,6 +55,97 @@ ACTION_KINDS = (
     "FETCH_LATEST_MEDIA",
     "FETCH_LATEST_MESSAGES",
 )
+
+#: The answer's full protocol vocabulary (:1739958-1739981).  The client
+#: used to read only ``checkme`` / ``reason`` / ``state_token`` / ``ttl_sec`` /
+#: ``need_resubmit`` / ``min_delay_ms`` / ``delay_ms`` / ``actions``; the
+#: passive-observe and captcha keys below are the rest of the same block.
+ANSWER_KEYS = (
+    "checkme",
+    "state_token",
+    "ttl_sec",
+    "reason",
+    "actions",
+    "need_resubmit",
+    "min_delay_ms",
+    "trigger",
+    "next",
+    "peer_kind",
+    "can_send_text",
+    "global_mute_text",
+    "bot_captcha",
+    "delay_ms",
+    "lookback_sec",
+    "auto_click_single_callback",
+    "startapp_payload",
+)
+
+#: The three keys the reference's permissions snapshot prints (:1740022).
+PERMISSION_KEYS = ("global_mute_text", "can_send_text", "can_send_photo")
+
+
+@dataclass
+class CheckmeAnswer:
+    """One answer, with the protocol's keys read as fields.
+
+    ``bot_captcha`` carries its own ``delay_ms`` / ``lookback_sec`` /
+    ``auto_click_single_callback`` triple (:1739971-1739974); ``next`` and
+    ``trigger`` decide whether the passive observe window is extended.
+    """
+
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.raw.get(key, default)
+
+    @property
+    def decision(self) -> str:
+        return str(self.get("checkme", "")).upper()
+
+    @property
+    def reason(self) -> str:
+        return str(self.get("reason", ""))
+
+    @property
+    def token(self) -> str:
+        return str(self.get("state_token", "") or "")
+
+    @property
+    def ttl(self) -> float | None:
+        value = self.get("ttl_sec")
+        return float(value) if value is not None else None
+
+    @property
+    def permissions(self) -> dict[str, Any]:
+        return {key: self.get(key) for key in PERMISSION_KEYS if key in self.raw}
+
+    @property
+    def captcha(self) -> dict[str, Any]:
+        value = self.get("bot_captcha")
+        return value if isinstance(value, dict) else {}
+
+    @property
+    def observe_remain(self) -> float:
+        """The window the answer asks for, from ``next`` or the top level."""
+        nxt = self.get("next")
+        value = self.get("lookback_sec")
+        if isinstance(nxt, dict) and nxt.get("lookback_sec") is not None:
+            value = nxt.get("lookback_sec")
+        try:
+            return max(0.0, float(value or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @property
+    def passive(self) -> bool:
+        trigger = str(self.get("trigger", "")).casefold()
+        return (
+            trigger in ("passive", "passivemode", "observe") or self.observe_remain > 0
+        )
+
+    def keys_seen(self) -> tuple[str, ...]:
+        """Which of :data:`ANSWER_KEYS` this answer actually carried."""
+        return tuple(key for key in ANSWER_KEYS if key in self.raw)
 
 
 @dataclass
@@ -112,6 +206,61 @@ class CheckmeClient:
     task_id: int
     executor: CheckmeExecutor = field(default_factory=CheckmeExecutor)
     join_source: str = "batch_join"
+    observe_remain: float = 0.0
+    bot_evidence: int = 0
+
+    def _observe(self, answer: CheckmeAnswer, trace_id: str) -> None:
+        """The answer's passive-observe / captcha side of the protocol.
+
+        :1740022 permissions snapshot, :1740010 the extended observe window,
+        :1740061 the fetch_latest_messages start, :1740059 click_button_verify
+        and :1740025 the cached bot evidence line.  None of these changes the
+        decision; they are the manager's own view of the same answer.
+        """
+        permissions = answer.permissions
+        if permissions:
+            print(
+                f"CheckmeGroupMgr[#{self.task_id} id={self.task_id}]: "
+                f"permissions snapshot: globalMuteText="
+                f"{permissions.get('global_mute_text', '-')} "
+                f"canSendText={permissions.get('can_send_text', '-')} "
+                f"canSendPhoto={permissions.get('can_send_photo', '-')}."
+            )
+        if answer.passive:
+            old = self.observe_remain
+            self.observe_remain = max(old, answer.observe_remain)
+            print(
+                f"CheckmeGroupMgr[#{self.task_id}]: extend passive observe "
+                f"window identifier={trace_id} "
+                f"remain={self.observe_remain:.0f}s(old={old:.0f}s)"
+            )
+        captcha = answer.captcha
+        if captcha:
+            delay_ms = captcha.get("delay_ms") or 0
+            lookback = captcha.get("lookback_sec") or answer.observe_remain
+            auto = bool(captcha.get("auto_click_single_callback"))
+            print(
+                f"CheckmeGroupMgr[#{self.task_id} id={self.task_id}]: "
+                f"fetch_latest_messages start target_peer={self.peer} "
+                f"identifier={trace_id} delay_ms={float(delay_ms):.0f} "
+                f"lookback_sec={float(lookback):.0f} auto_click={int(auto)}."
+            )
+            if auto:
+                print(
+                    f"CheckmeGroupMgr[#{self.task_id}]: click_button_verify "
+                    f"group_link={self.peer} "
+                    f"bot_username={captcha.get('bot_username', '-')} "
+                    f"message_id={captcha.get('message_id', '-')} "
+                    f"button={captcha.get('button', '-')}"
+                )
+            else:
+                self.bot_evidence += int(captcha.get("messages") or 0)
+                print(
+                    f"CheckmeGroupMgr[#{self.task_id} id={self.task_id}]: "
+                    f"bot_captcha: reuse cached bot evidence "
+                    f"messages={self.bot_evidence} "
+                    f"bot_peer={captcha.get('bot_peer', '-')}."
+                )
 
     def run(self) -> CheckmeOutcome:
         trace_id = uuid.uuid4().hex[:12]
@@ -119,6 +268,7 @@ class CheckmeClient:
         token_deadline = 0.0
         rounds = 0
         actions_done = 0
+        start_payload = ""
         while True:
             rounds += 1
             # The two local give-up lines run before the round is spent
@@ -156,6 +306,10 @@ class CheckmeClient:
                 "trace_id": trace_id,
                 "peer_id": self.peer,
             }
+            if start_payload:
+                # :1739947: the OPEN_BOT answer hands back a startapp
+                # payload, which the next submit carries as start_payload.
+                payload["start_payload"] = start_payload
             print(
                 f"CheckmeGroupMgr[#{self.task_id} id={self.task_id} "
                 f"peer={self.peer} stage=join round={rounds} "
@@ -183,21 +337,27 @@ class CheckmeClient:
                 )
                 pause(self.ctx, self.config.delay_sec)
                 continue
-            answer = _parse(body)
-            decision = str(answer.get("checkme", "")).upper()
-            reason = str(answer.get("reason", ""))
-            new_token = str(answer.get("state_token", "") or token)
-            ttl = answer.get("ttl_sec")
+            answer = CheckmeAnswer(_parse(body))
+            decision = answer.decision
+            reason = answer.reason
+            new_token = answer.token or token
+            ttl = answer.ttl
             if new_token:
                 token = new_token
                 if ttl is not None:
-                    token_deadline = time.monotonic() + max(0.0, float(ttl))
+                    token_deadline = time.monotonic() + max(0.0, ttl)
             print(
                 f"CheckmeGroupMgr[#{self.task_id} id={self.task_id}]: "
                 f"__checkme__ status={decision or 'UNKNOWN'} reason={reason or '-'} "
                 f"state_token={token or '-'} peer={self.peer} stage=join "
                 f"round={rounds} trace_id={trace_id}"
             )
+            self._observe(answer, trace_id)
+            nxt = answer.get("next")
+            if isinstance(nxt, dict) and nxt.get("startapp_payload"):
+                start_payload = str(nxt["startapp_payload"])
+            elif answer.get("startapp_payload"):
+                start_payload = str(answer.get("startapp_payload"))
             if decision == "STOP":
                 return self._finish(
                     "VERIFIED",

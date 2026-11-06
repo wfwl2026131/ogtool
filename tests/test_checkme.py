@@ -349,3 +349,103 @@ def test_post_join_verify_is_silent_in_a_dry_run(ctx, store):
     )
     post_join_verify(config, dry_ctx, task, job, ["acc1"])
     assert store.results_for(task.id) == []
+
+
+def test_the_answer_exposes_the_full_protocol_vocabulary():
+    from ogtool.features.checkme import ANSWER_KEYS, CheckmeAnswer
+
+    answer = CheckmeAnswer(
+        {
+            "checkme": "WAIT",
+            "state_token": "tok",
+            "ttl_sec": 30,
+            "reason": "observe",
+            "actions": [],
+            "need_resubmit": True,
+            "min_delay_ms": 100,
+            "trigger": "passive",
+            "next": {"lookback_sec": 12, "startapp_payload": "abc"},
+            "peer_kind": "group",
+            "can_send_text": True,
+            "global_mute_text": False,
+            "bot_captcha": {
+                "delay_ms": 200,
+                "lookback_sec": 9,
+                "auto_click_single_callback": True,
+            },
+            "delay_ms": 0,
+            "lookback_sec": 3,
+            "auto_click_single_callback": False,
+            "startapp_payload": "fallback",
+        }
+    )
+    assert set(ANSWER_KEYS) == set(answer.keys_seen())
+    assert answer.decision == "WAIT"
+    assert answer.ttl == 30.0
+    assert answer.passive is True
+    assert answer.observe_remain == 12.0
+    assert answer.captcha["auto_click_single_callback"] is True
+    assert answer.permissions["can_send_text"] is True
+
+
+def test_the_manager_prints_the_passive_and_captcha_lines(ctx, capsys, monkeypatch):
+    post, _ = _answers(
+        _answer(
+            checkme="WAIT",
+            trigger="passive",
+            can_send_text=True,
+            global_mute_text=False,
+            can_send_photo=True,
+            bot_captcha={
+                "delay_ms": 250,
+                "lookback_sec": 8,
+                "auto_click_single_callback": True,
+                "bot_username": "guard_bot",
+                "message_id": 77,
+                "button": "verify",
+            },
+            lookback_sec=8,
+        ),
+        _answer(checkme="STOP"),
+    )
+    monkeypatch.setattr(checkme, "_post", post)
+    outcome = _run(_config(), ctx)
+    assert outcome.ok
+    out = capsys.readouterr().out
+    assert "permissions snapshot: globalMuteText=False canSendText=True" in out
+    assert "extend passive observe window" in out
+    assert "remain=8s(old=0s)" in out
+    assert "fetch_latest_messages start" in out
+    assert "delay_ms=250" in out
+    assert "click_button_verify" in out
+    assert "bot_username=guard_bot" in out
+
+
+def test_a_cached_captcha_keeps_the_evidence_line(ctx, capsys, monkeypatch):
+    post, _ = _answers(
+        _answer(
+            checkme="WAIT",
+            bot_captcha={
+                "lookback_sec": 5,
+                "auto_click_single_callback": False,
+                "messages": 3,
+                "bot_peer": "bot1",
+            },
+        ),
+        _answer(checkme="STOP"),
+    )
+    monkeypatch.setattr(checkme, "_post", post)
+    _run(_config(), ctx)
+    out = capsys.readouterr().out
+    assert "bot_captcha: reuse cached bot evidence messages=3 bot_peer=bot1" in out
+    assert "click_button_verify" not in out
+
+
+def test_the_next_rounds_submit_carries_the_startapp_payload(ctx, monkeypatch):
+    post, calls = _answers(
+        _answer(checkme="WAIT", next={"startapp_payload": "abc123"}),
+        _answer(checkme="STOP"),
+    )
+    monkeypatch.setattr(checkme, "_post", post)
+    _run(_config(), ctx)
+    assert calls[1]["start_payload"] == "abc123"
