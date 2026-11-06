@@ -750,8 +750,41 @@ def _todo_parser(subs: argparse._SubParsersAction) -> None:
     mark.add_argument("--unread", action="store_true")
 
     block = todo_subs.add_parser("blacklist", help="blacklist or unblacklist rows")
-    block.add_argument("ids", nargs="+", type=int)
+    block.add_argument("ids", nargs="*", type=int)
     block.add_argument("--off", action="store_true")
+
+    respond = todo_subs.add_parser(
+        "respond-group", help="the Unread page's response group (forum + topic)"
+    )
+    respond.add_argument(
+        "--create", action="store_true", help="create the forum group with account #2"
+    )
+    respond.add_argument(
+        "--account", default="", help="the account that owns the response group"
+    )
+    respond.add_argument(
+        "--link", default="", help="paste invite link or @username instead"
+    )
+    respond.add_argument("--title", default="Unread management group")
+    respond.add_argument("--live", action="store_true")
+    respond.add_argument(
+        "--allow-write",
+        action="store_true",
+        help="needed to create the group live",
+    )
+
+    forward = todo_subs.add_parser(
+        "forward", help="Forward to: push queued rows into the response chat"
+    )
+    forward.add_argument("ids", nargs="+", type=int)
+    forward.add_argument("--target", required=True, help="chat or topic the rows go to")
+    forward.add_argument("--account", default="")
+    forward.add_argument("--live", action="store_true")
+    forward.add_argument(
+        "--allow-write",
+        action="store_true",
+        help="needed to send live",
+    )
 
     archive = todo_subs.add_parser("archive", help="move rows out of the queue")
     archive.add_argument(
@@ -1177,6 +1210,120 @@ def _pattern(args: argparse.Namespace, ctx: RunContext) -> int:
     return 0
 
 
+def _todo_respond_group(args: argparse.Namespace, settings: Settings, store) -> int:
+    """The Unread page's response group (:1744778-1744806).
+
+    A forum-enabled group the second account owns, whose invite link the
+    page applies as the management group; a pasted link is applied
+    as-is.  The permission verdicts are the page's own.
+    """
+    if args.create and not args.live:
+        print("dry-run: would create the response group")
+        return 0
+    if args.create and not args.allow_write:
+        print(
+            "ERROR: todo respond-group --create writes into Telegram; "
+            "add --allow-write to run it live"
+        )
+        return 2
+    if not args.create:
+        link = args.link.strip()
+        if not link:
+            print("Paste invite link or @username")
+            return 2
+        store.upsert_group_owner(
+            "response_group",
+            args.account or "",
+            chat_type=2,
+            status="ready",
+            invite_link=link,
+        )
+        print("Response group ready")
+        return 0
+    account = args.account
+    if not account:
+        print("Account #%1 is not available. Please log in the second account first.")
+        return 2
+    print("Creating response group...")
+    from .runtime import DryRunSender, TelethonSender
+    from .targets import parse_many
+
+    sender = (
+        TelethonSender(settings, _store=store)
+        if args.live
+        else DryRunSender(echo=False)
+    )
+    created = sender.create_group(account, args.title, megagroup=True)
+    if not created.ok:
+        print(f"Failed to create response group: {created.code}")
+        return 1
+    group = parse_many([created.detail], "custom")[0]
+    link = sender.invite_link(account, group)
+    if not link.ok:
+        print(f"Failed to create response group: {link.code}")
+        return 1
+    store.upsert_group_owner(
+        "response_group",
+        account,
+        chat_type=2,
+        status="ready",
+        invite_link=link.detail or created.detail,
+    )
+    print("Created a response group and applied its invite link.")
+    print("Response group ready")
+    return 0
+
+
+def _todo_forward(args: argparse.Namespace, settings: Settings, store) -> int:
+    """``Forward to``: the queue's rows pushed into the response chat.
+
+    The page forwards into a forum topic of the management group; this
+    build sends the row's own text to the target chat the operator names,
+    which is the same hand-off without the topic plumbing (:1744817's
+    failure names the topic path it does not take).
+    """
+    rows = {row["id"]: row for row in store.list_todos(None, limit=100000)}
+    wanted = [rows[i] for i in args.ids if i in rows]
+    if not wanted:
+        print(
+            "Unable to resolve the todo for this command. "
+            "Please reply to the forwarded message and try again."
+        )
+        return 2
+    if not args.live:
+        for row in wanted:
+            print(
+                f"dry-run: forward #{row['id']} "
+                f'"{(row["msg"] or "(empty message)")[:60]}" -> {args.target}'
+            )
+        return 0
+    if not args.allow_write:
+        print(
+            "ERROR: todo forward writes into Telegram; add --allow-write to run it live"
+        )
+        return 2
+    account = args.account or "-"
+    from .runtime import DryRunSender, TelethonSender
+    from .senders import Content
+    from .targets import parse_many
+
+    sender = (
+        TelethonSender(settings, _store=store)
+        if args.live
+        else DryRunSender(echo=False)
+    )
+    failed = 0
+    for row in wanted:
+        target = parse_many([args.target], "custom")[0]
+        outcome = sender.send(account, target, Content(text=row["msg"]))
+        if not outcome.ok:
+            print("FromTodoChatTopic: forward to topic failed")
+            failed += 1
+            continue
+        print(f"Forwarded #{row['id']} to {args.target}")
+    return 0 if not failed else 1
+
+
 def _todo(args: argparse.Namespace, settings: Settings) -> int:
     """The queue commands. Mirrors the page's own verbs: mark, block, archive."""
     import json
@@ -1218,9 +1365,38 @@ def _todo(args: argparse.Namespace, settings: Settings) -> int:
             print(f"marked {changed} row(s) {STATUS_NAMES[status]}")
             return 0 if changed else 1
         if args.action == "blacklist":
-            changed = store.set_todo_blacklist(args.ids, not args.off)
-            print(f"blacklist {'off' if args.off else 'on'}: {changed} row(s)")
-            return 0 if changed else 1
+            # The page's own confirm-and-do block (:1744790-1744798): a
+            # blacklist is also a read, an already-blocked sender stays
+            # read, an un-blacklist names its removal, and an empty
+            # selection cannot name a sender at all.
+            ids = list(args.ids or [])
+            if not ids:
+                print("Unable to blacklist: invalid sender.")
+                return 2
+            if args.off:
+                rows = {row["id"]: row for row in store.list_todos(None, limit=100000)}
+                blocked = [i for i in ids if rows.get(i, {}).get("is_blacklist")]
+                if not blocked:
+                    print("Unable to blacklist: invalid sender.")
+                    return 1
+                store.set_todo_blacklist(blocked, False)
+                print("Blacklist removed for this sender.")
+                return 0
+            rows = {row["id"]: row for row in store.list_todos(None, limit=100000)}
+            already = [i for i in ids if rows.get(i, {}).get("is_blacklist")]
+            fresh = [i for i in ids if i not in already]
+            store.set_todo_blacklist(fresh, True)
+            if fresh:
+                store.set_todo_status(fresh, DONE)
+                print("Sender blacklisted and marked as read.")
+            if already:
+                store.set_todo_status(already, DONE)
+                print("Sender already blacklisted. Marked as read.")
+            return 0
+        if args.action == "respond-group":
+            return _todo_respond_group(args, settings, store)
+        if args.action == "forward":
+            return _todo_forward(args, settings, store)
         if args.action == "archive":
             if not args.live:
                 if args.ids:
