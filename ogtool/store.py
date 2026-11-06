@@ -218,6 +218,18 @@ CREATE TABLE IF NOT EXISTS daily_quota (
     attempt   INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (namespace, account, day)
 );
+CREATE TABLE IF NOT EXISTS client (
+    phone     TEXT PRIMARY KEY,
+    username  TEXT NOT NULL DEFAULT '',
+    add_count INTEGER NOT NULL DEFAULT 0,
+    fail_count INTEGER NOT NULL DEFAULT 0,
+    reserve2  TEXT NOT NULL DEFAULT '',
+    reserve3  TEXT NOT NULL DEFAULT '',
+    reserve4  TEXT NOT NULL DEFAULT '',
+    reserve6  TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    last_active TEXT NOT NULL DEFAULT ''
+);
 CREATE INDEX IF NOT EXISTS idx_translation_created
     ON translation(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
@@ -1024,6 +1036,109 @@ class Store:
                ORDER BY last_active DESC, group_id""",
             (owner_phone,),
         ).fetchall()
+
+    # ---- client table: the ClientList page's CRM rows (:1741688-1741707) ----
+
+    def upsert_client(
+        self,
+        phone: str,
+        username: str = "",
+        reserve2: str = "",
+        reserve3: str = "",
+        reserve4: str = "",
+        reserve6: str = "",
+    ) -> bool:
+        """One ``client`` row, inserted or refreshed in place.
+
+        The page's own write keeps the counters intact
+        (:1741688 ``UPDATE client SET ... WHERE %1 = ?``); a phone the page
+        has not seen gets its first row.  Returns ``True`` when a new row
+        was created.
+        """
+        now = utcnow()
+        cursor = self._conn.execute(
+            """INSERT INTO client
+               (phone, username, reserve2, reserve3, reserve4, reserve6,
+                created_at, last_active)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(phone) DO UPDATE SET
+                   username = CASE WHEN excluded.username != ''
+                                   THEN excluded.username
+                                   ELSE client.username END,
+                   reserve2 = CASE WHEN excluded.reserve2 != ''
+                                   THEN excluded.reserve2
+                                   ELSE client.reserve2 END,
+                   reserve3 = CASE WHEN excluded.reserve3 != ''
+                                   THEN excluded.reserve3
+                                   ELSE client.reserve3 END,
+                   reserve4 = CASE WHEN excluded.reserve4 != ''
+                                   THEN excluded.reserve4
+                                   ELSE client.reserve4 END,
+                   reserve6 = CASE WHEN excluded.reserve6 != ''
+                                   THEN excluded.reserve6
+                                   ELSE client.reserve6 END,
+                   last_active = excluded.last_active""",
+            (phone, username, reserve2, reserve3, reserve4, reserve6, now, now),
+        )
+        self._conn.commit()
+        return cursor.rowcount == 1
+
+    def client_rows(self, search: str = "") -> list[sqlite3.Row]:
+        """Every client row, or the ones matching phone/username (:1741689)."""
+        if not search:
+            return self._conn.execute("SELECT * FROM client ORDER BY phone").fetchall()
+        like = f"%{search}%"
+        return self._conn.execute(
+            """SELECT * FROM client
+               WHERE phone LIKE ? OR username LIKE ?
+               ORDER BY phone""",
+            (like, like),
+        ).fetchall()
+
+    def client_get(self, phone: str) -> sqlite3.Row | None:
+        """One row by phone (:1741689 ``SELECT * FROM client WHERE %1 = ?``)."""
+        return self._conn.execute(
+            "SELECT * FROM client WHERE phone = ?", (phone,)
+        ).fetchone()
+
+    def bump_client_counter(self, phone: str, *, success: bool) -> int:
+        """``add_count`` or the failed counter moves (:1741688, :1741653-1654)."""
+        column = "add_count" if success else "fail_count"
+        self._conn.execute(
+            f"""UPDATE client SET {column} = {column} + 1, last_active = ?
+                WHERE phone = ?""",
+            (utcnow(), phone),
+        )
+        self._conn.commit()
+        row = self.client_get(phone)
+        return int(row[column]) if row is not None else 0
+
+    def delete_clients(self, phones: list[str] = (), usernames: list[str] = ()) -> int:
+        """The page's three delete forms (:1741705-1741707)."""
+        removed = 0
+        if phones and usernames:
+            marks_p = ",".join("?" for _ in phones)
+            marks_u = ",".join("?" for _ in usernames)
+            cursor = self._conn.execute(
+                f"""DELETE FROM client
+                    WHERE phone IN ({marks_p}) OR username IN ({marks_u})""",
+                (*phones, *usernames),
+            )
+        elif phones:
+            marks = ",".join("?" for _ in phones)
+            cursor = self._conn.execute(
+                f"DELETE FROM client WHERE phone IN ({marks})", phones
+            )
+        elif usernames:
+            marks = ",".join("?" for _ in usernames)
+            cursor = self._conn.execute(
+                f"DELETE FROM client WHERE username IN ({marks})", usernames
+            )
+        else:
+            return 0
+        removed = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
+        self._conn.commit()
+        return removed
 
     def bump_daily_quota(
         self, namespace: str, account: str, day: str, *, success: bool

@@ -30,8 +30,14 @@ ROOT = Path(__file__).resolve().parent.parent
 FIXTURES: dict[str, list[str]] = {
     "add_contact": ["--contacts", "+10000000001"],
     "ai_chat": ["--targets", "@sweep"],
-    "ai_clone": ["--targets", "@sweep", "--sources", "@source",
-                 "--message", "@source|Sender|hello post"],
+    "ai_clone": [
+        "--targets",
+        "@sweep",
+        "--sources",
+        "@source",
+        "--message",
+        "@source|Sender|hello post",
+    ],
     # ai_comment draws which posts get a comment, a like or a sticker, so it is
     # randomised by design; its own --seed is what makes two runs comparable, and
     # a seed is part of the configuration, not a way around the check.
@@ -40,15 +46,20 @@ FIXTURES: dict[str, list[str]] = {
     "batch_invite_v2": ["--targets", "@sweep", "--contacts", "+10000000001"],
     # A rule plus one simulated incoming message: without both, the page has
     # nothing to match and plans zero replies.
-    "auto_reply": ["--rule", "hello=>hi", "--simulate",
-                   "@peer|Sender|hello there"],
+    "auto_reply": ["--rule", "hello=>hi", "--simulate", "@peer|Sender|hello there"],
     "batch_join": ["--targets", "@sweep"],
     "batch_login": ["--import-folder", "{tmp}/sessions"],
     "batch_rename": ["--file", "{tmp}/names.txt"],
     # copy_chat has nothing to copy in a dry run unless a message was captured
     # beforehand, and the capture needs a peer that is actually in --sources.
-    "copy_chat": ["--targets", "@sweep", "--sources", "@sweepsource",
-                  "--message", "@sweepsource|Sender|hello"],
+    "copy_chat": [
+        "--targets",
+        "@sweep",
+        "--sources",
+        "@sweepsource",
+        "--message",
+        "@sweepsource|Sender|hello",
+    ],
     "filter_group": ["--groups", "@sweep"],
     "filter_phone": ["--numbers", "+10000000001"],
     "mass_send": ["--targets", "@sweep", "--text", "sweep"],
@@ -63,16 +74,31 @@ FIXTURES: dict[str, list[str]] = {
     # sweep would only prove the refusal line, not the plan.
     "redpacket": ["--link", "https://t.me/DaliRedBot?start=c_sweep"],
     "video_manage": ["--link", "https://t.me/sweep"],
-    "watch_chat": ["--targets", "@sweep", "--relay", "@relaychat",
-                   "--simulate", "@sweep|Sender|hello world"],
+    "watch_chat": [
+        "--targets",
+        "@sweep",
+        "--relay",
+        "@relaychat",
+        "--simulate",
+        "@sweep|Sender|hello world",
+    ],
     # The workbench translates one text through the template fallback and
     # reports zero usage: a sweep run must stay exactly reproducible.
     "translate": ["--text", "sweep line", "--lg-to", "zh"],
     # The transfer plans one group with a 2FA password present, so the plan
     # is deterministic (the missing-password skip would also be, but the
     # happy path proves more of the page).
-    "group_manage": ["--groups", "https://t.me/sweep", "--target", "t1",
-                     "--password", "sweep"],
+    "group_manage": [
+        "--groups",
+        "https://t.me/sweep",
+        "--target",
+        "t1",
+        "--password",
+        "sweep",
+    ],
+    # The client list's dry plan lists an empty table; the sweep's scratch
+    # store has no rows, which is exactly the plan the page shows.
+    "client_list": ["--search", "sweep"],
 }
 
 
@@ -100,7 +126,8 @@ def scratch_config(prefix: str = "ogsweep-cfg-") -> tuple[Path, Path]:
         f"session_dir: {scratch / 'sessions'}\n"
         f"db: {scratch / 'og.sqlite'}\n"
         f"logs: {scratch / 'logs'}\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     _seed_account(scratch, path)
     return path, scratch / "logs" / "receipts"
 
@@ -126,9 +153,15 @@ def _seed_account(scratch: Path, config: Path) -> None:
     settings = Settings.load(config)
     store = Store(settings.db_path)
     try:
-        store.add_account(Account(label="sweep", phone="+10000000000",
-                                  session=str(session), proxy="",
-                                  status="imported"))
+        store.add_account(
+            Account(
+                label="sweep",
+                phone="+10000000000",
+                session=str(session),
+                proxy="",
+                status="imported",
+            )
+        )
     finally:
         store.close()
 
@@ -155,17 +188,31 @@ def fixtures() -> dict[str, list[str]]:
     sessions = scratch / "sessions"
     sessions.mkdir()
     (sessions / "one.session").write_bytes(b"x")
-    return {name: [item.format(tmp=scratch) for item in args]
-            for name, args in FIXTURES.items()}
+    return {
+        name: [item.format(tmp=scratch) for item in args]
+        for name, args in FIXTURES.items()
+    }
 
 
 def dry_run(name: str, table: dict[str, list[str]]) -> tuple[int, str, list[dict]]:
     """One feature, one throwaway config, and whatever receipt it left."""
     config, receipts_dir = scratch_config()
     run = subprocess.run(  # noqa: S603 - our own CLI, fixed arguments
-        [sys.executable, "-m", "ogtool", "--config", str(config),
-         name, "--dry-run", *table.get(name, [])],
-        cwd=ROOT, capture_output=True, text=True, timeout=120)
+        [
+            sys.executable,
+            "-m",
+            "ogtool",
+            "--config",
+            str(config),
+            name,
+            "--dry-run",
+            *table.get(name, []),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
     bodies, _problems = receipts_here(receipts_dir)
     return run.returncode, run.stdout + run.stderr, bodies
 
@@ -186,11 +233,19 @@ def record(bodies: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     import datetime
 
-    path.write_text(json.dumps({
-        "when": datetime.datetime.now(datetime.UTC)
-        .replace(microsecond=0).isoformat(),
-        "features": {body["feature"]: body for body in bodies},
-    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "when": datetime.datetime.now(datetime.UTC)
+                .replace(microsecond=0)
+                .isoformat(),
+                "features": {body["feature"]: body for body in bodies},
+            },
+            ensure_ascii=False,
+            indent=1,
+        ),
+        encoding="utf-8",
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -210,21 +265,23 @@ def main(argv: list[str]) -> int:
         elif "Traceback" in first_out:
             problems.append(f"{name}: traceback\n{first_out[-600:]}")
         if second_code != 0:
-            problems.append(f"{name}: second run exit {second_code}"
-                            f"\n{second_out[-600:]}")
+            problems.append(
+                f"{name}: second run exit {second_code}\n{second_out[-600:]}"
+            )
         if len(first) != 1 or len(second) != 1:
-            problems.append(f"{name}: {len(first)} and {len(second)} receipt(s), "
-                            "expected one each")
+            problems.append(
+                f"{name}: {len(first)} and {len(second)} receipt(s), expected one each"
+            )
             print(f"{name:16s} FAIL")
             continue
         for body in first + second:
-            problems.extend(f"{name}: {problem}"
-                            for problem in receipts_module.validate(body))
+            problems.extend(
+                f"{name}: {problem}" for problem in receipts_module.validate(body)
+            )
         changes = receipts_module.diff(first[0], second[0])
         if changes:
             detail = ", ".join(key for key, _old, _new in changes)
-            problems.append(f"{name}: two runs of the same config differ "
-                            f"({detail})")
+            problems.append(f"{name}: two runs of the same config differ ({detail})")
             print(f"{name:16s} DIFF")
         else:
             identical += 1
@@ -232,9 +289,11 @@ def main(argv: list[str]) -> int:
             print(f"{name:16s} {'ok' if first_code == 0 else 'FAIL'}")
     if kept:
         record(kept)
-    print(f"runs: {len(wanted)}  receipts: {len(wanted)}  "
-          f"problems: {len(problems)}  "
-          f"twice: {identical}/{len(wanted)} identical")
+    print(
+        f"runs: {len(wanted)}  receipts: {len(wanted)}  "
+        f"problems: {len(problems)}  "
+        f"twice: {identical}/{len(wanted)} identical"
+    )
     for problem in problems:
         print("-" * 60)
         print(problem)

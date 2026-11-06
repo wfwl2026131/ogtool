@@ -48,6 +48,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "batch_join": "write",
     "batch_login": "local",
     "batch_rename": "write",
+    "client_list": "write",
     "copy_chat": "write",
     "export_accounts": "live",
     "filter_group": "live",

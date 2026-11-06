@@ -191,8 +191,7 @@ GENERIC: dict[str, dict] = {
         "steps": [
             ("--import-folder", "session 文件夹路径(留空看下两项)", "", "str"),
             ("--import-zip", "session zip 包路径(留空跳过)", "", "str"),
-            ("--import-tdata", "Telegram Desktop tdata 路径(留空跳过)", "",
-             "str"),
+            ("--import-tdata", "Telegram Desktop tdata 路径(留空跳过)", "", "str"),
         ],
     },
     "translate": {
@@ -202,9 +201,17 @@ GENERIC: dict[str, dict] = {
             ("--texts-file", "批量文本文件(每行一条,留空跳过)", "", "str"),
             ("--lg-to", "目标语言", "zh", "str"),
             ("--lg-from", "源语言(auto=自动检测)", "auto", "str"),
-            ("--strategy", "引擎 ai(配置的端点)/azure(需 --azure-key)",
-             "ai", "str"),
+            ("--strategy", "引擎 ai(配置的端点)/azure(需 --azure-key)", "ai", "str"),
             ("--quota-total", "本周期字符预算(0=不限)", "0", "int"),
+        ],
+    },
+    "client_list": {
+        "label": "📇 客户列表(CRM 名单,导入导出/删除/开对话)",
+        "steps": [
+            ("--import-csv", "导入 CSV 文件路径(留空跳过)", "", "str"),
+            ("--export-csv", "导出 CSV 文件路径(留空跳过)", "", "str"),
+            ("--search", "按手机号/用户名搜索(留空=全部)", "", "str"),
+            ("--client", "单个客户的手机号(计数/开对话用)", "", "str"),
         ],
     },
 }
@@ -239,8 +246,15 @@ TRUSTED: set[str] = set()
 # 这里补上另外两块: 上次填的值记住(回车=用上次),以及 f 全量模式把
 # 该页所有旗标逐个问一遍(回车=默认/上次值)。
 PRESET_FILE = Path("data") / "wizard-presets.json"
-GLOBAL_FLAGS = {"accounts", "task-name", "dry-run", "live", "allow-write",
-                "verbose", "config"}
+GLOBAL_FLAGS = {
+    "accounts",
+    "task-name",
+    "dry-run",
+    "live",
+    "allow-write",
+    "verbose",
+    "config",
+}
 
 
 def load_preset(feature: str) -> dict:
@@ -263,8 +277,9 @@ def save_preset(feature: str, values: dict) -> None:
             store[feature] = values
         else:
             store.pop(feature, None)
-        PRESET_FILE.write_text(json.dumps(store, ensure_ascii=False, indent=1),
-                               encoding="utf-8")
+        PRESET_FILE.write_text(
+            json.dumps(store, ensure_ascii=False, indent=1), encoding="utf-8"
+        )
     except OSError:
         pass
 
@@ -285,29 +300,32 @@ def page_flags(feature: str) -> list:
     load_defaults()
     mods = getattr(module(feature), "FLAGS", None)
     if mods:
-        return [flag for flag in mods
-                if flag.dest not in GLOBAL_FLAGS]
-    parser = build_parser().choices[feature] \
-        if hasattr(build_parser(), "choices") else None
+        return [flag for flag in mods if flag.dest not in GLOBAL_FLAGS]
+    parser = (
+        build_parser().choices[feature] if hasattr(build_parser(), "choices") else None
+    )
     if parser is None:
         subparsers = build_parser()._subparsers._group_actions[0].choices  # noqa: SLF001
         parser = subparsers[feature]
     out = []
     for action in parser._actions:  # noqa: SLF001
-        names = [opt for opt in action.option_strings
-                 if opt.startswith("--")]
+        names = [opt for opt in action.option_strings if opt.startswith("--")]
         if not names:
             continue
         name = names[0].lstrip("-").replace("-", "_")
-        if name in GLOBAL_FLAGS or name in {"help", "task", "task_name",
-                                            "verbose"}:
+        if name in GLOBAL_FLAGS or name in {"help", "task", "task_name", "verbose"}:
             continue
-        out.append(SimpleNamespace(
-            name=names[0], dest=name,
-            kind=int if action.type is int else
-            (bool if action.const is True else str),
-            action="store_true" if action.const is True else "store",
-            help=action.help or ""))
+        out.append(
+            SimpleNamespace(
+                name=names[0],
+                dest=name,
+                kind=int
+                if action.type is int
+                else (bool if action.const is True else str),
+                action="store_true" if action.const is True else "store",
+                help=action.help or "",
+            )
+        )
     return out
 
 
@@ -319,8 +337,7 @@ def ask_flag(flag, preset: dict) -> object | None:
         if ask(f"{name} {flag.help}? (y/N)", "N").lower() in ("y", "yes"):
             return True
         return remembered if isinstance(remembered, bool) else None
-    raw = ask(f"{name} {flag.help}", "" if remembered is None
-              else str(remembered))
+    raw = ask(f"{name} {flag.help}", "" if remembered is None else str(remembered))
     if not raw.strip():
         return remembered
     if flag.kind is int:
@@ -360,22 +377,27 @@ def newest_receipt() -> None:
         from ogtool.config import Settings
         from ogtool.receipts import receipt_dir
 
-        receipts = sorted(receipt_dir(Settings.load("config.yaml"))
-                          .glob("*.json"),
-                          key=lambda p: p.stat().st_mtime, reverse=True)
+        receipts = sorted(
+            receipt_dir(Settings.load("config.yaml")).glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
     except Exception:  # noqa: BLE001 - the run already succeeded
         return
     if receipts:
         body = json.loads(receipts[0].read_text())
-        print(f"   {receipts[0].name}  planned={body.get('planned')} "
-              f"ok={body.get('ok')} failed={body.get('failed')}")
+        print(
+            f"   {receipts[0].name}  planned={body.get('planned')} "
+            f"ok={body.get('ok')} failed={body.get('failed')}"
+        )
 
 
 def run_live(argv: list[str], *, write: bool) -> None:
     live = [*argv, "--live"]
     if write and "all" not in TRUSTED:
-        confirm = input("写操作(真发/真拉/真改名)。"
-                        "yes=这次带写  all=本会话都不再问  其他=取消: ")
+        confirm = input(
+            "写操作(真发/真拉/真改名)。yes=这次带写  all=本会话都不再问  其他=取消: "
+        )
         confirm = confirm.strip().lower()
         if confirm not in ("yes", "all"):
             print("取消。")
@@ -391,17 +413,30 @@ def run_live(argv: list[str], *, write: bool) -> None:
         print("\n✅ 跑完。回执在 data/logs/receipts/ 下,最新一张:")
         newest_receipt()
     else:
-        print(f"\n⚠️ 退出码 {done.returncode}。看上面输出;回执里 codes 字段"
-              "有失败码直方图。")
+        print(
+            f"\n⚠️ 退出码 {done.returncode}。看上面输出;回执里 codes 字段"
+            "有失败码直方图。"
+        )
 
 
 # 这些页面吃 --accounts;其余(筛号/筛群、settings、proxy、batch_login、
 # export_accounts)操作对象不是账号池,问了反而误导。
-ACCOUNTED = frozenset({
-    "ai_chat", "ai_comment", "ai_clone", "copy_chat", "batch_rename",
-    "add_contact", "mass_send_v2", "puppet_chat_v2", "batch_invite_v2",
-    "mix_market", "auto_script", "keep_online",
-})
+ACCOUNTED = frozenset(
+    {
+        "ai_chat",
+        "ai_comment",
+        "ai_clone",
+        "copy_chat",
+        "batch_rename",
+        "add_contact",
+        "mass_send_v2",
+        "puppet_chat_v2",
+        "batch_invite_v2",
+        "mix_market",
+        "auto_script",
+        "keep_online",
+    }
+)
 
 
 def flow_generic(feature: str) -> None:
@@ -449,14 +484,18 @@ def extend_argv(argv: list[str], feature: str) -> None:
     asked = _flag_names(argv)
     asked |= GLOBAL_FLAGS
     asked |= {"dry-run", "allow-write", "live"}
-    remaining = [flag for flag in page_flags(feature)
-                 if flag.name.lstrip("-") not in asked
-                 and flag.dest not in asked
-                 and flag.dest.replace("_", "-") not in asked]
+    remaining = [
+        flag
+        for flag in page_flags(feature)
+        if flag.name.lstrip("-") not in asked
+        and flag.dest not in asked
+        and flag.dest.replace("_", "-") not in asked
+    ]
     if not remaining:
         return
-    mode = ask(f"还有 {len(remaining)} 个高级参数没问。回车=用默认直接跑,"
-               " f=逐个过一遍", "")
+    mode = ask(
+        f"还有 {len(remaining)} 个高级参数没问。回车=用默认直接跑, f=逐个过一遍", ""
+    )
     if mode.strip().lower() != "f":
         return
     preset = load_preset(feature)
@@ -468,8 +507,7 @@ def extend_argv(argv: list[str], feature: str) -> None:
             argv += [flag.name, str(value)]
 
 
-def remember(argv: list[str], feature: str,
-             spec: dict | None = None) -> None:
+def remember(argv: list[str], feature: str, spec: dict | None = None) -> None:
     """把这次填的值记下来,下次回车直接用(上次值覆盖默认)。"""
     values: dict[str, object] = {}
     for i, token in enumerate(argv):
@@ -489,9 +527,19 @@ def flow_mass_send() -> None:
     text = ask("发送的文案")
     imin = ask_int("账号间隔最小秒数", 30)
     imax = ask_int("账号间隔最大秒数", 90)
-    argv = ["mass_send", "--accounts", accounts, "--targets", targets,
-            "--text", text, "--interval-min", str(imin),
-            "--interval-max", str(imax)]
+    argv = [
+        "mass_send",
+        "--accounts",
+        accounts,
+        "--targets",
+        targets,
+        "--text",
+        text,
+        "--interval-min",
+        str(imin),
+        "--interval-max",
+        str(imax),
+    ]
     extend_argv(argv, argv[0])
     remember(argv, argv[0], None)
     if show_plan(argv):
@@ -503,8 +551,15 @@ def flow_watch_chat() -> None:
     targets = ask("监听的群(源,逗号分隔)")
     relay = ask("转发到哪个群(留空=只监听不转发)")
     seconds = ask_int("监听多少秒后自动结束", 600)
-    argv = ["watch_chat", "--accounts", accounts, "--targets", targets,
-            "--run-seconds", str(seconds)]
+    argv = [
+        "watch_chat",
+        "--accounts",
+        accounts,
+        "--targets",
+        targets,
+        "--run-seconds",
+        str(seconds),
+    ]
     if relay:
         argv += ["--relay", relay]
     extend_argv(argv, argv[0])
@@ -530,8 +585,7 @@ def flow_puppet_chat() -> None:
     accounts = pick_accounts()
     group = ask("在哪个群发言")
     script = ask("剧本文件(如 script.yaml)")
-    argv = ["puppet_chat", "--accounts", accounts, "--group", group,
-            "--script", script]
+    argv = ["puppet_chat", "--accounts", accounts, "--group", group, "--script", script]
     extend_argv(argv, argv[0])
     remember(argv, argv[0], None)
     if show_plan(argv):
@@ -542,8 +596,15 @@ def flow_batch_invite() -> None:
     accounts = pick_accounts()
     groups = ask("拉进哪个群(逗号分隔)")
     members = ask("要拉的人(手机号或用户名,逗号分隔)")
-    argv = ["batch_invite", "--accounts", accounts, "--groups", groups,
-            "--members", members]
+    argv = [
+        "batch_invite",
+        "--accounts",
+        accounts,
+        "--groups",
+        groups,
+        "--members",
+        members,
+    ]
     extend_argv(argv, argv[0])
     remember(argv, argv[0], None)
     if show_plan(argv):
@@ -557,9 +618,15 @@ def flow_invite_monitor() -> None:
     invite_to = ask("把人拉进哪个群(回车=同一个)", group)
     seconds = ask("盯多久秒(0=一直盯,Ctrl+C 停)", "0")
     invite_all = ask("老人也一起邀吗(y/N)", "n").strip().lower()
-    argv = ["batch_invite_v2", "--accounts", accounts,
-            "--monitor-group", group,
-            "--monitor-seconds", seconds]
+    argv = [
+        "batch_invite_v2",
+        "--accounts",
+        accounts,
+        "--monitor-group",
+        group,
+        "--monitor-seconds",
+        seconds,
+    ]
     if invite_all in ("y", "yes"):
         argv.append("--monitor-invite-all")
     if invite_to and invite_to != group:
@@ -584,8 +651,7 @@ def flow_video_manage() -> None:
     accounts = pick_accounts()
     link = ask("群链接(群里有语音房才进得去)")
     action = ask("动作 join/speak/leave", "speak")
-    argv = ["video_manage", "--accounts", accounts, "--link", link,
-            "--action", action]
+    argv = ["video_manage", "--accounts", accounts, "--link", link, "--action", action]
     extend_argv(argv, argv[0])
     remember(argv, argv[0], None)
     if show_plan(argv):
@@ -619,9 +685,11 @@ def flow_for(key: str) -> None:
 
 def menu_order() -> list[str]:
     """Custom flows first, then the generic write ones, then the read ones."""
-    return [k for k, _ in MENU_CUSTOM] \
-        + [k for k in GENERIC if k in WRITE] \
+    return (
+        [k for k, _ in MENU_CUSTOM]
+        + [k for k in GENERIC if k in WRITE]
         + [k for k in GENERIC if k not in WRITE]
+    )
 
 
 def run_menu() -> int:
@@ -684,6 +752,7 @@ def main() -> int:
     global WRITE
     try:
         from ogtool.features import WRITE_FEATURES
+
         WRITE = set(WRITE_FEATURES)
     except ImportError:  # pragma: no cover - standalone script use
         pass

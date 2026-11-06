@@ -46,8 +46,7 @@ PARITY: tuple[tuple[int, str, str], ...] = (
     (24, "Settings", "settings"),
 )
 
-CLIENT_SOURCE = (Path.home()
-                 / "tg-src/tdesktop/Telegram/SourceFiles/og/og_console.cpp")
+CLIENT_SOURCE = Path.home() / "tg-src/tdesktop/Telegram/SourceFiles/og/og_console.cpp"
 
 #: The reference's second surface: the right toolbar (:1740461) carries
 #: pages that are not console nav entries (Unread Messages / Translation /
@@ -56,12 +55,11 @@ CLIENT_SOURCE = (Path.home()
 TOOLBAR: tuple[tuple[str, str], ...] = (
     ("T1", "translate"),
     ("T2", "group_manage"),
+    ("T4", "client_list"),
 )
 
 #: The Red Packet Grabber opens from its own window, so its tag is its own.
-SHEET: tuple[tuple[str, str], ...] = (
-    ("T3", "redpacket"),
-)
+SHEET: tuple[tuple[str, str], ...] = (("T3", "redpacket"),)
 
 
 def client_labels() -> list[str]:
@@ -69,8 +67,8 @@ def client_labels() -> list[str]:
     if not CLIENT_SOURCE.exists():
         return [label for _index, label, _module in PARITY]
     text = CLIENT_SOURCE.read_text(encoding="utf-8")
-    block = text[text.index("kNavKeys[] = {"):]
-    block = block[:block.index("};")]
+    block = text[text.index("kNavKeys[] = {") :]
+    block = block[: block.index("};")]
     return re.findall(r'"ConsoleNav::([^"]+)"', block)
 
 
@@ -114,8 +112,7 @@ def test_the_toolbar_module_knows_its_position(tag: str, module_name: str):
 
     load_defaults()
     source = Path(loaded(module_name).__file__).read_text(encoding="utf-8")
-    assert f"#{tag} " in source, (
-        f"{module_name} does not carry #{tag} in its docstring")
+    assert f"#{tag} " in source, f"{module_name} does not carry #{tag} in its docstring"
 
 
 def test_every_module_is_registered_under_its_console_number():
@@ -134,4 +131,5 @@ def test_the_module_knows_its_position(index: int, label: str, module: str):
     load_defaults()
     source = Path(loaded(module).__file__).read_text(encoding="utf-8")
     assert f"#{index} " in source or module == "settings", (
-        f"{module} does not carry #{index} ({label}) in its docstring")
+        f"{module} does not carry #{index} ({label}) in its docstring"
+    )

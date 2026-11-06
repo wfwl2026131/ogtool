@@ -32,6 +32,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "batch_join",
         "batch_rename",
         "copy_chat",
+        "client_list",
         "group_manage",
         "mass_send",
         "mass_send_v2",
@@ -86,6 +87,9 @@ _MODULE_NAMES = [
     # "Open Group Manager" command, so it takes T2.
     "translate",
     "group_manage",
+    # The Client List is the toolbar's third page (:1740462): CRM rows, a
+    # CSV round-trip and the conversation opener, so it takes T4.
+    "client_list",
     # P3
     "settings",
     # The Red Packet Grabber is its own window, neither a console nav entry
