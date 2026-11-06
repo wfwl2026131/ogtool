@@ -576,17 +576,39 @@ def _invite_lane(
     return result
 
 
-def _monitor(config: InviteV2Config, ctx: RunContext) -> int:
-    """MonitorInviteStrategy: watch ``monitor_group``, invite joiners.
+def _post_candidates(result: object, watch_ref: str) -> list[tuple[int, str, str, str]]:
+    """Turn a history capture into ``(mid, candidate, name, G/M)`` rows.
 
-    Polling, not events: ``events.ChatAction`` needs a live telethon client
-    per watcher account, and the simulator has to be able to drive this
-    path in tests. A poll every ``request_interval`` seconds reads the
-    latest participants and invites the ones the cursor has not seen; the
-    cursor (last seen user id per target) rides the task receipt so a
-    restart resumes instead of re-inviting.
+    The reference's monitor lane works on messages, not on a member list:
+    "dispatched G/M:%1 to inviter #%2" (:1743480) and
+    "skip hidden user G/M:%1 Name:%2" (:1743467) name a group/message pair.
+    A forwarded post's candidate is the original writer (``post_origins``),
+    otherwise the account that sent it (``post_senders``).  A live capture
+    that found no display name at all is the chat's "Hidden User".
+    """
+    posts = list(getattr(result, "posts", []) or [])
+    origins = getattr(result, "post_origins", {}) or {}
+    senders = getattr(result, "post_senders", {}) or {}
+    names = getattr(result, "post_names", {}) or {}
+    rows: list[tuple[int, str, str, str]] = []
+    for mid, _body in posts:
+        candidate = origins.get(mid) or senders.get(mid) or ""
+        name = names.get(mid, "")
+        rows.append((mid, candidate, name, f"{watch_ref}/{mid}"))
+    return rows
+
+
+def _monitor(config: InviteV2Config, ctx: RunContext) -> int:
+    """MonitorInviteStrategy: watch ``monitor_group``, invite new sources.
+
+    Polling, not events: a poll every ``request_interval`` seconds reads the
+    latest *messages* when the sender can read history (the reference's
+    G/M = group/message lane, :1743480), and falls back to the participant
+    roster for a sender that only lists members.  A cursor of seen ids skips
+    what was already there at the baseline, so a restart does not re-invite.
     """
 
+    from ogtool.sources import hidden_author
     from ogtool.targets import parse_many
 
     accounts = ctx.bind(config.account_labels)
@@ -598,6 +620,7 @@ def _monitor(config: InviteV2Config, ctx: RunContext) -> int:
     targets = config.targets or [config.monitor_group]
     seen: set[str] = set()
     sender = ctx.sender()
+    post_lane = hasattr(sender, "history")
     started = time.monotonic()
     ok = failed = rounds = 0
     print(f"task: {config.task_name} (monitor)")
@@ -606,63 +629,116 @@ def _monitor(config: InviteV2Config, ctx: RunContext) -> int:
         f"accounts: {', '.join(handlers)}  interval: "
         f"{max(config.request_interval, config.invite_interval_min):.0f}s"
     )
+    print(f"Monitor mode: watching {len(targets)} groups")
     print(
-        "monitor: waiting for members to join "
+        "monitor: waiting for new sources "
         + (
             "(Ctrl+C to stop)"
             if not config.monitor_seconds
             else f"(up to {config.monitor_seconds}s)"
         )
     )
+
+    def dispatch(candidate: str, gm: str, name: str) -> None:
+        nonlocal ok, failed
+        if not candidate:
+            print(
+                f"Monitor mode: no eligible target for {candidate or '-'} "
+                f"(G/M:{gm}), skipped: no sender"
+            )
+            print(
+                "Monitor mode: current candidate skipped, "
+                "continue listening for next messages"
+            )
+            return
+        if hidden_author(name) or (post_lane and not name):
+            print(f"Monitor mode: skip hidden user G/M:{gm} Name:{name or '(none)'}")
+            print(
+                "Monitor mode: current candidate skipped, "
+                "continue listening for next messages"
+            )
+            return
+        for target in targets:
+            group = parse_many([target], "group")[0]
+            member = parse_many([candidate], "custom")[0]
+            handler = handlers[ok % len(handlers)]
+            print(f"Monitor mode: dispatched G/M:{gm} to inviter #{handler}")
+            pause(ctx, gap(config))
+            invite = sender.invite(handler, group, member)
+            if invite.ok:
+                ok += 1
+                print(
+                    f"✅ SENT [{ok:03d}] handler={handler} "
+                    f"target={target} contact={candidate} -> ok"
+                )
+            else:
+                failed += 1
+                print(
+                    f"❌ FAIL [{failed:03d}] handler={handler} "
+                    f"target={target} contact={candidate} "
+                    f"code={invite.code}"
+                )
+
     try:
         while (
             not config.monitor_seconds
             or time.monotonic() - started < config.monitor_seconds
         ):
             rounds += 1
-            try:
-                result = sender.get_participants(  # type: ignore[attr-defined]
-                    handlers[0], watch, limit=0
-                )
-            except AttributeError:
-                print("ERROR: the sender cannot list members")
-                return 2
-            if not result.ok:
-                failed += 1
-                print(f"❌ FAIL monitor poll {result.code}")
-                pause(ctx, max(config.request_interval, 2.0))
-                continue
-            users = list(getattr(result, "items", []) or [])
-            fresh = [u for u in users if u not in seen]
-            if config.monitor_skip_existing and rounds == 1:
-                seen.update(users)
-                print(f"monitor: {len(users)} existing member(s) baseline")
-                fresh = []
-            for user in fresh:
-                seen.add(user)
-                for target in targets:
-                    group = parse_many([target], "group")[0]
-                    member = parse_many([user], "custom")[0]
-                    handler = handlers[ok % len(handlers)]
-                    pause(ctx, gap(config))
-                    invite = sender.invite(handler, group, member)
-                    if invite.ok:
-                        ok += 1
-                        print(
-                            f"✅ SENT [{ok:03d}] handler={handler} "
-                            f"target={target} contact={user} -> ok"
-                        )
-                    else:
-                        failed += 1
-                        print(
-                            f"❌ FAIL [{failed:03d}] handler={handler} "
-                            f"target={target} contact={user} "
-                            f"code={invite.code}"
-                        )
-            if fresh or rounds == 1:
+            if post_lane:
+                try:
+                    result = sender.history(  # type: ignore[attr-defined]
+                        handlers[0], watch, minutes=0, limit=0
+                    )
+                except AttributeError:
+                    print("ERROR: the sender cannot read history")
+                    return 2
+                if not result.ok:
+                    failed += 1
+                    print(f"❌ FAIL monitor poll {result.code}")
+                    pause(ctx, max(config.request_interval, 2.0))
+                    continue
+                rows = _post_candidates(result, watch.ref)
+                keys = [str(gm) for _mid, _c, _n, gm in rows]
+                fresh = [row for row in rows if row[3] not in seen]
+                fresh_count = len(fresh)
+                if config.monitor_skip_existing and rounds == 1:
+                    seen.update(keys)
+                    print(f"monitor: {len(keys)} existing post(s) baseline")
+                    fresh = []
+                    fresh_count = 0
+                for _mid, candidate, name, gm in fresh:
+                    seen.add(gm)
+                    dispatch(candidate, gm, name)
+                label = f"{fresh_count} new post(s)"
+            else:
+                try:
+                    result = sender.get_participants(  # type: ignore[attr-defined]
+                        handlers[0], watch, limit=0
+                    )
+                except AttributeError:
+                    print("ERROR: the sender cannot list members")
+                    return 2
+                if not result.ok:
+                    failed += 1
+                    print(f"❌ FAIL monitor poll {result.code}")
+                    pause(ctx, max(config.request_interval, 2.0))
+                    continue
+                users = list(getattr(result, "items", []) or [])
+                fresh_users = [u for u in users if u not in seen]
+                fresh_count = len(fresh_users)
+                if config.monitor_skip_existing and rounds == 1:
+                    seen.update(users)
+                    print(f"monitor: {len(users)} existing member(s) baseline")
+                    fresh_users = []
+                    fresh_count = 0
+                for user in fresh_users:
+                    seen.add(user)
+                    dispatch(user, f"{watch.ref}/{user}", "member")
+                label = f"{fresh_count} new member(s)"
+            if fresh_count or rounds == 1:
                 print(
-                    f"monitor: round {rounds} - {len(fresh)} new "
-                    f"member(s), invited {ok}, failed {failed}"
+                    f"monitor: round {rounds} - {label}, invited {ok}, failed {failed}"
                 )
             pause(ctx, max(config.request_interval, 2.0))
     except KeyboardInterrupt:  # pragma: no cover - operator stops it

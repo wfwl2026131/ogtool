@@ -177,3 +177,18 @@ def test_a_nameless_person_is_reported_as_nameless(settings):
 
     assert result.ok
     assert result.post_names == {}
+
+
+def test_the_capture_records_the_typed_posts_sender(settings):
+    """A typed post's author is the account that sent it, not an origin."""
+    from ogtool.senders import TelethonSender
+    from ogtool.targets import parse_many
+
+    client = _Client([_Message(sender=_User("bob"), message="hi", mid=7)])
+    sender = TelethonSender(settings)
+    sender._clients["acc1"] = client
+
+    result = sender.history("acc1", parse_many(["@group"])[0])
+
+    assert result.ok
+    assert result.post_senders == {7: "@bob"}

@@ -19,7 +19,7 @@ from ..flags import Flag
 from ..limiter import format_duration
 from ..runtime import RunContext
 from ..senders import Content, SendResult
-from ..sources import SourceMessage, from_config, synthetic
+from ..sources import SourceMessage, from_config, hidden_author, synthetic
 from ..targets import Target, parse_many
 from ..templates import compose
 from . import register
@@ -94,12 +94,6 @@ FLAGS = (
 )
 
 POSITIVE = "positive"
-
-#: The reference's hidden-author marker (:1730364
-#: ``forwarded->originalHiddenSenderInfo``): a forward whose original
-#: sender was hidden shows "Hidden User" instead of a person's name, and a
-#: deleted account has no name at all.  Both are hidden sources.
-HIDDEN_AUTHOR_NAMES = frozenset({"hidden user", "hidden", "deleted account"})
 
 #: Emoji a comment may end with, and the reaction an account leaves on the post.
 #: These are two different things: the first is part of the text, the second is
@@ -333,8 +327,7 @@ def hidden_source(post: SourceMessage) -> bool:
     line with no ``name=`` segment) is NOT hidden, so the filter never
     silently empties a dry run's supplied history.
     """
-    name = post.author_name.strip().casefold()
-    return name in HIDDEN_AUTHOR_NAMES or "hidden_source" in post.flags
+    return hidden_author(post.author_name, post.flags)
 
 
 def exclude_hidden(

@@ -156,6 +156,11 @@ class SendResult:
     #: name, not a handle.  For a forwarded post the name belongs to the
     #: original writer, the same person ``post_origins`` points at.
     post_names: dict[int, str] = field(default_factory=dict)
+    #: The handle of the account that put the post into the chat, keyed by
+    #: message id.  A typed post's author is this sender; a forwarded post's
+    #: candidate is ``post_origins`` instead.  The monitor lane needs both
+    #: to turn a group/message id into a person to invite.
+    post_senders: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -1724,6 +1729,9 @@ class TelethonSender:
                     mid: name
                     for mid, _sender, _body, _saved, _f, _o, name in captured
                     if name
+                },
+                post_senders={
+                    mid: sender for mid, sender, _b, _s, _f, _o, _n in captured
                 },
             )
 

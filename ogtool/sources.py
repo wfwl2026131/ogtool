@@ -114,6 +114,19 @@ def from_config(data: dict, key: str = "messages") -> list[SourceMessage]:
     return parse_many([entry for entry in entries if entry.strip()])
 
 
+#: The reference's hidden-author states (:1730364
+#: ``forwarded->originalHiddenSenderInfo``, :1743467 "Monitor mode: skip
+#: hidden user G/M:%1 Name:%2").  "Hidden User" is what the chat renders
+#: for a forward whose original sender is hidden; a deleted account has no
+#: name at all, which a live capture reports with the ``hidden_source`` flag.
+HIDDEN_AUTHOR_NAMES = frozenset({"hidden user", "hidden", "deleted account"})
+
+
+def hidden_author(name: str, flags: tuple[str, ...] = ()) -> bool:
+    """Whether a post's author is hidden, shared by the watch and invite lanes."""
+    return name.strip().casefold() in HIDDEN_AUTHOR_NAMES or "hidden_source" in flags
+
+
 def synthetic(peer: str, count: int, *, prefix: str = "post") -> list[SourceMessage]:
     """Stand-in posts, so the comment page has something to poll offline."""
     count = max(0, int(count))
