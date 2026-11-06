@@ -56,6 +56,7 @@ TOOLBAR: tuple[tuple[str, str], ...] = (
     ("T1", "translate"),
     ("T2", "group_manage"),
     ("T4", "client_list"),
+    ("T5", "quick_reply"),
 )
 
 #: The Red Packet Grabber opens from its own window, so its tag is its own.

@@ -230,6 +230,15 @@ CREATE TABLE IF NOT EXISTS client (
     created_at TEXT NOT NULL DEFAULT '',
     last_active TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS quick_reply (
+    category  TEXT NOT NULL,
+    shortcut  TEXT NOT NULL,
+    text      TEXT NOT NULL DEFAULT '',
+    server_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    last_active TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (category, shortcut)
+);
 CREATE INDEX IF NOT EXISTS idx_translation_created
     ON translation(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_task ON logs(task_id);
@@ -1139,6 +1148,53 @@ class Store:
         removed = cursor.rowcount if cursor.rowcount and cursor.rowcount > 0 else 0
         self._conn.commit()
         return removed
+
+    # ---- quick_reply table: the QuickReply page's shortcuts (:1741725-48) ----
+
+    def upsert_quick_reply(
+        self, category: str, shortcut: str, text: str, server_id: str = ""
+    ) -> None:
+        """One shortcut row; re-adding a slot replaces its text in place."""
+        now = utcnow()
+        self._conn.execute(
+            """INSERT INTO quick_reply (category, shortcut, text, server_id,
+                                        created_at, last_active)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(category, shortcut) DO UPDATE SET
+                   text = excluded.text,
+                   server_id = excluded.server_id,
+                   last_active = excluded.last_active""",
+            (category, shortcut, text, server_id, now, now),
+        )
+        self._conn.commit()
+
+    def quick_reply_rows(self, category: str = "") -> list[sqlite3.Row]:
+        """The page's two lists, one category or all of them."""
+        if category:
+            return self._conn.execute(
+                """SELECT * FROM quick_reply WHERE category = ?
+                   ORDER BY shortcut""",
+                (category,),
+            ).fetchall()
+        return self._conn.execute(
+            "SELECT * FROM quick_reply ORDER BY category, shortcut"
+        ).fetchall()
+
+    def quick_reply_get(self, category: str, shortcut: str) -> sqlite3.Row | None:
+        """One shortcut row, when the slot is filled."""
+        return self._conn.execute(
+            "SELECT * FROM quick_reply WHERE category = ? AND shortcut = ?",
+            (category, shortcut),
+        ).fetchone()
+
+    def delete_quick_reply(self, category: str, shortcut: str) -> bool:
+        """One slot removed; ``False`` when the slot was already empty."""
+        cursor = self._conn.execute(
+            "DELETE FROM quick_reply WHERE category = ? AND shortcut = ?",
+            (category, shortcut),
+        )
+        self._conn.commit()
+        return bool(cursor.rowcount)
 
     def bump_daily_quota(
         self, namespace: str, account: str, day: str, *, success: bool

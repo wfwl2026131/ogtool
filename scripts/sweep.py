@@ -99,6 +99,8 @@ FIXTURES: dict[str, list[str]] = {
     # The client list's dry plan lists an empty table; the sweep's scratch
     # store has no rows, which is exactly the plan the page shows.
     "client_list": ["--search", "sweep"],
+    # QuickReply's dry plan lists an empty slot table for the same reason.
+    "quick_reply": ["--category", "sweep"],
 }
 
 

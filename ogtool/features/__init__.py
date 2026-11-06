@@ -33,6 +33,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "batch_rename",
         "copy_chat",
         "client_list",
+        "quick_reply",
         "group_manage",
         "mass_send",
         "mass_send_v2",
@@ -90,6 +91,9 @@ _MODULE_NAMES = [
     # The Client List is the toolbar's third page (:1740462): CRM rows, a
     # CSV round-trip and the conversation opener, so it takes T4.
     "client_list",
+    # QuickReply is the toolbar's fourth page (:1740464): category/message
+    # shortcut slots with a sender, so it takes T5.
+    "quick_reply",
     # P3
     "settings",
     # The Red Packet Grabber is its own window, neither a console nav entry

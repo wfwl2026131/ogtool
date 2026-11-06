@@ -87,6 +87,7 @@ HELP = {
     "translate": "#T1 翻译工作台: manual + batch translation with a quota",
     "group_manage": "#T2 群管家: batch transfer ownership and leave",
     "client_list": "#T4 客户列表: CRM rows, CSV round-trip, conversations",
+    "quick_reply": "#T5 快捷回复: category/message shortcut slots and a sender",
     "redpacket": "#T3 红包抢包: start-link grabs with balance parsing",
 }
 
@@ -96,7 +97,7 @@ HELP = {
 #: the pages nothing maps to yet. The Group Manager is the toolbar surface's
 #: own page - the console only opens it ("Open Group Manager") - so it sits
 #: here as T2 rather than in ORDER.
-TOOLBAR_ORDER = ["translate", "group_manage", "client_list"]
+TOOLBAR_ORDER = ["translate", "group_manage", "client_list", "quick_reply"]
 
 #: The Red Packet Grabber (:1741098) opens from its own window - not a
 #: console nav entry, not a toolbar page - so it gets a sheet of its own.

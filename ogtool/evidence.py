@@ -61,6 +61,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "proxy": "live",
     "puppet_chat": "write",
     "puppet_chat_v2": "write",
+    "quick_reply": "write",
     "redpacket": "write",
     "settings": "local",
     "translate": "live",
@@ -69,8 +70,13 @@ LIVE_FEASIBILITY: dict[str, str] = {
 }
 
 #: The order the summary line reports them in.
-FEASIBILITY_LEVELS: tuple[str, ...] = ("live", "live-silent", "write",
-                                       "needs-data", "local")
+FEASIBILITY_LEVELS: tuple[str, ...] = (
+    "live",
+    "live-silent",
+    "write",
+    "needs-data",
+    "local",
+)
 
 
 @dataclass(frozen=True)
@@ -121,13 +127,16 @@ def count_tests(root: Path, feature: str) -> int:
     for path in sorted(directory.glob("test_*.py")):
         text = path.read_text(encoding="utf-8")
         named = path.name == f"test_{feature}.py" or path.name.startswith(
-            f"test_{feature}_")
-        mentioned = (f"features.{feature}" in text
-                     or f"features import {feature}" in text)
+            f"test_{feature}_"
+        )
+        mentioned = (
+            f"features.{feature}" in text or f"features import {feature}" in text
+        )
         if not (named or mentioned):
             continue
-        total += sum(1 for line in text.splitlines()
-                     if line.lstrip().startswith("def test_"))
+        total += sum(
+            1 for line in text.splitlines() if line.lstrip().startswith("def test_")
+        )
     return total
 
 
@@ -182,8 +191,9 @@ def count_receipts(directory: Path, feature: str) -> tuple[int, int, str]:
     return live, dry, newest
 
 
-def count_receipts_full(directory: Path, feature: str) -> tuple[
-        int, int, str, int, str]:
+def count_receipts_full(
+    directory: Path, feature: str
+) -> tuple[int, int, str, int, str]:
     """The same counts, plus how many live runs were rejected and why.
 
     The why is read from the newest rejected receipt, so the note can say
@@ -215,8 +225,11 @@ def count_receipts_full(directory: Path, feature: str) -> tuple[
             elif _only_local_failures(body):
                 rejected += 1
                 codes = body.get("codes")
-                why = (", ".join(str(code) for code in sorted(codes))
-                       if isinstance(codes, dict) and codes else "local failure")
+                why = (
+                    ", ".join(str(code) for code in sorted(codes))
+                    if isinstance(codes, dict) and codes
+                    else "local failure"
+                )
             else:
                 live += 1
             stamp = str(body.get("finished_at") or "")
@@ -257,8 +270,15 @@ def age(stamp: str, now: datetime | None = None) -> str:
     seconds = max(0.0, (moment - when).total_seconds())
     for limit, unit in ((60, "s"), (3600, "m"), (86400, "h")):
         if seconds < limit:
-            return f"{int(seconds)}{unit}" if unit == "s" else (
-                f"{int(seconds // 60)}m" if unit == "m" else f"{int(seconds // 3600)}h")
+            return (
+                f"{int(seconds)}{unit}"
+                if unit == "s"
+                else (
+                    f"{int(seconds // 60)}m"
+                    if unit == "m"
+                    else f"{int(seconds // 3600)}h"
+                )
+            )
     return f"{int(seconds // 86400)}d"
 
 
@@ -275,12 +295,15 @@ def sweep_features(path: Path) -> dict[str, str]:
         body = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return {name: str(item.get("mode", ""))
-            for name, item in (body.get("features") or {}).items()}
+    return {
+        name: str(item.get("mode", ""))
+        for name, item in (body.get("features") or {}).items()
+    }
 
 
-def collect(root: Path, directory: Path,
-            features: list[str] | None = None) -> list[Evidence]:
+def collect(
+    root: Path, directory: Path, features: list[str] | None = None
+) -> list[Evidence]:
     """One row per feature, in registry order."""
     if features is None:
         import sys
@@ -293,36 +316,52 @@ def collect(root: Path, directory: Path,
     swept = sweep_features(root / "logs" / "sweep.json")
     rows: list[Evidence] = []
     for feature in features:
-        live, dry, newest, rejected, why = count_receipts_full(directory,
-                                                              feature)
+        live, dry, newest, rejected, why = count_receipts_full(directory, feature)
         if dry == 0 and swept.get(feature):
             # The sweep's receipts are written into throwaway directories, so
             # its summary file is the only place that remembers they happened.
             dry = 1
-        rows.append(Evidence(feature, count_tests(root, feature), live, dry,
-                             newest, rejected, why if not live else ""))
+        rows.append(
+            Evidence(
+                feature,
+                count_tests(root, feature),
+                live,
+                dry,
+                newest,
+                rejected,
+                why if not live else "",
+            )
+        )
     return rows
 
 
 def render(rows: list[Evidence]) -> str:
     """The table, plus the one summary line the checks parse."""
     width = max((len(row.feature) for row in rows), default=7)
-    lines = [f"{'feature':{width}s}  {'level':5s}  tests  live  dry  "
-             f"{'needs':10s}  last  why"]
+    lines = [
+        f"{'feature':{width}s}  {'level':5s}  tests  live  dry  "
+        f"{'needs':10s}  last  why"
+    ]
     for row in rows:
-        lines.append(f"{row.feature:{width}s}  {row.level:5s}  "
-                     f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}  "
-                     f"{row.feasibility:10s}  "
-                     f"{age(row.last_live) or '-':>5s}  "
-                     f"{row.why or ''}".rstrip())
-    counts = {level: sum(1 for row in rows if row.level == level)
-              for level in LEVELS}
-    needs = {kind: sum(1 for row in rows if row.feasibility == kind)
-             for kind in FEASIBILITY_LEVELS}
-    lines.append(f"evidence: {len(rows)} feature(s), "
-                 + ", ".join(f"{level} {counts[level]}" for level in LEVELS))
-    lines.append("proof: " + ", ".join(f"{kind} {needs[kind]}"
-                                       for kind in FEASIBILITY_LEVELS))
+        lines.append(
+            f"{row.feature:{width}s}  {row.level:5s}  "
+            f"{row.tests:5d}  {row.live:4d}  {row.dry:3d}  "
+            f"{row.feasibility:10s}  "
+            f"{age(row.last_live) or '-':>5s}  "
+            f"{row.why or ''}".rstrip()
+        )
+    counts = {level: sum(1 for row in rows if row.level == level) for level in LEVELS}
+    needs = {
+        kind: sum(1 for row in rows if row.feasibility == kind)
+        for kind in FEASIBILITY_LEVELS
+    }
+    lines.append(
+        f"evidence: {len(rows)} feature(s), "
+        + ", ".join(f"{level} {counts[level]}" for level in LEVELS)
+    )
+    lines.append(
+        "proof: " + ", ".join(f"{kind} {needs[kind]}" for kind in FEASIBILITY_LEVELS)
+    )
     return "\n".join(lines)
 
 
@@ -330,14 +369,22 @@ def as_dict(rows: list[Evidence]) -> dict[str, Any]:
     """The same table as data, for whatever writes it next."""
     return {
         "features": [
-            {"feature": row.feature, "level": row.level, "tests": row.tests,
-             "live": row.live, "dry": row.dry, "last_live": row.last_live,
-             "age": age(row.last_live), "rejected": row.rejected,
-             "why": row.why}
+            {
+                "feature": row.feature,
+                "level": row.level,
+                "tests": row.tests,
+                "live": row.live,
+                "dry": row.dry,
+                "last_live": row.last_live,
+                "age": age(row.last_live),
+                "rejected": row.rejected,
+                "why": row.why,
+            }
             for row in rows
         ],
-        "counts": {level: sum(1 for row in rows if row.level == level)
-                   for level in LEVELS},
+        "counts": {
+            level: sum(1 for row in rows if row.level == level) for level in LEVELS
+        },
     }
 
 
@@ -381,40 +428,58 @@ def live_markdown(rows: list[Evidence], directory: Path) -> str:
             f"| `{row.feature}` | `{body['_file']}` | "
             f"planned {body.get('planned', 0)} / ok {body.get('ok', 0)} / "
             f"failed {body.get('failed', 0)} | "
-            f"{stamp_short(str(body.get('finished_at') or ''))} |")
+            f"{stamp_short(str(body.get('finished_at') or ''))} |"
+        )
     lines.append("")
-    lines.append(f"共 {found} 项有真机回执；其余 {len(rows) - found} 项只有干跑"
-                 f"或单测证据。")
+    lines.append(
+        f"共 {found} 项有真机回执；其余 {len(rows) - found} 项只有干跑或单测证据。"
+    )
     return "\n".join(lines)
 
 
 def as_markdown(rows: list[Evidence]) -> str:
     """A paste-ready table, so the note never carries a number nobody derived."""
-    lines = ["| 项 | 证据等级 | 测试 | 真机 | 干跑 | 要真跑得具备 | 最近真机 "
-             "| 真机被排除 |",
-             "|---|---|---|---|---|---|---|---|"]
-    labels = {"live": "已真跑", "live-silent": "已真跑（可能无行）",
-              "write": "写页面，需 --allow-write 与目标",
-              "needs-data": "需真实群/链接", "local": "不联网"}
+    lines = [
+        "| 项 | 证据等级 | 测试 | 真机 | 干跑 | 要真跑得具备 | 最近真机 | 真机被排除 |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    labels = {
+        "live": "已真跑",
+        "live-silent": "已真跑（可能无行）",
+        "write": "写页面，需 --allow-write 与目标",
+        "needs-data": "需真实群/链接",
+        "local": "不联网",
+    }
     for row in rows:
-        lines.append(f"| `{row.feature}` | {row.level} | {row.tests} | "
-                     f"{row.live} | {row.dry} | "
-                     f"{labels.get(row.feasibility, '?')} | "
-                     f"{stamp_short(row.last_live)} | "
-                     f"{row.rejected or ''}"
-                     f"{('（' + row.why + '）') if row.why else ''} |")
+        lines.append(
+            f"| `{row.feature}` | {row.level} | {row.tests} | "
+            f"{row.live} | {row.dry} | "
+            f"{labels.get(row.feasibility, '?')} | "
+            f"{stamp_short(row.last_live)} | "
+            f"{row.rejected or ''}"
+            f"{('（' + row.why + '）') if row.why else ''} |"
+        )
     counts = as_dict(rows)["counts"]
-    needs = {kind: sum(1 for row in rows if row.feasibility == kind)
-             for kind in FEASIBILITY_LEVELS}
+    needs = {
+        kind: sum(1 for row in rows if row.feasibility == kind)
+        for kind in FEASIBILITY_LEVELS
+    }
     lines.append("")
-    lines.append(f"共 {len(rows)} 项：" + "，".join(
-        f"{level} {counts[level]}" for level in LEVELS))
-    lines.append("真跑条件：" + "，".join(
-        f"{labels[kind]} {needs[kind]}" for kind in FEASIBILITY_LEVELS))
+    lines.append(
+        f"共 {len(rows)} 项："
+        + "，".join(f"{level} {counts[level]}" for level in LEVELS)
+    )
+    lines.append(
+        "真跑条件："
+        + "，".join(f"{labels[kind]} {needs[kind]}" for kind in FEASIBILITY_LEVELS)
+    )
     return "\n".join(lines)
 
 
 def problems(rows: list[Evidence]) -> list[str]:
     """Only the empty rows are failures; every other level is a fact."""
-    return [f"{row.feature}: no tests and no receipts" for row in rows
-            if row.level == "none"]
+    return [
+        f"{row.feature}: no tests and no receipts"
+        for row in rows
+        if row.level == "none"
+    ]
