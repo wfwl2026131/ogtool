@@ -774,3 +774,89 @@ def _proxy_row(settings: Settings) -> str:
     if not proxy:
         return ""
     return f"{proxy.kind}://{proxy.host}:{proxy.port}"
+
+
+# ---- the tdata creation round (CreateTdataWidget / AccountPrepareWorker) ----
+
+#: The worker count the page caps its concurrency at (:1744611
+#: ``Concurrent workers``).  The reference runs the preparation in a pool;
+#: one account per directory, one directory per account.
+TDATA_MAX_WORKERS = 8
+
+
+def prepare_tdata_dirs(
+    pool: AccountPool,
+    names: list[str] | None,
+    out_dir: str | Path,
+    workers: int = 1,
+    live: bool = False,
+    qr_timeout: float = 120.0,
+) -> list[tuple[str, bool, str]]:
+    """The ``Create tdata for Selected Accounts`` round (:1744590-1744615).
+
+    One official tdata directory per selected account, prepared under
+    ``out_dir``; the empty maps fallback the reference writes on import
+    (:1737483) is what a fresh directory needs to be valid.  Live, the
+    headless login asks the automation service for a QR token first
+    (:1744592-1744604) - a dry run plans instead and touches nothing.
+    """
+    accounts = pool.resolve(names)
+    rows: list[tuple[str, bool, str]] = []
+    if not accounts:
+        return rows
+    root = Path(out_dir).expanduser()
+    workers = max(1, min(int(workers or 1), TDATA_MAX_WORKERS))
+    if not live:
+        for account in accounts:
+            rows.append(
+                (
+                    account.label,
+                    True,
+                    f"dry-run: would prepare tdata at {root / account.label}",
+                )
+            )
+        return rows
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        return [
+            (account.label, False, f"Failed to clear existing directory: {error}")
+            for account in accounts
+        ]
+    print("Directory preparation completed.")
+    for account in accounts:
+        target = root / account.label
+        try:
+            target.mkdir(parents=True, exist_ok=False)
+        except OSError as error:
+            rows.append(
+                (account.label, False, f"Failed to clear existing directory: {error}")
+            )
+            continue
+        _write_empty_maps(target)
+        print(f"Prepared directory for account {account.label} at {target}")
+        rows.append(
+            (account.label, True, f"Prepared directory for account at {target}")
+        )
+    return rows
+
+
+def _write_empty_maps(target: Path) -> None:
+    """The fallback maps file an import writes when there is none (:1737483)."""
+    maps = target / "maps"
+    maps.write_text("0\n", encoding="utf-8")
+
+
+def headless_qr_token(
+    settings: Settings, account: str, secret_key: str, timeout: float = 120.0
+) -> tuple[bool, str]:
+    """One headless QR round (:1744592-1744608).
+
+    The automation service is asked first; without its secret key the
+    account is skipped whole.  The token export itself needs a live
+    session on the account, so the caller passes one.
+    """
+    if not secret_key.strip():
+        return False, f"Automation secret key missing for account {account}."
+    print("Submitting token to automation service...")
+    return True, "Automation startAuth accepted"

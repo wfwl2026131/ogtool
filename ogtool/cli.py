@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, receipts, selftest
-from .accounts import AccountError, passkey_login
+from .accounts import AccountError, passkey_login, prepare_tdata_dirs
 from .config import ConfigError, Settings, load_task, merge
 from .features import get, load_defaults, module, names
 from .features._common import close_task, open_task, record
@@ -613,6 +613,26 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         "passkey-login",
         help="the batch_login page's passkey branch; replay blocks in this build",
     )
+    tdata = account_subs.add_parser(
+        "tdata-prepare",
+        help="Create tdata for Selected Accounts (:1744612)",
+    )
+    tdata.add_argument("--accounts", nargs="*", default=None)
+    tdata.add_argument(
+        "--out-dir", default="", help="folder hosting the generated tdata tree"
+    )
+    tdata.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Concurrent workers (1-8)",
+    )
+    tdata.add_argument("--dry-run", action="store_true", help="the default")
+    tdata.add_argument(
+        "--live",
+        action="store_true",
+        help="really prepare the directories (default: dry-run)",
+    )
     passkey_login.add_argument(
         "--files", nargs="*", default=[], help=".passkey files to read"
     )
@@ -657,6 +677,7 @@ def _accounts_parser(subs: argparse._SubParsersAction) -> None:
         "password",
         "passkey",
         "passkey-login",
+        "tdata-prepare",
         "spambot",
         "logout",
         "exit-frozen",
@@ -1124,7 +1145,15 @@ def _dispatch(args: argparse.Namespace, settings: object) -> int:
 
 #: ``accounts`` actions that change something on Telegram rather than reading it.
 WRITE_ACCOUNT_ACTIONS: frozenset[str] = frozenset(
-    {"logout", "password", "spambot", "passkey", "passkey-login", "exit-frozen"}
+    {
+        "logout",
+        "password",
+        "spambot",
+        "passkey",
+        "passkey-login",
+        "tdata-prepare",
+        "exit-frozen",
+    }
 )
 
 #: Commands outside the feature registry that still write: ``bot_links`` opens
@@ -1702,6 +1731,40 @@ def _accounts(args: argparse.Namespace, settings: Settings) -> int:
             print(f"Passkey login finished. Success: {done}/{len(rows)}")
             _account_rows_task(
                 settings, store, "passkey-login", rows, live=bool(args.live)
+            )
+            return 0 if done == len(rows) else 1
+        if args.action == "tdata-prepare":
+            # The creation round's own lines (:1744590-1744615).  The folder
+            # is required before anything opens, and an empty pool is the
+            # page's own refusal (:1744613).
+            if args.live and not args.allow_write:
+                print(
+                    "ERROR: accounts tdata-prepare writes into the tdata "
+                    "folder; add --allow-write to run it live"
+                )
+                return 2
+            accounts = pool.resolve(args.accounts)
+            if not accounts:
+                print("No eligible accounts for creation.")
+                return 2
+            if args.live:
+                print("Create tdata for Selected Accounts")
+            out_dir = args.out_dir or str(Path(settings.data_dir) / "tdata")
+            rows = prepare_tdata_dirs(
+                pool,
+                args.accounts,
+                out_dir,
+                workers=args.workers,
+                live=bool(args.live),
+            )
+            for label, ok, detail in rows:
+                print(f"{'ok  ' if ok else 'fail'} {label} {detail}")
+            done = sum(1 for _, ok, _ in rows if ok)
+            print("Directory preparation completed.")
+            if done != len(rows):
+                print("Some accounts failed during preparation.")
+            _account_rows_task(
+                settings, store, "tdata-prepare", rows, live=bool(args.live)
             )
             return 0 if done == len(rows) else 1
         if args.action == "dialogs":
