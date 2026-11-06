@@ -117,3 +117,63 @@ def test_a_typed_post_records_no_origin(settings):
     assert result.ok
     assert result.post_origins == {}
     assert result.post_flags == {}
+
+
+def _named(name_or_none):
+    """A user stub that carries the name fields the display name reads."""
+
+    class _Named:
+        username = "handle"
+
+        def get_display_name(self):
+            return name_or_none
+
+    return _Named()
+
+
+def test_the_display_name_comes_from_the_forward_header_first(settings):
+    """A forwarded post shows the original writer's name, not the forwarder's."""
+    from ogtool.senders import TelethonSender
+    from ogtool.targets import parse_many
+
+    header = _Header(from_id=object(), username="alice")
+    header.sender = _named("Alice A.")
+    client = _Client(
+        [_Message(fwd_from=header, sender=_named("Bob B."), message="hi", mid=7)]
+    )
+    sender = TelethonSender(settings)
+    sender._clients["acc1"] = client
+
+    result = sender.history("acc1", parse_many(["@group"])[0])
+
+    assert result.ok
+    assert result.post_names == {7: "Alice A."}
+
+
+def test_a_typed_post_shows_the_writer_under_their_own_name(settings):
+    from ogtool.senders import TelethonSender
+    from ogtool.targets import parse_many
+
+    client = _Client([_Message(sender=_named("Bob B."), message="hi", mid=7)])
+    sender = TelethonSender(settings)
+    sender._clients["acc1"] = client
+
+    result = sender.history("acc1", parse_many(["@group"])[0])
+
+    assert result.ok
+    assert result.post_names == {7: "Bob B."}
+
+
+def test_a_nameless_person_is_reported_as_nameless(settings):
+    """A deleted account has no name; the lane must not invent one."""
+    from ogtool.senders import TelethonSender
+    from ogtool.targets import parse_many
+
+    client = _Client([_Message(sender=_named(""), message="hi", mid=7)])
+    sender = TelethonSender(settings)
+    sender._clients["acc1"] = client
+
+    result = sender.history("acc1", parse_many(["@group"])[0])
+
+    assert result.ok
+    assert result.post_names == {}

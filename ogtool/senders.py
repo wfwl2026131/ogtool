@@ -149,6 +149,13 @@ class SendResult:
     #: and the account that forwarded it into the chat is not.  A channel
     #: origin has no person behind it and is reported as an empty origin.
     post_origins: dict[int, str] = field(default_factory=dict)
+    #: The display name a post was written under, keyed by message id.  A
+    #: sender ref is only a handle (``@name`` or a numeric id); the monitor
+    #: lane also has to be able to say *who* it is looking at, because the
+    #: reference skips people the chat shows as "Hidden User" - and that is a
+    #: name, not a handle.  For a forwarded post the name belongs to the
+    #: original writer, the same person ``post_origins`` points at.
+    post_names: dict[int, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -838,6 +845,42 @@ def _sender_ref(message: Any) -> str:
     if username:
         return f"@{username}"
     return str(getattr(message, "sender_id", 0) or 0)
+
+
+def _person_name(person: Any) -> str:
+    """The name a person shows in the chat, empty when there is none.
+
+    Telethon's ``User.get_display_name()`` knows the account's own naming
+    rules; when the entity does not carry it, the two name fields are the
+    fallback.  A deleted account has neither, and the caller then has to
+    treat the person as nameless rather than as a nameless stranger.
+    """
+    if person is None:
+        return ""
+    getter = getattr(person, "get_display_name", None)
+    if callable(getter):
+        try:
+            return str(getter() or "").strip()
+        except Exception:  # a stub entity may raise; the fields still work
+            pass
+    first = str(getattr(person, "first_name", "") or "").strip()
+    last = str(getattr(person, "last_name", "") or "").strip()
+    return " ".join(part for part in (first, last) if part)
+
+
+def _display_name(message: Any) -> str:
+    """The name of the person behind a post, following its forward header.
+
+    A forwarded post was written by somebody else, and that somebody is the
+    one a monitor lane watches.  So the name is read from the forward header
+    when there is one, and from the message itself otherwise.
+    """
+    header = getattr(message, "fwd_from", None)
+    if header is not None:
+        name = _person_name(getattr(header, "sender", None))
+        if name:
+            return name
+    return _person_name(getattr(message, "sender", None))
 
 
 def _proxy_tuple(url: str) -> Any:
@@ -1627,7 +1670,7 @@ class TelethonSender:
                 datetime.now(UTC) - timedelta(minutes=minutes) if minutes > 0 else None
             )
             scanned = 0
-            captured: list[tuple[int, str, str, str, tuple[str, ...], str]] = []
+            captured: list[tuple[int, str, str, str, tuple[str, ...], str, str]] = []
             for message in client.iter_messages(peer, limit=limit or None):
                 stamp = getattr(message, "date", None)
                 if cutoff is not None and stamp is not None:
@@ -1651,6 +1694,7 @@ class TelethonSender:
                             saved,
                             flags,
                             _forward_origin(message),
+                            _display_name(message),
                         )
                     )
             captured.reverse()  # Telethon yields newest first
@@ -1661,18 +1705,25 @@ class TelethonSender:
                     f"{target.ref}|{sender}|{body}"
                     + (f"|{saved}" if saved else "")
                     + (f"|flags={','.join(flags)}" if flags else "")
-                    for _mid, sender, body, saved, flags, _origin in captured
+                    for _mid, sender, body, saved, flags, _origin, _name in captured
                 ],
-                posts=[(mid, body) for mid, _sender, body, _saved, _f, _o in captured],
+                posts=[
+                    (mid, body) for mid, _sender, body, _saved, _f, _o, _n in captured
+                ],
                 post_flags={
                     mid: flags
-                    for mid, _sender, _body, _saved, flags, _o in captured
+                    for mid, _sender, _body, _saved, flags, _o, _n in captured
                     if flags
                 },
                 post_origins={
                     mid: origin
-                    for mid, _sender, _body, _saved, _f, origin in captured
+                    for mid, _sender, _body, _saved, _f, origin, _n in captured
                     if origin
+                },
+                post_names={
+                    mid: name
+                    for mid, _sender, _body, _saved, _f, _o, name in captured
+                    if name
                 },
             )
 
