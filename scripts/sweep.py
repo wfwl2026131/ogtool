@@ -101,6 +101,9 @@ FIXTURES: dict[str, list[str]] = {
     "client_list": ["--search", "sweep"],
     # QuickReply's dry plan lists an empty slot table for the same reason.
     "quick_reply": ["--category", "sweep"],
+    # The collection plan names the group and the output folder; a dry run
+    # reads nothing, so the plan is the whole proof.
+    "profile_collect": ["--group", "https://t.me/sweep", "--limit", "5"],
 }
 
 

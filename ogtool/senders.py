@@ -1406,6 +1406,39 @@ class TelethonSender:
 
         return self._on_target(account, target, "participants", call)
 
+    def profiles(
+        self, account: str, target: Target, limit: int = 0, avatars: str = ""
+    ) -> SendResult:
+        """The profile collection read (:1742619-1742653).
+
+        One row per member: ``display|bio|avatar_path_or_empty``.  The
+        display name is the page's own first counter (Nickname), the bio
+        is the account's ``about`` field, and an avatar is downloaded
+        into ``avatars`` only when the operator asked for the folder -
+        the reference counts all three separately
+        (``Nickname: %1/%2 / Bio: %1/%2 / Avatar: %1/%2``).
+        """
+
+        def call(client: Any, peer: Any) -> SendResult:
+            users = client.get_participants(peer, limit=limit or None)
+            rows: list[str] = []
+            for user in users:
+                first = str(getattr(user, "first_name", "") or "")
+                last = str(getattr(user, "last_name", "") or "")
+                display = " ".join(part for part in (first, last) if part)
+                about = str(getattr(user, "about", "") or "").replace("\n", " ")
+                avatar = ""
+                if avatars and getattr(user, "photo", None) is not None:
+                    try:
+                        path = client.download_media(user.photo, file=avatars)
+                        avatar = str(path or "")
+                    except Exception:  # noqa: BLE001 - one avatar, one miss
+                        avatar = ""
+                rows.append(f"{display}|{about}|{avatar}")
+            return SendResult(ok=True, count=len(users), items=rows)
+
+        return self._on_target(account, target, "profiles", call)
+
     def update_profile(self, account: str, first: str, last: str = "") -> SendResult:
         def action() -> SendResult:
             from telethon.tl.functions.account import UpdateProfileRequest

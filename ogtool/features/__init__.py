@@ -33,6 +33,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "batch_rename",
         "copy_chat",
         "client_list",
+        "profile_collect",
         "quick_reply",
         "group_manage",
         "mass_send",
@@ -94,6 +95,9 @@ _MODULE_NAMES = [
     # QuickReply is the toolbar's fourth page (:1740464): category/message
     # shortcut slots with a sender, so it takes T5.
     "quick_reply",
+    # Profile Collect has its own dialog from the account tools
+    # (:1742619): the group's members as a dataset, so it takes T6.
+    "profile_collect",
     # P3
     "settings",
     # The Red Packet Grabber is its own window, neither a console nav entry

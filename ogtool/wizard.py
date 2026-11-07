@@ -223,6 +223,15 @@ GENERIC: dict[str, dict] = {
             ("--category", "只看哪个分类(留空=全部)", "", "str"),
         ],
     },
+    "profile_collect": {
+        "label": "🧾 资料采集(群成员昵称/Bio/头像落盘)",
+        "steps": [
+            ("--group", "采集哪个群(链接/@用户名)", "", "str"),
+            ("--limit", "读多少成员(0=全部)", "0", "int"),
+            ("--out-dir", "输出目录(留空=data/profiles)", "", "str"),
+            ("--interval", "成员间隔秒", "0.5", "str"),
+        ],
+    },
 }
 
 

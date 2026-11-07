@@ -59,6 +59,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "mass_send_v2": "write",
     "mix_market": "write",
     "proxy": "live",
+    "profile_collect": "live",
     "puppet_chat": "write",
     "puppet_chat_v2": "write",
     "quick_reply": "write",
