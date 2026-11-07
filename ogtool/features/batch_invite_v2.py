@@ -46,6 +46,13 @@ TITLE = "#17 批量拉人v2"
 FLAGS = (
     Flag("--targets", "targets", str, "own groups/channels, comma separated"),
     Flag(
+        "--accounts-expression",
+        "accounts_expression",
+        str,
+        "Range expression (e.g. 1-5,7,8): the StaticBucketInviteStrategy's "
+        "account bucket per target, one bucket per line",
+    ),
+    Flag(
         "--targets-file", "files", str, "file with one target per line", action="append"
     ),
     Flag("--contacts", "contacts", str, "contacts, comma separated"),
@@ -183,6 +190,11 @@ class InviteV2Config:
     account_labels: list[str] = field(default_factory=list)
     targets: list[str] = field(default_factory=list)
     contacts: list[str] = field(default_factory=list)
+    #: ``StaticBucketInviteStrategy`` (:2184664): one account bucket per
+    #: target, written as the page's own range expression
+    #: (:1743019 "Range expression (e.g. 1-5,7,8)", :1743020).  One line
+    #: per target; empty means the round-robin default (:1744877).
+    accounts_expression: str = ""
     request_interval: float = 8.0
     threads: int = 1
     target_success_cap: int = 0
@@ -266,6 +278,7 @@ class InviteV2Config:
         )
         return cls(
             account_labels=accounts_of(raw, data),
+            accounts_expression=text(data, "accounts_expression"),
             targets=targets,
             contacts=_unique([str(item) for item in contacts]),
             request_interval=num(data, "request_interval", 8.0),
@@ -312,6 +325,78 @@ def _unique(items: list[str]) -> list[str]:
             seen.add(text_value)
             out.append(text_value)
     return out
+
+
+def parse_index_expression(expression: str, total: int) -> tuple[list[int], int]:
+    """``1-5,7,8`` -> 0-based indices inside ``total``, and the ignored count.
+
+    The page's own grammar (:1743019 "Range expression (e.g. 1-5,7,8)",
+    :1743020): comma-separated terms, each a single index or an inclusive
+    range, all 1-based.  An index past the pool is ignored, and the
+    ignored count is what the plan reports (:1743000 "Ignored targets (no
+    owner account matched): %1" speaks of the same shape of loss).
+    """
+    picked: list[int] = []
+    ignored = 0
+    for term in (expression or "").replace("，", ",").split(","):
+        term = term.strip()
+        if not term:
+            continue
+        if "-" in term[1:]:
+            left, _, right = term.partition("-")
+            left, right = left.strip(), right.strip()
+            if not (left.isdigit() and right.isdigit()):
+                ignored += 1
+                continue
+            start, end = int(left), int(right)
+            if start > end:
+                start, end = end, start
+            for index in range(start, end + 1):
+                if 1 <= index <= total:
+                    picked.append(index - 1)
+                else:
+                    ignored += 1
+        elif term.isdigit():
+            index = int(term)
+            if 1 <= index <= total:
+                picked.append(index - 1)
+            else:
+                ignored += 1
+        else:
+            ignored += 1
+    seen: set[int] = set()
+    unique = [index for index in picked if index not in seen and not seen.add(index)]
+    return unique, ignored
+
+
+def bucket_jobs(
+    targets: list[str],
+    contacts: list[str],
+    handlers: list[str],
+    buckets: list[list[int]],
+) -> list[tuple[str, str, str]]:
+    """One account bucket per target (:2184664 ``StaticBucketInviteStrategy``).
+
+    Bucket ``k`` works target ``k``: its handlers take the contacts round
+    robin (:1744877 "One target-account index expression per line, matched
+    1:1 with target groups").  A target without a bucket line stays on the
+    default round robin over every handler; an empty bucket leaves the
+    target unworked, which is the operator's own split.
+    """
+    jobs: list[tuple[str, str, str]] = []
+    for index, target in enumerate(targets):
+        bucket = buckets[index] if index < len(buckets) else None
+        if bucket is not None:
+            pool = [
+                handlers[position] for position in bucket if position < len(handlers)
+            ]
+        else:
+            pool = handlers
+        if not pool:
+            continue
+        for taken, member in enumerate(contacts, start=1):
+            jobs.append((pool[(taken - 1) % len(pool)], target, member))
+    return jobs
 
 
 def build_jobs(
@@ -756,13 +841,34 @@ def run(config: InviteV2Config, ctx: RunContext) -> int:
         return _monitor(config, ctx)
     accounts = ctx.bind(config.account_labels)
     handlers = [account.label for account in accounts] or ["-"]
-    jobs = build_jobs(
-        config.targets,
-        config.contacts,
-        handlers,
-        target_success_cap=config.target_success_cap,
-        exec_cap=config.exec_cap,
-        cap_by=config.limit_count_type,
+    buckets: list[list[int]] = []
+    if config.accounts_expression:
+        # The StaticBucket lane prints the page's own two lines
+        # (:1743021 "Loaded %1 valid accounts", :1743025 "Selected %1
+        # account indices") once per bucket line the expression holds.
+        lines = [
+            line for line in config.accounts_expression.splitlines() if line.strip()
+        ]
+        ignored_total = 0
+        for line in lines:
+            picked, ignored = parse_index_expression(line, len(handlers))
+            ignored_total += ignored
+            buckets.append(picked)
+            print(f"Selected {len(picked)} account indices")
+        if ignored_total:
+            print(f"Ignored targets (no owner account matched): {ignored_total}")
+        print(f"Loaded {len(handlers)} valid accounts")
+    jobs = (
+        bucket_jobs(config.targets, config.contacts, handlers, buckets)
+        if config.accounts_expression
+        else build_jobs(
+            config.targets,
+            config.contacts,
+            handlers,
+            target_success_cap=config.target_success_cap,
+            exec_cap=config.exec_cap,
+            cap_by=config.limit_count_type,
+        )
     )
     skipped_pairs: list[tuple[str, str]] = []
     if config.resume:
