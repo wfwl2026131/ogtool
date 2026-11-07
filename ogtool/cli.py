@@ -90,6 +90,7 @@ HELP = {
     "quick_reply": "#T5 快捷回复: category/message shortcut slots and a sender",
     "profile_collect": "#T6 资料采集: a group's nicknames, bios and avatars",
     "redpacket": "#T3 红包抢包: start-link grabs with balance parsing",
+    "collect_groups": "#T7 采群链接: the @jisou bot keyword scraper",
 }
 
 #: The reference's second surface: pages of the right toolbar (:1740461),
@@ -108,7 +109,7 @@ TOOLBAR_ORDER = [
 
 #: The Red Packet Grabber (:1741098) opens from its own window - not a
 #: console nav entry, not a toolbar page - so it gets a sheet of its own.
-SHEET_ORDER = ["redpacket"]
+SHEET_ORDER = ["redpacket", "collect_groups"]
 
 
 def build_parser() -> argparse.ArgumentParser:

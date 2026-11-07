@@ -223,6 +223,14 @@ GENERIC: dict[str, dict] = {
             ("--category", "只看哪个分类(留空=全部)", "", "str"),
         ],
     },
+    "collect_groups": {
+        "label": "🕸 采群链接(@jisou bot 关键词采集)",
+        "steps": [
+            ("--keywords", "关键词(逗号/换行分隔)", "", "str"),
+            ("--limit", "采集上限(0=不限)", "0", "int"),
+            ("--out", "输出文件(.txt+.csv)", "", "str"),
+        ],
+    },
     "profile_collect": {
         "label": "🧾 资料采集(群成员昵称/Bio/头像落盘)",
         "steps": [

@@ -63,6 +63,7 @@ LIVE_FEASIBILITY: dict[str, str] = {
     "puppet_chat": "write",
     "puppet_chat_v2": "write",
     "quick_reply": "write",
+    "collect_groups": "write",
     "redpacket": "write",
     "settings": "local",
     "translate": "live",

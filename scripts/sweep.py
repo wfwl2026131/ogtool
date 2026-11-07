@@ -104,6 +104,9 @@ FIXTURES: dict[str, list[str]] = {
     # The collection plan names the group and the output folder; a dry run
     # reads nothing, so the plan is the whole proof.
     "profile_collect": ["--group", "https://t.me/sweep", "--limit", "5"],
+    # The scraper's dry plan lists the keywords without a session; the
+    # refusal pair is what the sweep would otherwise only prove.
+    "collect_groups": ["--keywords", "sweep"],
 }
 
 

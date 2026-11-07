@@ -44,6 +44,7 @@ WRITE_FEATURES: frozenset[str] = frozenset(
         "video_manage",
         "watch_chat",
         "redpacket",
+        "collect_groups",
     }
 )
 
@@ -103,6 +104,9 @@ _MODULE_NAMES = [
     # The Red Packet Grabber is its own window, neither a console nav entry
     # nor a toolbar page (:2184543), so it takes a sheet of its own.
     "redpacket",
+    # Collect Group Links is the YingFa service's own dialog
+    # (:1737390), so it shares the sheet surface as T7.
+    "collect_groups",
 ]
 
 

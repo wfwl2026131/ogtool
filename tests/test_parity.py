@@ -61,7 +61,10 @@ TOOLBAR: tuple[tuple[str, str], ...] = (
 )
 
 #: The Red Packet Grabber opens from its own window, so its tag is its own.
-SHEET: tuple[tuple[str, str], ...] = (("T3", "redpacket"),)
+SHEET: tuple[tuple[str, str], ...] = (
+    ("T3", "redpacket"),
+    ("T7", "collect_groups"),
+)
 
 
 def client_labels() -> list[str]:
